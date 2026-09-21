@@ -9,7 +9,7 @@ const LANGS = [
   { id: "zh", label: "中文", to: "/zh" },
 ] as const;
 
-export default function LangMenu({ lang }: { lang: Lang }) {
+export default function LangMenu({ lang, page }: { lang: Lang; page?: string }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   const now = LANGS.find((l) => l.id === lang)!;
@@ -38,7 +38,7 @@ export default function LangMenu({ lang }: { lang: Lang }) {
             className="absolute right-0 top-full mt-2 min-w-40 overflow-hidden rounded-2xl border border-line bg-panel p-1 shadow-[0_24px_48px_-24px_color-mix(in_srgb,var(--ink)_40%,transparent)]">
             {LANGS.map((l) => (
               <li key={l.id} role="option" aria-selected={l.id === lang}>
-                <Link to={l.to} onClick={() => setOpen(false)} className="flex items-center justify-between gap-6 rounded-xl px-3 py-2 transition-colors hover:bg-surface">
+                <Link to={(page ? `${l.id === "zh" ? "/zh" : ""}/${page}` : l.to) as never} onClick={() => setOpen(false)} className="flex items-center justify-between gap-6 rounded-xl px-3 py-2 transition-colors hover:bg-surface">
                   <span>{l.label}</span>
                   {l.id === lang && <Check size={14} weight="bold" className="text-gleam" />}
                 </Link>

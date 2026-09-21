@@ -25,21 +25,21 @@ export default function Hero({ lang }: { lang: Lang }) {
 
   return (
     <section className="mx-auto max-w-6xl px-5 pt-16 md:pt-24">
-      <h1 className="max-w-4xl text-[clamp(2.25rem,6vw,4.5rem)] font-semibold leading-[1.05] tracking-tighter">
+      <h1 className="max-w-4xl text-[clamp(2.25rem,6vw,4.5rem)] font-semibold leading-[1.05] tracking-[-0.035em]">
         <Line delay={0.05} quiet>{c.title[0]}</Line>
         <Line delay={0.16}>{c.title[1]}</Line>
       </h1>
       <p className="a-fade mt-6 max-w-xl text-lg text-ash" style={d(0.4)}>{c.body}</p>
       <div className="a-fade mt-9 flex flex-wrap gap-3" style={d(0.5)}>
-        <a href="#download" className="inline-flex min-h-12 items-center whitespace-nowrap rounded-full bg-ink px-6 font-medium text-on-ink transition-transform duration-150 active:translate-y-px">{c.cta}</a>
-        <a href="#flow" className="inline-flex min-h-12 items-center whitespace-nowrap rounded-full border border-line px-6 font-medium transition-colors hover:bg-surface active:translate-y-px">{c.secondary}</a>
+        <a href="#download" className="inline-flex min-h-12 items-center whitespace-nowrap py-3 rounded-full bg-ink px-6 font-medium text-on-ink transition-transform duration-150 active:translate-y-px">{c.cta}</a>
+        <a href="#flow" className="inline-flex min-h-12 items-center whitespace-nowrap py-3 rounded-full border border-line px-6 font-medium transition-colors hover:bg-surface active:translate-y-px">{c.secondary}</a>
       </div>
 
       <div ref={shot} className="a-shot relative mt-14 md:mt-20" style={{ perspective: 1600 }}>
         {/* The light of the photographs spills softly behind the window, as it would from a lit screen in a dark room. */}
         <div aria-hidden className="pointer-events-none absolute inset-x-[8%] -bottom-8 top-10 -z-10 overflow-hidden rounded-[48px] opacity-40 blur-3xl saturate-150">
-          <img src="/shots/wall-dark.jpg" alt="" className="for-dark h-full w-full object-cover" />
-          <img src="/shots/wall-light.jpg" alt="" className="for-light h-full w-full object-cover" />
+          <img src="/shots/glow-dark.webp" alt="" width={96} height={60} className="for-dark h-full w-full object-cover" />
+          <img src="/shots/glow-light.webp" alt="" width={96} height={60} className="for-light h-full w-full object-cover" />
         </div>
         <motion.div style={reduce ? undefined : { rotateX, scale, transformOrigin: "50% 0%" }}>
           <Frame shot="wall" alt={c.alt} priority />

@@ -26,7 +26,6 @@
 
 @theme inline {
   --font-sans: "Geist Variable", ui-sans-serif, system-ui, "PingFang SC", "Noto Sans SC", sans-serif;
-  --font-mono: "Geist Mono Variable", ui-monospace, "SF Mono", monospace;
   --color-canvas: var(--canvas);
   --color-panel: var(--panel);
   --color-surface: var(--surface);

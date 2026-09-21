@@ -1,0 +1,86 @@
+import type { Lang } from "./content";
+
+export type Section = { h: string; p?: readonly string[]; ul?: readonly string[] };
+export type Doc = { title: string; updated: string; intro: string; sections: readonly Section[] };
+
+/** Where readers reach the operator. Fill this in before publishing: the legal pages show a notice until it is set. */
+export const CONTACT_EMAIL = "";
+
+export const legal: Record<Lang, { privacy: Doc; terms: Doc; labels: { updated: string; contact: string; contactMissing: string; back: string; privacy: string; terms: string } }> = {
+  en: {
+    labels: { updated: "Last updated", contact: "Contact", contactMissing: "A contact address will be published here before release.", back: "Back to home", privacy: "Privacy Policy", terms: "Terms of Use" },
+    privacy: {
+      title: "Privacy Policy",
+      updated: "September 21, 2026",
+      intro: "FleetingGleam is built so that your photos never leave your computer. This policy explains what the app and this website do and do not do with information.",
+      sections: [
+        { h: "The short version", ul: ["Your photos are analysed on your own computer and are never uploaded.", "There is no account, and the app does not collect analytics or usage data.", "The app downloads model files from a server the first time a feature needs them. That is the only network activity the app initiates.", "This website uses no cookies and no analytics."] },
+        { h: "What the app does with your photos", p: ["When you open a folder, FleetingGleam reads the photos in it and analyses them locally: sharpness, exposure, faces, similarity and a visual score. Original files are not modified. Organising photos moves or copies files only when you ask it to."] },
+        { h: "What is stored on your computer", p: ["To avoid repeating work, the app keeps the following in its own data folder on your computer:"], ul: ["Thumbnails and larger previews of your photos.", "Analysis results such as scores and numeric descriptions of each photo.", "Your keep, review and reject decisions, your projects, and the taste the app has learned from them.", "Settings, and the model files you have downloaded."] },
+        { h: "What we collect", p: ["We do not collect your photos, file names, analysis results, decisions or any personal information. None of the data above is sent to us or to anyone else."] },
+        { h: "Model downloads", p: ["The models that power search, scoring and scene detection are not bundled with the installer. When you first use a feature that needs one, the app asks you and downloads it from a model server, and checks its integrity after downloading. Like any download, this request reveals your IP address, the time and the name of the file to the server and its hosting provider. The app does not send any photo, identifier or usage information with the request."] },
+        { h: "System frameworks", p: ["On macOS the app may use Apple's on-device frameworks, such as Vision, for face and image analysis. These run locally and are governed by Apple's terms."] },
+        { h: "This website", p: ["This website is a static site. It sets no cookies and uses no analytics or advertising trackers. Your language and light or dark theme choice are stored in your browser's local storage so they are remembered, and never sent anywhere. Our hosting provider may keep standard server logs, such as IP address and requested page, for security and operation."] },
+        { h: "Your choices", p: ["In Settings you can clear the analysis cache, reset what the app has learned, and delete downloaded models. Removing the app's data folder deletes everything it has stored. You can also disable photo search and other model features at any time."] },
+        { h: "Children", p: ["FleetingGleam is not directed at children, and because it collects no personal information it does not knowingly collect any from children."] },
+        { h: "Changes to this policy", p: ["If the app or this policy changes in a way that affects your privacy, we will update this page and the date above. Material changes will also be described in the release notes."] },
+      ],
+    },
+    terms: {
+      title: "Terms of Use",
+      updated: "September 21, 2026",
+      intro: "These terms apply to your use of the FleetingGleam application and this website. By installing or using them you agree to these terms.",
+      sections: [
+        { h: "The software", p: ["FleetingGleam is a desktop application that helps you group, compare and select photographs on your own computer. We grant you a personal, non-exclusive, non-transferable, revocable licence to install and use the application for your own purposes."] },
+        { h: "What you may not do", ul: ["Copy, sell, rent, sublicense or redistribute the application or its downloaded models, except as the law or a component's own licence allows.", "Reverse engineer, decompile, extract or attempt to derive the source code, models or protection mechanisms of the application, except to the extent the law expressly permits despite this restriction.", "Remove or bypass any technical protection, or use the application to build a competing product.", "Use the application in a way that breaks the law or the rights of others."] },
+        { h: "Your photos", p: ["Your photos remain yours. We claim no rights in them, and they are never uploaded to us. You are responsible for having the right to process the photos you open. Because organising can move files and send them to the Trash, keep backups of photos you care about."] },
+        { h: "Scores are suggestions", p: ["Scores, groupings, search results and recommendations are automatic estimates. They can be wrong. Decisions about which photos to keep or delete are yours, and we are not responsible for photos you choose to discard."] },
+        { h: "Models and third-party components", p: ["The application uses models and open-source components that are provided under their own licences. Those licences apply to those parts alongside these terms. Models are downloaded on demand and may be updated or withdrawn."] },
+        { h: "Updates and availability", p: ["We may change, update or discontinue features or the website at any time. The application may not be available on every platform or in every region."] },
+        { h: "No warranty", p: ["The application and website are provided as they are and as available, without warranties of any kind, whether express or implied, including fitness for a particular purpose, accuracy of results and uninterrupted or error-free operation, to the extent the law allows."] },
+        { h: "Limitation of liability", p: ["To the extent the law allows, we are not liable for indirect, incidental or consequential damages, or for loss of data or photographs, arising from your use of the application or website. Where liability cannot be excluded, it is limited to the amount you paid for the application in the twelve months before the claim, or zero if it was free."] },
+        { h: "Ending these terms", p: ["You may stop using the application at any time by uninstalling it. We may end your licence if you break these terms. Sections that by their nature should continue, such as the restrictions, disclaimers and limits of liability, will continue after that."] },
+        { h: "Governing law", p: ["These terms are governed by the laws of the place where the operator of FleetingGleam is established, without regard to conflict of law rules, unless the mandatory law of your country of residence says otherwise."] },
+        { h: "Changes to these terms", p: ["We may update these terms. The date above shows the latest version, and continuing to use the application after an update means you accept it."] },
+      ],
+    },
+  },
+  zh: {
+    labels: { updated: "最后更新", contact: "联系方式", contactMissing: "发布前会在此处公布联系邮箱。", back: "返回首页", privacy: "隐私政策", terms: "用户协议" },
+    privacy: {
+      title: "隐私政策",
+      updated: "2026 年 9 月 21 日",
+      intro: "惊鸿（FleetingGleam）的设计原则是：你的照片不会离开你的电脑。本政策说明应用和本网站会怎样处理、以及不会处理哪些信息。",
+      sections: [
+        { h: "简短版本", ul: ["照片在你自己的电脑上分析，不会被上传。", "没有账号，应用不收集统计或使用数据。", "应用只会在你第一次用到某项功能时，从服务器下载所需的模型文件。这是应用主动发起的唯一网络请求。", "本网站不使用 Cookie，也不使用统计工具。"] },
+        { h: "应用如何处理你的照片", p: ["打开文件夹后，惊鸿会读取其中的照片并在本机分析：清晰度、曝光、人脸、相似度和视觉评分。原始文件不会被修改。只有在你要求整理时，应用才会移动或复制文件。"] },
+        { h: "保存在你电脑上的内容", p: ["为避免重复计算，应用会把以下内容保存在自己位于你电脑上的数据文件夹里："], ul: ["照片的缩略图和较大的预览图。", "分析结果，例如评分和每张照片的数值描述。", "你的保留、待定、淘汰决定，你的项目，以及应用据此学到的偏好。", "设置，以及你已下载的模型文件。"] },
+        { h: "我们收集什么", p: ["我们不收集你的照片、文件名、分析结果、决定或任何个人信息。上述数据不会发送给我们或任何第三方。"] },
+        { h: "模型下载", p: ["支持搜索、评分和场景识别的模型不随安装包提供。当你第一次使用需要它的功能时，应用会先询问你，再从模型服务器下载，下载后会校验完整性。与任何下载一样，这个请求会让服务器及其托管服务商看到你的 IP 地址、请求时间和文件名。应用不会随请求发送任何照片、标识符或使用信息。"] },
+        { h: "系统框架", p: ["在 macOS 上，应用可能使用苹果的本机框架（例如 Vision）做人脸和图像分析。这些框架在本机运行，受苹果条款约束。"] },
+        { h: "本网站", p: ["本网站是静态网站，不设置 Cookie，不使用统计或广告追踪。你选择的语言和明暗主题保存在浏览器的本地存储中，仅用于记住偏好，不会发送到任何地方。托管服务商可能出于安全和运行目的保留标准的服务器日志，例如 IP 地址和访问的页面。"] },
+        { h: "你的选择", p: ["在设置中，你可以清除分析缓存、重置应用学到的偏好，并删除已下载的模型。删除应用的数据文件夹即可清除它保存的全部内容。你也可以随时关闭照片搜索等依赖模型的功能。"] },
+        { h: "未成年人", p: ["惊鸿不面向儿童。由于它不收集任何个人信息，也不会有意收集儿童的信息。"] },
+        { h: "本政策的变更", p: ["如果应用或本政策的变化会影响你的隐私，我们会更新本页面和上方日期，重大变化也会写入版本说明。"] },
+      ],
+    },
+    terms: {
+      title: "用户协议",
+      updated: "2026 年 9 月 21 日",
+      intro: "本协议适用于你对惊鸿应用和本网站的使用。安装或使用即表示你同意本协议。",
+      sections: [
+        { h: "软件", p: ["惊鸿是一款桌面应用，帮助你在自己的电脑上分组、对比和挑选照片。我们授予你个人的、非独占的、不可转让的、可撤销的许可，用于为自己的目的安装和使用本应用。"] },
+        { h: "你不可以", ul: ["复制、出售、出租、转授权或再分发本应用及其下载的模型，法律或组件自身许可另有允许的除外。", "对本应用的源代码、模型或保护机制进行逆向工程、反编译、提取或试图推导，法律明确允许的范围除外。", "移除或绕过任何技术保护措施，或利用本应用制作竞争产品。", "以违反法律或侵犯他人权利的方式使用本应用。"] },
+        { h: "你的照片", p: ["照片始终归你所有。我们对其不主张任何权利，也不会收到它们。你应确保有权处理你打开的照片。由于整理功能可能移动文件并将其放入废纸篓，请为重要的照片保留备份。"] },
+        { h: "评分只是建议", p: ["评分、分组、搜索结果和推荐都是自动估计，可能出错。保留还是删除哪些照片由你决定，对于你选择丢弃的照片，我们不承担责任。"] },
+        { h: "模型与第三方组件", p: ["本应用使用的模型和开源组件适用其各自的许可，这些许可与本协议一并适用于相应部分。模型按需下载，可能被更新或撤回。"] },
+        { h: "更新与可用性", p: ["我们可能随时更改、更新或停止提供部分功能或本网站。本应用不一定在所有平台或地区提供。"] },
+        { h: "不作保证", p: ["在法律允许的范围内，本应用和网站按现状提供，不附带任何明示或暗示的保证，包括对特定用途的适用性、结果的准确性，以及运行不中断或无错误。"] },
+        { h: "责任限制", p: ["在法律允许的范围内，对于因使用本应用或网站而产生的间接、附带或后果性损害，或数据、照片的丢失，我们不承担责任。无法排除责任时，责任以你在索赔前十二个月内为本应用支付的金额为限；如果应用免费，则为零。"] },
+        { h: "协议的终止", p: ["你可以随时卸载应用以停止使用。如果你违反本协议，我们可以终止你的许可。按其性质应当继续有效的条款，例如限制、免责和责任限制，在终止后仍然有效。"] },
+        { h: "适用法律", p: ["本协议受惊鸿运营方所在地的法律管辖，不适用其冲突法规则，但你居住国的强制性法律另有规定的除外。"] },
+        { h: "协议的变更", p: ["我们可能更新本协议。上方日期标明最新版本，更新后继续使用即表示你接受。"] },
+      ],
+    },
+  },
+};

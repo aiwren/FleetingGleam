@@ -13,9 +13,9 @@ function Tile({ className = "", i, children }: { className?: string; i: number; 
   const move = (e: MouseEvent<HTMLElement>) => { const r = e.currentTarget.getBoundingClientRect(); x.set(e.clientX - r.left); y.set(e.clientY - r.top); };
   return (
     <motion.article onMouseMove={move} initial={{ opacity: 0, y: 40 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, amount: 0.25 }} transition={{ duration: 0.8, ease: EASE, delay: (i % 2) * 0.08 }}
-      className={`group relative overflow-hidden rounded-3xl border border-line p-7 md:p-8 ${className}`}>
+      className={`group relative flex flex-col overflow-hidden rounded-3xl border border-line p-7 md:p-8 ${className}`}>
       <motion.div aria-hidden className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-500 group-hover:opacity-100" style={{ background: glow }} />
-      <div className="relative flex h-full flex-col">{children}</div>
+      <div className="relative flex flex-1 flex-col">{children}</div>
     </motion.article>
   );
 }
@@ -67,10 +67,10 @@ function Typer({ phrases }: { phrases: readonly (readonly [string, string])[] })
         <span className="truncate">{text}</span>
         <motion.i className="-ml-2 h-5 w-px bg-gleam" animate={reduce ? undefined : { opacity: [1, 0, 1] }} transition={{ duration: 1, repeat: Infinity }} />
       </div>
-      <div className="relative mt-4 aspect-[3/2] overflow-hidden rounded-2xl border border-line bg-canvas/40">
+      <div className="relative mt-4 aspect-[3/2] overflow-hidden rounded-2xl">
         <AnimatePresence>
           {shown && (
-            <motion.img key={shown} src={`/photos/${shown}.jpg`} alt="" width={720} height={480} loading="lazy" draggable={false}
+            <motion.img key={shown} src={`/photos/${shown}.webp`} alt="" width={720} height={480} loading="lazy" draggable={false}
               initial={{ opacity: 0, scale: 1.06 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.7, ease: EASE }}
               className="absolute inset-0 h-full w-full object-cover" />
           )}
@@ -103,8 +103,8 @@ function Picks() {
   return (
     <div className="mt-auto grid grid-cols-2 gap-3 pt-10 sm:grid-cols-4" aria-hidden>
       {names.map((n, i) => (
-        <div key={n} className="relative aspect-[3/2] overflow-hidden rounded-2xl border border-line">
-          <img src={`/photos/${n}.jpg`} alt="" width={720} height={480} loading="lazy" draggable={false} className="h-full w-full object-cover" />
+        <div key={n} className="relative aspect-[3/2] overflow-hidden rounded-2xl">
+          <img src={`/photos/${n}.webp`} alt="" width={720} height={480} loading="lazy" draggable={false} className="h-full w-full object-cover" />
           <motion.span initial={reduce ? false : { scale: 0, opacity: 0 }} whileInView={{ scale: 1, opacity: 1 }} viewport={{ once: true, amount: 0.8 }}
             transition={{ type: "spring", stiffness: 380, damping: 22, delay: 0.5 + i * 0.28 }}
             className="absolute right-2 top-2 grid size-6 place-items-center rounded-full bg-gleam text-gleam-ink"><Check size={13} weight="bold" /></motion.span>
@@ -119,13 +119,13 @@ export default function Bento({ lang }: { lang: Lang }) {
   return (
     <section id="features" className="mx-auto max-w-6xl px-5 pt-40 md:pt-56">
       <motion.h2 initial={{ opacity: 0, y: 24 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ duration: 0.8, ease: EASE }}
-        className="max-w-3xl text-[clamp(1.9rem,4.4vw,3.25rem)] font-semibold leading-[1.1] tracking-tighter text-balance">{c.title}</motion.h2>
+        className="max-w-3xl text-[clamp(1.9rem,4.4vw,3.25rem)] font-semibold leading-[1.1] tracking-[-0.035em] text-balance">{c.title}</motion.h2>
       <div className="mt-14 grid gap-4 md:grid-cols-6">
         <Tile i={0} className="bg-panel md:col-span-4">
           <H>{c.a.t}</H><P>{c.a.d}</P>
-          <div className="relative mt-8 h-[260px] overflow-hidden rounded-2xl border border-line md:h-[300px]">
+          <div className="relative mt-8 h-[260px] overflow-hidden rounded-2xl md:h-[300px]">
             {(["dark", "light"] as const).map((t) => (
-              <img key={t} src={`/shots/compare-${t}.jpg`} alt={c.a.alt} loading="lazy" width={2400} height={1500} draggable={false}
+              <img key={t} src={`/shots/compare-${t}-1200.webp`} srcSet={`/shots/compare-${t}-1200.webp 1200w, /shots/compare-${t}-2400.webp 2400w`} sizes="(min-width: 768px) 700px, 100vw" alt={c.a.alt} loading="lazy" width={2400} height={1500} draggable={false}
                 className={`h-full w-full object-cover object-top transition-transform duration-700 ease-out-expo group-hover:scale-[1.03] ${t === "dark" ? "for-dark" : "for-light"}`} />
             ))}
           </div>
