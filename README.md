@@ -5,7 +5,7 @@
 ```
 apps/
   desktop/   Tauri 2 + React + Rust 桌面应用（macOS 优先）
-  web/       落地页，TanStack Start
+  web/       落地页，TanStack Start + Tailwind v4 + Motion，英文在 `/`，中文在 `/zh`
 packages/    以后放前后端共用的类型和 manifest 格式
 docs/        设计与保护方案
 branding/    Logo 与图标源文件
@@ -16,7 +16,7 @@ branding/    Logo 与图标源文件
 ```bash
 pnpm install
 pnpm dev:desktop   # 桌面应用（tauri dev）
-pnpm dev:web       # 落地页，http://localhost:3000
+pnpm dev:web       # 落地页，http://localhost:3150
 pnpm build:web
 ```
 

@@ -3,6 +3,6 @@ import Landing from "../components/Landing";
 import { copy } from "../content";
 
 export const Route = createFileRoute("/")({
-  head: () => ({ meta: [{ title: copy.zh.title }, { name: "description", content: copy.zh.description }] }),
-  component: () => <Landing lang="zh" />,
+  head: () => ({ meta: [{ title: copy.en.title }, { name: "description", content: copy.en.description }] }),
+  component: () => <Landing lang="en" />,
 });
