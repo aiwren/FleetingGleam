@@ -12,7 +12,7 @@ export const Route = createRootRoute({
   component: () => {
     const zh = useRouterState({ select: (s) => s.location.pathname.startsWith("/zh") });
     return (
-      <html lang={zh ? "zh-CN" : "en"}>
+      <html lang={zh ? "zh-CN" : "en"} suppressHydrationWarning>
         <head>
           <HeadContent />
           {/* Settles the theme before the first paint so a stored choice never flashes the other one. */}

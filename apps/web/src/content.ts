@@ -16,14 +16,14 @@ export const copy = {
       alt: "The FleetingGleam photo wall with an inspector showing the score of the selected photo",
     },
     privacy: {
-      text: "Your photos stay on your computer. Analysis, grouping, search and learning your taste all run on this machine. Models download once, only when a feature needs them, and you can delete them any time.",
+      text: "Your photos stay on your computer. Analysis, search and learning your taste all run on this machine. Models download once, only when needed.",
       points: [["ShieldCheck", "No account, no uploads"], ["Aperture", "Models on demand"], ["Sparkle", "Works offline after setup"]],
     },
     features: {
-      title: "It looks over the shoot with you, and it knows your taste.",
+      title: "Sees the shoot the way you do.",
       a: { t: "Bursts, grouped for you", d: "Frames of one moment sit together and the best one is marked. Faces, orientation and time gap all count.", alt: "Two frames of one moment side by side, with scores and a suggested best" },
       b: { t: "Scored by kind of scene", d: "Portraits are judged by faces, night shots are not marked down for being dark, sport by focus.", kinds: ["Portrait", "Landscape", "Street", "Night", "Sport", "Macro", "Food", "Stage"] },
-      c: { t: "Find by describing", d: "Type what you remember. English and Chinese both work.", phrases: ["group photo on a red background", "an umbrella in the rain", "sunset over the sea"] },
+      c: { t: "Find by describing", d: "Type what you remember. English and Chinese both work, and photos are found by what is in them.", phrases: [["sunset over a field", "field"], ["a small boat on calm water", "boat"], ["white houses on a hill", "village"], ["green forest and stream", "forest"]] },
       d: { t: "Learns your taste", d: "Point it at a folder of past picks and it learns in one go. Keep one style for weddings, another for street.", styles: ["Travel", "Street", "Wedding"] },
     },
     flow: {
@@ -52,14 +52,14 @@ export const copy = {
       alt: "惊鸿的照片墙，右侧检查器显示所选照片的评分",
     },
     privacy: {
-      text: "你的照片只在你的电脑上。分析、分组、搜索和学习你的喜好，全部在本机完成。模型只在用到某项功能时下载一次，随时可以删除。",
+      text: "你的照片只在你的电脑上。分析、搜索和学习你的喜好，全部在本机完成。模型只在用到时下载一次。",
       points: [["ShieldCheck", "无需账号，不上传"], ["Aperture", "模型按需下载"], ["Sparkle", "设置好后可离线使用"]],
     },
     features: {
-      title: "陪你一起看片，也懂你的口味。",
+      title: "按你的眼光看片。",
       a: { t: "连拍自动分组", d: "同一瞬间的连拍排在一起，最好的一张有标记。人脸、方向和拍摄间隔都会参与判断。", alt: "同一瞬间的两张照片并排，显示评分和推荐" },
       b: { t: "按场景打分", d: "人像看脸，夜景不会因为暗被扣分，运动看对焦。", kinds: ["人像", "风景", "街拍", "夜景", "运动", "微距", "美食", "舞台"] },
-      c: { t: "用一句话找照片", d: "输入你记得的样子，中英文都可以。", phrases: ["红底合照", "雨中的伞", "海上日落"] },
+      c: { t: "用一句话找照片", d: "输入你记得的样子，中英文都可以，按照片里的内容来找。", phrases: [["田野上的日落", "field"], ["平静水面上的小船", "boat"], ["山坡上的白色房屋", "village"], ["森林里的溪流", "forest"]] },
       d: { t: "学你的口味", d: "指一个你过去挑好的文件夹，一次学会。婚礼一套风格，街拍另一套。", styles: ["旅行", "街拍", "婚礼"] },
     },
     flow: {

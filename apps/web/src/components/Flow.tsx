@@ -30,7 +30,7 @@ export default function Flow({ lang }: { lang: Lang }) {
   const reduce = useReducedMotion();
   const [now, setNow] = useState(0);
   return (
-    <section id="flow" className="mx-auto max-w-6xl px-5 pt-32 md:pt-48">
+    <section id="flow" className="mx-auto max-w-6xl px-5 pt-40 md:pt-56">
       <motion.h2 initial={{ opacity: 0, y: 24 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ duration: 0.8, ease: EASE }}
         className="max-w-2xl text-[clamp(1.9rem,4.4vw,3.25rem)] font-semibold leading-[1.1] tracking-tighter text-balance">{c.title}</motion.h2>
       <div className="mt-10 grid gap-x-16 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">

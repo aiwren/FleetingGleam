@@ -4,8 +4,9 @@ export default function Frame({ shot, alt, priority = false, className = "" }: {
     <img src={`/shots/${shot}-${theme}.jpg`} alt={alt} width={2400} height={1500} decoding="async" fetchPriority={priority && theme === "dark" ? "high" : "auto"}
       className={`h-auto w-full ${theme === "dark" ? "for-dark" : "for-light"}`} draggable={false} />
   );
+  // The shadow is tinted with the ink colour of the theme, and a hairline of light runs along the top edge like a real bezel.
   return (
-    <div className={`overflow-hidden rounded-3xl border border-line bg-panel shadow-[0_50px_100px_-50px_rgba(0,0,0,0.55)] ${className}`}>
+    <div className={`overflow-hidden rounded-3xl border border-line bg-panel shadow-[inset_0_1px_0_color-mix(in_srgb,var(--ink)_14%,transparent),0_50px_100px_-50px_color-mix(in_srgb,var(--ink)_38%,transparent)] ${className}`}>
       {img("dark")}{img("light")}
     </div>
   );

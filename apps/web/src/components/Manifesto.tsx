@@ -19,7 +19,7 @@ export default function Manifesto({ lang }: { lang: Lang }) {
   // Chinese has no spaces: light it a character group at a time instead.
   const words = lang === "zh" ? c.text.match(/.{1,3}/g)! : c.text.split(" ");
   return (
-    <section id="privacy" className="mx-auto max-w-6xl px-5 pt-32 md:pt-48">
+    <section id="privacy" className="mx-auto max-w-6xl px-5 pt-40 md:pt-56">
       <p ref={ref} className="max-w-4xl text-[clamp(1.6rem,3.6vw,2.75rem)] font-medium leading-[1.25] tracking-tight">
         {words.map((w, i) => reduce ? <span key={i}>{w}{lang === "zh" ? "" : " "}</span> : <Word key={i} w={w} sep={lang === "zh" ? "" : " "} progress={scrollYProgress} i={i} n={words.length} />)}
       </p>

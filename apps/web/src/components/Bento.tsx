@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode, type MouseEvent } from "react";
 import { AnimatePresence, motion, useMotionTemplate, useMotionValue, useReducedMotion } from "motion/react";
-import { MagnifyingGlass } from "@phosphor-icons/react";
+import { Check, MagnifyingGlass } from "@phosphor-icons/react";
 import { copy, type Lang } from "../content";
 import Frame from "./Frame";
 
@@ -29,7 +29,7 @@ function Kinds({ kinds }: { kinds: readonly string[] }) {
   const [on, setOn] = useState(0);
   useEffect(() => { if (reduce) return; const id = setInterval(() => setOn((v) => (v + 1) % kinds.length), 1400); return () => clearInterval(id); }, [kinds.length, reduce]);
   return (
-    <div className="mt-8 flex flex-wrap gap-2">
+    <div className="mt-auto flex flex-wrap gap-2 pt-8">
       {kinds.map((k, i) => (
         <span key={k} className={`relative rounded-full border px-3.5 py-1.5 text-sm transition-colors duration-500 ${i === on ? "border-transparent text-gleam-ink" : "border-line text-ash"}`}>
           {i === on && <motion.i layoutId="kind-pill" className="absolute inset-0 rounded-full bg-gleam" transition={{ type: "spring", stiffness: 260, damping: 28 }} />}
@@ -40,18 +40,20 @@ function Kinds({ kinds }: { kinds: readonly string[] }) {
   );
 }
 
-/** Types a few descriptions one after another, the way the search box is used. */
-function Typer({ phrases }: { phrases: readonly string[] }) {
+/** Types a few descriptions one after another, the way the search box is used; the photo that matches appears once it is typed. */
+function Typer({ phrases }: { phrases: readonly (readonly [string, string])[] }) {
   const reduce = useReducedMotion();
-  const [text, setText] = useState(reduce ? phrases[0] : "");
+  const [text, setText] = useState(reduce ? phrases[0][0] : "");
+  const [shown, setShown] = useState<string | null>(reduce ? phrases[0][1] : null);
   useEffect(() => {
     if (reduce) return;
     let alive = true, p = 0, n = 0, dir = 1, timer: ReturnType<typeof setTimeout>;
     const tick = () => {
       if (!alive) return;
-      const s = phrases[p];
-      n += dir; setText([...s].slice(0, n).join(""));
-      if (dir === 1 && n >= [...s].length) { dir = -1; timer = setTimeout(tick, 1600); return; }
+      const chars = [...phrases[p][0]];
+      n += dir; setText(chars.slice(0, n).join(""));
+      if (dir === 1 && n >= chars.length) { setShown(phrases[p][1]); dir = -1; timer = setTimeout(tick, 2200); return; }
+      if (dir === -1 && n === chars.length - 1) setShown(null);
       if (dir === -1 && n <= 0) { dir = 1; p = (p + 1) % phrases.length; timer = setTimeout(tick, 350); return; }
       timer = setTimeout(tick, dir === 1 ? 55 : 22);
     };
@@ -59,10 +61,21 @@ function Typer({ phrases }: { phrases: readonly string[] }) {
     return () => { alive = false; clearTimeout(timer); };
   }, [phrases, reduce]);
   return (
-    <div className="mt-8 flex h-12 items-center gap-3 rounded-full border border-line bg-canvas/60 px-5 text-ink" aria-hidden>
-      <MagnifyingGlass size={18} className="shrink-0 text-ash" />
-      <span className="truncate">{text}</span>
-      <motion.i className="-ml-2 h-5 w-px bg-gleam" animate={reduce ? undefined : { opacity: [1, 0, 1] }} transition={{ duration: 1, repeat: Infinity }} />
+    <div className="mt-8" aria-hidden>
+      <div className="flex h-12 items-center gap-3 rounded-full border border-line bg-canvas/60 px-5 text-ink">
+        <MagnifyingGlass size={18} className="shrink-0 text-ash" />
+        <span className="truncate">{text}</span>
+        <motion.i className="-ml-2 h-5 w-px bg-gleam" animate={reduce ? undefined : { opacity: [1, 0, 1] }} transition={{ duration: 1, repeat: Infinity }} />
+      </div>
+      <div className="relative mt-4 aspect-[3/2] overflow-hidden rounded-2xl border border-line bg-canvas/40">
+        <AnimatePresence>
+          {shown && (
+            <motion.img key={shown} src={`/photos/${shown}.jpg`} alt="" width={720} height={480} loading="lazy" draggable={false}
+              initial={{ opacity: 0, scale: 1.06 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.7, ease: EASE }}
+              className="absolute inset-0 h-full w-full object-cover" />
+          )}
+        </AnimatePresence>
+      </div>
     </div>
   );
 }
@@ -83,19 +96,37 @@ function Styles({ styles }: { styles: readonly string[] }) {
   );
 }
 
+/** A folder of past picks: each photo gets its amber mark in turn, the way the app reads them as the taste to learn from. */
+function Picks() {
+  const reduce = useReducedMotion();
+  const names = ["field", "village", "boat", "forest"];
+  return (
+    <div className="mt-auto grid grid-cols-2 gap-3 pt-10 sm:grid-cols-4" aria-hidden>
+      {names.map((n, i) => (
+        <div key={n} className="relative aspect-[3/2] overflow-hidden rounded-2xl border border-line">
+          <img src={`/photos/${n}.jpg`} alt="" width={720} height={480} loading="lazy" draggable={false} className="h-full w-full object-cover" />
+          <motion.span initial={reduce ? false : { scale: 0, opacity: 0 }} whileInView={{ scale: 1, opacity: 1 }} viewport={{ once: true, amount: 0.8 }}
+            transition={{ type: "spring", stiffness: 380, damping: 22, delay: 0.5 + i * 0.28 }}
+            className="absolute right-2 top-2 grid size-6 place-items-center rounded-full bg-gleam text-gleam-ink"><Check size={13} weight="bold" /></motion.span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function Bento({ lang }: { lang: Lang }) {
   const c = copy[lang].features;
   return (
-    <section id="features" className="mx-auto max-w-6xl px-5 pt-32 md:pt-48">
+    <section id="features" className="mx-auto max-w-6xl px-5 pt-40 md:pt-56">
       <motion.h2 initial={{ opacity: 0, y: 24 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ duration: 0.8, ease: EASE }}
         className="max-w-3xl text-[clamp(1.9rem,4.4vw,3.25rem)] font-semibold leading-[1.1] tracking-tighter text-balance">{c.title}</motion.h2>
       <div className="mt-14 grid gap-4 md:grid-cols-6">
-        <Tile i={0} className="bg-panel md:col-span-4 md:min-h-[480px]">
+        <Tile i={0} className="bg-panel md:col-span-4">
           <H>{c.a.t}</H><P>{c.a.d}</P>
-          <div className="relative mt-8 flex-1 overflow-hidden rounded-2xl border border-line">
+          <div className="relative mt-8 h-[260px] overflow-hidden rounded-2xl border border-line md:h-[300px]">
             {(["dark", "light"] as const).map((t) => (
               <img key={t} src={`/shots/compare-${t}.jpg`} alt={c.a.alt} loading="lazy" width={2400} height={1500} draggable={false}
-                className={`h-full min-h-[240px] w-full object-cover object-top transition-transform duration-700 ease-out-expo group-hover:scale-[1.03] ${t === "dark" ? "for-dark" : "for-light"}`} />
+                className={`h-full w-full object-cover object-top transition-transform duration-700 ease-out-expo group-hover:scale-[1.03] ${t === "dark" ? "for-dark" : "for-light"}`} />
             ))}
           </div>
         </Tile>
@@ -106,7 +137,7 @@ export default function Bento({ lang }: { lang: Lang }) {
           <H>{c.c.t}</H><P>{c.c.d}</P><Typer phrases={c.c.phrases} />
         </Tile>
         <Tile i={3} className="bg-panel md:col-span-4">
-          <H>{c.d.t}</H><P>{c.d.d}</P><Styles styles={c.d.styles} />
+          <H>{c.d.t}</H><P>{c.d.d}</P><Styles styles={c.d.styles} /><Picks />
         </Tile>
       </div>
     </section>
