@@ -31,3 +31,6 @@ apps/desktop/src-tauri/gen/
 !.vscode/extensions.json
 *.suo
 *.sw?
+
+# real sample photographs for screenshots (not redistributed)
+apps/desktop/public/dev-photos/

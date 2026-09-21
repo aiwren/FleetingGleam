@@ -211,11 +211,26 @@ w.__TAURI_INTERNALS__ = {
   },
 };
 
+/** Real photographs, when `public/dev-photos/<seed>.jpg` exists (git-ignored; used for screenshots). A burst is the same picture nudged a little. */
+async function photo(seed: number, w: number, h: number, shift: number): Promise<string | null> {
+  try {
+    const img = new Image();
+    img.src = `/dev-photos/${seed}.jpg`;
+    await img.decode();
+    const c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    const g = c.getContext("2d")!;
+    const zoom = 1 + shift * 0.004, dx = shift * 0.6, dy = shift * 0.25;
+    g.drawImage(img, -(w * (zoom - 1)) / 2 + dx, -(h * (zoom - 1)) / 2 + dy, w * zoom, h * zoom);
+    return c.toDataURL("image/jpeg", 0.88);
+  } catch { return null; }
+}
+
 // Paint everything up front so images are ready the instant the UI asks for them.
 const painted = new Map<string, string>();
 for (const s of SRC) {
   const key = `${s.seed}|${s.w}|${s.h}|${s.shift}`;
-  const url = painted.get(key) ?? paint(s.seed, s.w, s.h, s.shift);
+  const url = painted.get(key) ?? (await photo(s.seed, s.w, s.h, s.shift)) ?? paint(s.seed, s.w, s.h, s.shift);
   painted.set(key, url);
   images.set(s.path, url);
   images.set(s.path.replace(".jpg", ".thumb"), url);

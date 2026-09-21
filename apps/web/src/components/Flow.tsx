@@ -3,7 +3,7 @@ import { AnimatePresence, motion, useInView, useReducedMotion } from "motion/rea
 import { copy, type Lang } from "../content";
 import Frame from "./Frame";
 
-const SHOTS = ["/shots/wall.jpg", "/shots/compare.jpg", "/shots/wall.jpg"];
+const SHOTS = ["wall", "compare", "wall"] as const;
 const EASE = [0.16, 1, 0.3, 1] as const;
 
 function Step({ n, title, body, active, onEnter, alt }: { n: number; title: string; body: string; active: boolean; onEnter: () => void; alt: string }) {
@@ -18,7 +18,7 @@ function Step({ n, title, body, active, onEnter, alt }: { n: number; title: stri
         <div>
           <h3 className="text-2xl font-semibold tracking-tight">{title}</h3>
           <p className="mt-2 max-w-md text-ash">{body}</p>
-          <Frame src={SHOTS[n - 1]} alt={alt} className="mt-6 lg:hidden" />
+          <Frame shot={SHOTS[n - 1]} alt={alt} className="mt-6 lg:hidden" />
         </div>
       </div>
     </li>
@@ -40,7 +40,7 @@ export default function Flow({ lang }: { lang: Lang }) {
         <div className="sticky top-28 hidden h-fit self-start lg:block">
           <AnimatePresence mode="popLayout" initial={false}>
             <motion.div key={now} initial={reduce ? false : { opacity: 0, scale: 0.97, y: 16 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={reduce ? undefined : { opacity: 0, scale: 1.02 }} transition={{ duration: 0.6, ease: EASE }}>
-              <Frame src={SHOTS[now]} alt={c.steps[now][0]} />
+              <Frame shot={SHOTS[now]} alt={c.steps[now][0]} />
             </motion.div>
           </AnimatePresence>
         </div>

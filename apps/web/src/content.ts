@@ -4,6 +4,7 @@ export type Lang = "en" | "zh";
 export const copy = {
   en: {
     home: "/", other: { label: "中文", to: "/zh" },
+    theme: "Switch light or dark theme",
     name: "FleetingGleam", latin: "",
     title: "FleetingGleam | Local photo culling for your Mac",
     description: "FleetingGleam groups your bursts and picks the best frame on your own computer. Nothing is uploaded.",
@@ -39,6 +40,7 @@ export const copy = {
   },
   zh: {
     home: "/zh", other: { label: "EN", to: "/" },
+    theme: "切换明暗主题",
     name: "惊鸿", latin: "FleetingGleam",
     title: "惊鸿 FleetingGleam | 本地照片筛选",
     description: "惊鸿在你的电脑上把连拍分好组，挑出最好的一张。照片不上传。",

@@ -6,8 +6,23 @@
   color-scheme: dark;
 }
 @media (prefers-color-scheme: light) {
-  :root { --canvas: #fbfbfc; --panel: #f3f3f5; --surface: #ebebee; --ink: #111113; --ash: #62626b; --line: rgba(0,0,0,.09); --on-ink: #fbfbfc; --gleam: #b9791a; color-scheme: light; }
+  :root:not([data-theme]) { --canvas: #fbfbfc; --panel: #f3f3f5; --surface: #ebebee; --ink: #111113; --ash: #62626b; --line: rgba(0,0,0,.09); --on-ink: #fbfbfc; --gleam: #b9791a; color-scheme: light; }
 }
+
+:root[data-theme="dark"] { --canvas: #0e0e10; --panel: #151517; --surface: #1d1d20; --ink: #ededef; --ash: #9a9aa3; --line: rgba(255,255,255,.09); --on-ink: #0e0e10; --gleam: #e8b45c; color-scheme: dark; }
+:root[data-theme="light"] { --canvas: #fbfbfc; --panel: #f3f3f5; --surface: #ebebee; --ink: #111113; --ash: #62626b; --line: rgba(0,0,0,.09); --on-ink: #fbfbfc; --gleam: #b9791a; color-scheme: light; }
+
+/* Screenshots and icons that exist in a dark and a light version show the one for the current theme. */
+.for-light { display: none; }
+:root[data-theme="light"] .for-light { display: block; }
+:root[data-theme="light"] .for-dark { display: none; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .for-light { display: block; }
+  :root:not([data-theme]) .for-dark { display: none; }
+}
+.theme-sun { display: none; }
+:root[data-theme="dark"] .theme-sun { display: block; }
+:root[data-theme="dark"] .theme-moon { display: none; }
 
 @theme inline {
   --font-sans: "Geist Variable", ui-sans-serif, system-ui, "PingFang SC", "Noto Sans SC", sans-serif;

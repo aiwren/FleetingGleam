@@ -93,7 +93,10 @@ export default function Bento({ lang }: { lang: Lang }) {
         <Tile i={0} className="bg-panel md:col-span-4 md:min-h-[480px]">
           <H>{c.a.t}</H><P>{c.a.d}</P>
           <div className="relative mt-8 flex-1 overflow-hidden rounded-2xl border border-line">
-            <img src="/shots/compare.jpg" alt={c.a.alt} loading="lazy" width={2400} height={1500} className="h-full min-h-[240px] w-full object-cover object-top transition-transform duration-700 ease-out-expo group-hover:scale-[1.03]" draggable={false} />
+            {(["dark", "light"] as const).map((t) => (
+              <img key={t} src={`/shots/compare-${t}.jpg`} alt={c.a.alt} loading="lazy" width={2400} height={1500} draggable={false}
+                className={`h-full min-h-[240px] w-full object-cover object-top transition-transform duration-700 ease-out-expo group-hover:scale-[1.03] ${t === "dark" ? "for-dark" : "for-light"}`} />
+            ))}
           </div>
         </Tile>
         <Tile i={1} className="bg-gleam/[0.09] md:col-span-2">

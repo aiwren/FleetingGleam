@@ -39,7 +39,7 @@ export default function Hero({ lang }: { lang: Lang }) {
 
       <div ref={shot} className="mt-14 md:mt-20" style={{ perspective: 1600 }}>
         <motion.div style={reduce ? undefined : { rotateX, scale, transformOrigin: "50% 0%" }} initial={reduce ? false : { opacity: 0, y: 60 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 1.1, ease: EASE, delay: 0.55 }}>
-          <Frame src="/shots/wall.jpg" alt={c.alt} priority />
+          <Frame shot="wall" alt={c.alt} priority />
         </motion.div>
       </div>
     </section>

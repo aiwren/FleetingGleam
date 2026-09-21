@@ -1,5 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { copy, type Lang } from "../content";
+import LangMenu from "./LangMenu";
+import ThemeToggle from "./ThemeToggle";
 
 export default function Header({ lang }: { lang: Lang }) {
   const c = copy[lang];
@@ -15,7 +17,8 @@ export default function Header({ lang }: { lang: Lang }) {
           {c.nav.map(([label, href]) => (
             <a key={href} href={href} className="hidden rounded-full px-3.5 py-1.5 text-ash transition-colors hover:bg-surface hover:text-ink md:inline-block">{label}</a>
           ))}
-          <Link to={c.other.to} className="ml-2 rounded-full border border-line px-3.5 py-1.5 transition-colors hover:bg-surface">{c.other.label}</Link>
+          <LangMenu lang={lang} />
+          <ThemeToggle label={c.theme} />
         </nav>
       </div>
     </header>
