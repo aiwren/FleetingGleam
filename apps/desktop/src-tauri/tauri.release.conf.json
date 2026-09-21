@@ -1,0 +1,7 @@
+{
+  "bundle": {
+    "resources": {
+      "bin/fg-vision": "bin/fg-vision"
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "fleetinggleam-monorepo",
+  "private": true,
+  "packageManager": "pnpm@11.21.0",
+  "scripts": {
+    "desktop": "pnpm --filter @fleetinggleam/desktop",
+    "web": "pnpm --filter @fleetinggleam/web",
+    "dev:desktop": "pnpm --filter @fleetinggleam/desktop tauri dev",
+    "dev:web": "pnpm --filter @fleetinggleam/web dev",
+    "build:web": "pnpm --filter @fleetinggleam/web build"
+  }
+}

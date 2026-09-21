@@ -1,0 +1,33 @@
+# dependencies and build output
+node_modules
+dist
+dist-ssr
+.output
+.nitro
+.tanstack
+.vinxi
+target
+*.local
+*.log
+
+# models, sealed models and keys never go into the repo
+apps/desktop/models/
+apps/desktop/dist-models/
+*.fgm
+*.onnx
+.env
+.env.*
+!.env.example
+*.key
+
+# generated
+apps/desktop/src-tauri/resources/
+apps/desktop/src-tauri/gen/
+
+# editors / OS
+.DS_Store
+.idea
+.vscode/*
+!.vscode/extensions.json
+*.suo
+*.sw?

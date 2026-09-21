@@ -1,0 +1,988 @@
+mod analyze;
+mod cache;
+mod prefs;
+pub mod seal;
+mod scorer;
+mod colorsig;
+mod modelpacks;
+mod textsearch;
+mod scene;
+mod scoring;
+mod vision;
+
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
+
+use analyze::Photo;
+use rayon::prelude::*;
+use serde::Serialize;
+use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+use tauri::{AppHandle, Emitter, Manager};
+use walkdir::WalkDir;
+
+#[derive(Serialize, Clone)]
+struct Progress {
+    done: usize,
+    total: usize,
+}
+
+#[derive(Serialize, Clone)]
+struct Stage<'a> {
+    path: &'a str,
+    stage: &'a str,
+    pct: u8,
+    thumb: Option<&'a str>,
+    width: Option<u32>,
+    height: Option<u32>,
+}
+
+#[derive(Serialize, Clone)]
+struct Info {
+    cpu_only: bool,
+    clip: Option<&'static str>,
+    model: Option<&'static str>,
+    vision: bool,
+    cores: usize,
+}
+
+
+#[derive(Serialize)]
+struct ProbeFile {
+    path: String,
+    /// Displayed size (EXIF orientation applied), read from the file header without decoding pixels.
+    width: u32,
+    height: u32,
+    /// True when a valid analysis for this exact file is already cached.
+    cached: bool,
+}
+
+#[derive(Serialize)]
+struct Probe {
+    files: Vec<ProbeFile>,
+    bytes: u64,
+    uncached: usize,
+}
+
+/// Shared, lazily loaded state: the analysis cache and the on-device taste model.
+struct AppState {
+    text: Mutex<Option<std::sync::Arc<textsearch::TextEncoder>>>,
+    cache: Mutex<Option<cache::Cache>>,
+    prefs: Mutex<prefs::Styles>,
+}
+
+fn data_dir(app: &AppHandle) -> PathBuf {
+    app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir().join("fleetinggleam"))
+}
+
+fn with_cache<R>(app: &AppHandle, f: impl FnOnce(&mut cache::Cache) -> R) -> R {
+    let st = app.state::<AppState>();
+    let mut guard = st.cache.lock().unwrap();
+    let c = guard.get_or_insert_with(|| cache::Cache::load(data_dir(app).join("analysis-cache.json")));
+    f(c)
+}
+
+/// Names that are never the user's photos: hidden files (this covers macOS `._IMG.jpg` resource forks and `.DS_Store`),
+/// and folders the system or a NAS keeps beside real content.
+fn is_junk(name: &str) -> bool {
+    name.starts_with('.') || matches!(name, "__MACOSX" | "@eaDir" | "$RECYCLE.BIN" | "System Volume Information" | "Thumbs.db" | "desktop.ini")
+}
+
+/// Photos below this size are icons or thumbnails, not photos.
+const MIN_PHOTO_BYTES: u64 = 8 * 1024;
+
+fn list_images(dir: &str) -> Vec<PathBuf> {
+    let mut files: Vec<_> = WalkDir::new(dir)
+        .into_iter()
+        .filter_entry(|e| e.depth() == 0 || !is_junk(&e.file_name().to_string_lossy()))
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file() && analyze::is_image(e.path()) && e.metadata().map_or(false, |m| m.len() >= MIN_PHOTO_BYTES))
+        .map(|e| e.into_path())
+        .collect();
+    files.sort();
+    files
+}
+
+/// Every photo in the folders, without duplicates. A file whose header cannot be read (corrupt, or not really an image
+/// despite its extension) is left out here, so the count the user sees, the wall and the analysis all agree.
+fn list_all(dirs: &[String]) -> Vec<PathBuf> {
+    let mut all: Vec<PathBuf> = dirs.iter().flat_map(|d| list_images(d)).collect();
+    all.sort();
+    all.dedup();
+    all.into_par_iter().filter(|p| oriented_dims(p).is_some()).collect()
+}
+
+/// Where downloaded models live.
+fn downloaded_models_dir(app: &AppHandle) -> PathBuf {
+    data_dir(app).join("models")
+}
+
+/// Models are downloaded on demand into the app's data folder. Only a debug build may use the repo's `models/` folder instead
+/// (set FG_FORCE_DOWNLOAD=1 to test the download path); a release build carries no development paths at all.
+fn models_dir(app: &AppHandle) -> PathBuf {
+    #[cfg(debug_assertions)]
+    {
+        let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../models");
+        if std::env::var("FG_FORCE_DOWNLOAD").is_err() && seal::has_model(&dev, "clip_vit_b32_vision_int8.onnx") {
+            return dev;
+        }
+    }
+    downloaded_models_dir(app)
+}
+
+fn vision_bin(app: &AppHandle) -> PathBuf {
+    let bundled = app.path().resource_dir().map(|d| d.join("bin/fg-vision")).unwrap_or_default();
+    #[cfg(debug_assertions)]
+    {
+        if !bundled.exists() {
+            return PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("bin/fg-vision");
+        }
+    }
+    bundled
+}
+
+fn oriented_dims(p: &Path) -> Option<(u32, u32)> {
+    use image::metadata::Orientation as O;
+    use image::ImageDecoder;
+    let reader = image::ImageReader::open(p).ok()?.with_guessed_format().ok()?;
+    let mut dec = reader.into_decoder().ok()?;
+    let (w, h) = dec.dimensions();
+    Some(match dec.orientation().unwrap_or(O::NoTransforms) {
+        O::Rotate90 | O::Rotate270 | O::Rotate90FlipH | O::Rotate270FlipH => (h, w),
+        _ => (w, h),
+    })
+}
+
+/// Cheap pre-flight for a set of folders: every photo's true displayed size (so the wall can be laid out
+/// once, at final size, before any analysis) and whether it is already cached.
+#[tauri::command]
+async fn probe_folder(app: AppHandle, dirs: Vec<String>, compute: Option<String>, quality: Option<String>) -> Result<Probe, String> {
+    let tag = scorer::analysis_tag(scorer::resolve(&models_dir(&app), compute.as_deref() != Some("cpu"), scorer::Quality::parse(quality.as_deref())));
+    tauri::async_runtime::spawn_blocking(move || {
+        let files = list_all(&dirs);
+        let cached: Vec<bool> = with_cache(&app, |c| {
+            files
+                .iter()
+                .map(|p| cache::file_key(p).map_or(false, |(sz, mt)| c.get(&p.to_string_lossy(), sz, mt, &tag).is_some()))
+                .collect()
+        });
+        let out: Vec<ProbeFile> = files
+            .par_iter()
+            .zip(cached.par_iter())
+            .map(|(p, &cached)| {
+                let (width, height) = oriented_dims(p).unwrap_or((3, 2));
+                ProbeFile { path: p.to_string_lossy().into_owned(), width, height, cached }
+            })
+            .collect();
+        // Size of what still needs analysing, which is what the confirmation screen talks about.
+        let bytes = files.iter().zip(&out).filter(|(_, o)| !o.cached).filter_map(|(p, _)| std::fs::metadata(p).ok()).map(|m| m.len()).sum();
+        let uncached = out.iter().filter(|f| !f.cached).count();
+        Probe { files: out, bytes, uncached }
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Analyses whatever is new or changed, reuses the cache for the rest, then groups and scores every photo
+/// together. `learn` blends in the on-device taste model; `quiet` suppresses progress events (used for
+/// instant re-opens and re-scoring).
+#[tauri::command]
+async fn scan_project(app: AppHandle, dirs: Vec<String>, compute: Option<String>, quality: Option<String>, learn: bool, quiet: bool, style: Option<String>) -> Result<Vec<Photo>, String> {
+    let cpu_only = compute.as_deref() == Some("cpu");
+    let want = scorer::Quality::parse(quality.as_deref());
+    let cache_dir = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("thumbs");
+    std::fs::create_dir_all(&cache_dir).map_err(|e| e.to_string())?;
+    let model_dir = models_dir(&app);
+    let vision_bin = vision_bin(&app);
+    let tag = scorer::analysis_tag(scorer::resolve(&model_dir, !cpu_only, want));
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let files = list_all(&dirs);
+        let total = files.len();
+        let mut hits: Vec<Photo> = Vec::new();
+        let mut jobs: Vec<(PathBuf, u64, i64)> = Vec::new();
+        with_cache(&app, |c| {
+            for f in &files {
+                let key = f.to_string_lossy();
+                match cache::file_key(f) {
+                    Some((sz, mt)) => match c.get(&key, sz, mt, &tag) {
+                        Some(p) => hits.push(p),
+                        None => jobs.push((f.clone(), sz, mt)),
+                    },
+                    None => {}
+                }
+            }
+        });
+
+        let done = AtomicUsize::new(hits.len());
+        if !quiet {
+            let _ = app.emit("scan-progress", Progress { done: hits.len(), total });
+            for p in &hits {
+                let _ = app.emit("scan-photo", p);
+            }
+        }
+
+        let mut fresh: Vec<Photo> = Vec::new();
+        if !jobs.is_empty() {
+            // Models are only loaded when there is real work: re-opening a cached project is instant.
+            let scorer = scorer::ClipScorer::load(&model_dir, !cpu_only, want)
+                .map_err(|e| eprintln!("AI disabled: {e}"))
+                .ok();
+            let vision = vision::Vision::start(&vision_bin, 2, cpu_only);
+            if !quiet {
+                let _ = app.emit(
+                    "scan-info",
+                    Info {
+                        cpu_only,
+                        clip: scorer.as_ref().map(|s| s.backend),
+                        model: scorer.as_ref().map(|s| s.model),
+                        vision: vision.is_some(),
+                        cores: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1),
+                    },
+                );
+            }
+            fresh = jobs
+                .par_iter()
+                .filter_map(|(p, _, _)| {
+                    let key = p.to_string_lossy().into_owned();
+                    let on_stage = |stage: &str, pct: u8, thumb: Option<(&str, u32, u32)>| {
+                        if quiet {
+                            return;
+                        }
+                        let _ = app.emit(
+                            "scan-stage",
+                            Stage { path: &key, stage, pct, thumb: thumb.map(|t| t.0), width: thumb.map(|t| t.1), height: thumb.map(|t| t.2) },
+                        );
+                    };
+                    let r = analyze::analyze(p, &cache_dir, scorer.as_ref().map(|s| s as &dyn scorer::AiScorer), vision.as_ref(), &on_stage);
+                    let d = done.fetch_add(1, Ordering::Relaxed) + 1;
+                    if !quiet {
+                        if let Ok(photo) = &r {
+                            let _ = app.emit("scan-photo", photo);
+                        }
+                        let _ = app.emit("scan-progress", Progress { done: d, total });
+                    }
+                    r.map_err(|e| eprintln!("skip: {e}")).ok()
+                })
+                .collect();
+            with_cache(&app, |c| {
+                for p in &fresh {
+                    if let Some((sz, mt)) = cache::file_key(Path::new(&p.path)) {
+                        c.put(sz, mt, &tag, p);
+                    }
+                }
+                c.save();
+            });
+        }
+
+        // Photos analysed before eye openness existed get it now, from their saved analysis copy (only those with faces).
+        let mut hits = hits;
+        if hits.iter().any(|p| p.face_count > 0 && p.eyes_open.is_none()) {
+            if let Some(v) = vision::Vision::start(&vision_bin, 2, cpu_only) {
+                let measured: Vec<(usize, f32)> = hits
+                    .par_iter()
+                    .enumerate()
+                    .filter(|(_, p)| p.face_count > 0 && p.eyes_open.is_none())
+                    .filter_map(|(i, p)| analyze::measure_eyes(Path::new(&p.path), &cache_dir, &v).map(|e| (i, e)))
+                    .collect();
+                if !measured.is_empty() {
+                    for (i, e) in &measured {
+                        // no face big enough to measure is remembered as "very open", so it is not asked again
+                        hits[*i].eyes_open = Some(*e);
+                    }
+                    with_cache(&app, |c| {
+                        for (i, _) in &measured {
+                            if let Some((sz, mt)) = cache::file_key(Path::new(&hits[*i].path)) {
+                                c.put(sz, mt, &tag, &hits[*i]);
+                            }
+                        }
+                        c.save();
+                    });
+                }
+            }
+        }
+        let mut photos = hits;
+        photos.extend(fresh);
+        photos.sort_by(|a, b| a.path.cmp(&b.path));
+        let prefs = if learn { Some(app.state::<AppState>().prefs.lock().unwrap().get(style.as_deref()).prefs.clone()) } else { None };
+        analyze::group_and_score(&mut photos, prefs.as_ref().filter(|p| p.active()));
+        Ok(photos)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[derive(Serialize)]
+struct ExportResult {
+    copied: usize,
+    skipped: usize,
+    dest: String,
+}
+
+/// A path in `dir` that does not exist yet: `name.jpg`, then `name (2).jpg`, `name (3).jpg`, ...
+fn unique_path(dir: &Path, name: &std::ffi::OsStr) -> PathBuf {
+    let first = dir.join(name);
+    if !first.exists() {
+        return first;
+    }
+    let p = Path::new(name);
+    let stem = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let ext = p.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+    (2..)
+        .map(|n| dir.join(format!("{stem} ({n}){ext}")))
+        .find(|c| !c.exists())
+        .unwrap()
+}
+
+/// Copies the given photos into `dest`. Originals are never touched and nothing is overwritten.
+#[tauri::command]
+async fn export_photos(app: AppHandle, paths: Vec<String>, dest: String) -> Result<ExportResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dest_dir = PathBuf::from(&dest);
+        std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
+        let total = paths.len();
+        let (mut copied, mut skipped) = (0usize, 0usize);
+        for (i, p) in paths.iter().enumerate() {
+            let src = Path::new(p);
+            if analyze::is_image(src) && src.is_file() {
+                let target = unique_path(&dest_dir, src.file_name().unwrap_or_default());
+                match std::fs::copy(src, &target) {
+                    Ok(_) => copied += 1,
+                    Err(_) => skipped += 1,
+                }
+            } else {
+                skipped += 1;
+            }
+            let _ = app.emit("export-progress", Progress { done: i + 1, total });
+        }
+        Ok(ExportResult { copied, skipped, dest })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[derive(Serialize)]
+struct TrashResult {
+    moved: usize,
+    failed: Vec<String>,
+}
+
+/// Moves photos to the system trash (recoverable from Finder / Explorer). Only image files are accepted,
+/// so this can never be used to trash anything else.
+#[tauri::command]
+async fn trash_photos(paths: Vec<String>) -> Result<TrashResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        #[allow(unused_mut)]
+        let mut ctx = trash::TrashContext::default();
+        #[cfg(target_os = "macos")]
+        {
+            use trash::macos::{DeleteMethod, TrashContextExtMacos};
+            // NSFileManager needs no Finder automation permission prompt.
+            ctx.set_delete_method(DeleteMethod::NsFileManager);
+        }
+        let (mut moved, mut failed) = (0usize, Vec::new());
+        for p in paths {
+            let path = PathBuf::from(&p);
+            if analyze::is_image(&path) && path.is_file() && ctx.delete(&path).is_ok() {
+                moved += 1;
+            } else {
+                failed.push(p);
+            }
+        }
+        TrashResult { moved, failed }
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Path of a large cached preview for the viewer (created on first request).
+#[tauri::command]
+async fn large_preview(app: AppHandle, path: String) -> Result<String, String> {
+    let dir = thumbs_dir(&app)?.join("large");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let src = Path::new(&path);
+        let out = analyze::cache_name(src, ".l.jpg", &dir);
+        if !out.exists() {
+            let tmp = out.with_extension("tmp");
+            analyze::large_preview(src, &tmp)?;
+            std::fs::rename(&tmp, &out).map_err(|e| e.to_string())?;
+        }
+        Ok(out.to_string_lossy().into_owned())
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[derive(Serialize, Default)]
+struct FileInfo {
+    format: Option<String>,
+    bytes: u64,
+    color_space: Option<String>,
+    bit_depth: Option<String>,
+    camera: Option<String>,
+    lens: Option<String>,
+    focal: Option<String>,
+    aperture: Option<String>,
+    shutter: Option<String>,
+    iso: Option<String>,
+    software: Option<String>,
+    taken: Option<String>,
+}
+
+/// Basic file facts for the inspector: container format, size, colour space and the shooting parameters stored in EXIF.
+#[tauri::command]
+async fn photo_info(path: String) -> Result<FileInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let p = Path::new(&path);
+        let mut info = FileInfo { bytes: std::fs::metadata(p).map(|m| m.len()).unwrap_or(0), ..Default::default() };
+        info.format = image::ImageReader::open(p).ok().and_then(|r| r.with_guessed_format().ok()).and_then(|r| r.format())
+            .map(|f| format!("{f:?}").to_uppercase())
+            .or_else(|| p.extension().map(|e| e.to_string_lossy().to_uppercase()));
+        let Ok(file) = std::fs::File::open(p) else { return info; };
+        let Ok(ex) = exif::Reader::new().read_from_container(&mut std::io::BufReader::new(file)) else { return info; };
+        let get = |tag: exif::Tag| {
+            ex.get_field(tag, exif::In::PRIMARY)
+                .map(|f| match &f.value {
+                    // Text tags may carry several (often empty) strings; take the first real one.
+                    exif::Value::Ascii(parts) => parts.iter().map(|p| String::from_utf8_lossy(p).trim_matches(|c: char| c == '\0' || c.is_whitespace()).to_string()).find(|p| !p.is_empty()).unwrap_or_default(),
+                    _ => f.display_value().with_unit(&ex).to_string().trim().to_string(),
+                })
+                .filter(|v| !v.is_empty())
+        };
+        let make = get(exif::Tag::Make);
+        let model = get(exif::Tag::Model);
+        info.camera = match (make, model) {
+            (Some(a), Some(b)) => Some(if b.starts_with(&a) { b } else { format!("{a} {b}") }),
+            (a, b) => a.or(b),
+        };
+        info.lens = get(exif::Tag::LensModel);
+        info.focal = get(exif::Tag::FocalLength);
+        info.aperture = get(exif::Tag::FNumber);
+        info.shutter = get(exif::Tag::ExposureTime);
+        info.iso = get(exif::Tag::PhotographicSensitivity);
+        info.software = get(exif::Tag::Software);
+        info.taken = get(exif::Tag::DateTimeOriginal).or_else(|| get(exif::Tag::DateTime));
+        info.color_space = ex.get_field(exif::Tag::ColorSpace, exif::In::PRIMARY).and_then(|f| f.value.get_uint(0)).map(|v| match v { 1 => "sRGB".to_string(), 2 => "Adobe RGB".to_string(), 0xFFFF => "Uncalibrated".to_string(), n => n.to_string() });
+        info.bit_depth = get(exif::Tag::BitsPerSample);
+        info
+    }).await.map_err(|e| e.to_string())
+}
+
+// ---------------------------------------------------------------- search
+
+#[derive(Serialize)]
+struct SearchStatus {
+    total: usize,
+    ready: usize,
+    /// The text model is present, so searching is possible at all.
+    available: bool,
+}
+
+fn image_keys(dirs: &[String]) -> Vec<String> {
+    let mut all: Vec<PathBuf> = dirs.iter().flat_map(|d| list_images(d)).collect();
+    all.sort();
+    all.dedup();
+    all.into_iter().map(|p| p.to_string_lossy().into_owned()).collect()
+}
+
+/// How many of the photos can already be searched. Photos analysed with the quick model always can; the others need the index.
+#[tauri::command]
+async fn search_status(app: AppHandle, dirs: Vec<String>) -> Result<SearchStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let keys = image_keys(&dirs);
+        let ready = with_cache(&app, |c| keys.iter().filter(|k| c.semantic(k).is_some() && c.color(k).is_some()).count());
+        SearchStatus { total: keys.len(), ready, available: textsearch::TextEncoder::available(&models_dir(&app)) }
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Builds the search vectors that are missing. It reads the 640 px thumbnails made during analysis, so it is fast (tens of
+/// milliseconds a photo) and never touches the original files. Progress goes out as `search-index-progress`.
+#[tauri::command]
+async fn search_index(app: AppHandle, dirs: Vec<String>) -> Result<usize, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let keys = image_keys(&dirs);
+        let pending = with_cache(&app, |c| c.without_index(&keys));
+        if pending.is_empty() {
+            return Ok(0);
+        }
+        // the larger analysis model leaves no ViT-B/32 vector behind, so those photos get one here; the rest only need their colours
+        let scorer = if pending.iter().any(|p| p.4) { Some(scorer::ClipScorer::load(&models_dir(&app), true, scorer::Quality::Fast)?) } else { None };
+        let total = pending.len();
+        let mut done = 0usize;
+        let _ = app.emit("search-index-progress", Progress { done, total });
+        for chunk in pending.chunks(48) {
+            let made: Vec<(String, u64, i64, Option<Vec<f32>>, Vec<u8>)> = chunk
+                .par_iter()
+                .filter_map(|(key, thumb, size, mtime, need_vec)| {
+                    let img = image::open(thumb).ok()?;
+                    let sem = match (need_vec, scorer.as_ref()) {
+                        (true, Some(s)) => Some(<scorer::ClipScorer as scorer::AiScorer>::analyze(s, &img).ok()?.embedding),
+                        _ => None,
+                    };
+                    Some((key.clone(), *size, *mtime, sem, colorsig::signature(&img)))
+                })
+                .collect();
+            with_cache(&app, |c| {
+                for (key, size, mtime, sem, color) in made {
+                    c.set_index(&key, size, mtime, sem, color);
+                }
+            });
+            done += chunk.len();
+            let _ = app.emit("search-index-progress", Progress { done, total });
+        }
+        with_cache(&app, |c| c.save());
+        Ok(total)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[derive(Serialize)]
+struct Hit {
+    path: String,
+    name: String,
+    thumb: String,
+    width: u32,
+    height: u32,
+    score: f32,
+}
+
+/// Photos that match a description, best first. Words about how many people are in the picture are answered from the face
+/// detector (it counts far better than an image-text model); the rest is compared through the text model.
+#[tauri::command]
+async fn search_photos(app: AppHandle, dirs: Vec<String>, query: String) -> Result<Vec<Hit>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let q = textsearch::parse(&query);
+        let qv = match &q.text {
+            Some(t) => {
+                let encoder = {
+                    let st = app.state::<AppState>();
+                    let mut g = st.text.lock().unwrap();
+                    if g.is_none() {
+                        *g = Some(std::sync::Arc::new(textsearch::TextEncoder::load(&models_dir(&app))?));
+                    }
+                    g.as_ref().unwrap().clone()
+                };
+                Some(encoder.encode_query(t)?)
+            }
+            None => None,
+        };
+        let keys = image_keys(&dirs);
+        let hits: Vec<Hit> = with_cache(&app, |c| {
+            let rows: Vec<(&Photo, Option<Vec<f32>>, Option<Vec<u8>>)> =
+                keys.iter().filter_map(|k| c.photo(k).map(|p| (p, c.semantic(k), c.color(k).map(|x| x.to_vec())))).collect();
+            let items: Vec<textsearch::Item> = rows.iter().map(|(p, s, col)| textsearch::Item { sem: s.as_deref(), color: col.as_deref(), faces: p.face_count }).collect();
+            textsearch::rank(&q, qv.as_deref(), &items)
+                .into_iter()
+                .map(|(i, score)| {
+                    let p = rows[i].0;
+                    Hit { path: p.path.clone(), name: p.name.clone(), thumb: p.thumb.clone(), width: p.width, height: p.height, score }
+                })
+                .collect()
+        });
+        Ok(hits)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// ---------------------------------------------------------------- model packs (downloaded on demand)
+
+#[derive(Default)]
+struct Downloads {
+    cancel: std::sync::atomic::AtomicBool,
+    busy: Mutex<Option<String>>,
+}
+
+#[tauri::command]
+async fn packs_status(app: AppHandle) -> Result<Vec<modelpacks::PackStatus>, String> {
+    let dir = models_dir(&app);
+    Ok(modelpacks::PACKS.iter().map(|p| modelpacks::PackStatus { id: p.id.to_string(), installed: modelpacks::installed(&dir, p), bytes: 0 }).collect())
+}
+
+/// How many bytes a pack still needs (0 if it is installed), so the app can say so before asking.
+#[tauri::command]
+async fn pack_size(app: AppHandle, id: String) -> Result<u64, String> {
+    let dir = models_dir(&app);
+    let p = modelpacks::pack(&id).ok_or("unknown pack")?;
+    if modelpacks::installed(&dir, p) {
+        return Ok(0);
+    }
+    tauri::async_runtime::spawn_blocking(move || modelpacks::manifest_sizes(&id)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn pack_download(app: AppHandle, id: String) -> Result<(), String> {
+    let dir = downloaded_models_dir(&app);
+    {
+        let d = app.state::<Downloads>();
+        let mut busy = d.busy.lock().unwrap();
+        if busy.is_some() {
+            return Err("another download is running".into());
+        }
+        *busy = Some(id.clone());
+        d.cancel.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+    let app2 = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let d = app2.state::<Downloads>();
+        modelpacks::download(&dir, &id, &d.cancel, &|p| { let _ = app2.emit("model-progress", p); })
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    *app.state::<Downloads>().busy.lock().unwrap() = None;
+    // the text model may have just arrived (or a broken one been replaced): load it afresh next time
+    *app.state::<AppState>().text.lock().unwrap() = None;
+    result
+}
+
+#[tauri::command]
+fn pack_cancel(app: AppHandle) {
+    app.state::<Downloads>().cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+#[tauri::command]
+fn pack_remove(app: AppHandle, id: String) -> Result<(), String> {
+    modelpacks::remove(&downloaded_models_dir(&app), &id)?;
+    *app.state::<AppState>().text.lock().unwrap() = None;
+    Ok(())
+}
+
+/// Shows a file (or folder) in Finder / Explorer.
+#[tauri::command]
+fn reveal(path: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    let r = std::process::Command::new("open").args(["-R", &path]).spawn();
+    #[cfg(target_os = "windows")]
+    let r = std::process::Command::new("explorer").arg(format!("/select,{path}")).spawn();
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let r = std::process::Command::new("xdg-open").arg(Path::new(&path).parent().unwrap_or(Path::new("/"))).spawn();
+    r.map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// Fast preview thumbnails for a handful of photos (same cache location the analysis uses, so nothing is wasted).
+#[tauri::command]
+async fn preview_thumbs(app: AppHandle, paths: Vec<String>) -> Result<Vec<Option<String>>, String> {
+    let cache_dir = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("thumbs");
+    std::fs::create_dir_all(&cache_dir).map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        paths
+            .par_iter()
+            .map(|p| {
+                let src = Path::new(p);
+                let out = analyze::cache_name(src, ".jpg", &cache_dir);
+                if out.exists() || analyze::quick_thumb(src, &out).is_ok() {
+                    Some(out.to_string_lossy().into_owned())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Records (or clears) one explicit user decision and retrains the taste model. Returns its new status.
+fn retrain_style(app: &AppHandle, styles: &mut prefs::Styles, style: Option<&str>) {
+    let p = &mut styles.get_mut(style).prefs;
+    with_cache(app, |c| p.retrain(|k| c.embedding(k), || c.pool()));
+}
+
+#[tauri::command]
+fn record_label(app: AppHandle, path: String, label: Option<bool>, style: Option<String>) -> prefs::PrefsInfo {
+    let st = app.state::<AppState>();
+    let mut styles = st.prefs.lock().unwrap();
+    {
+        let p = &mut styles.get_mut(style.as_deref()).prefs;
+        match label {
+            Some(v) => { p.labels.insert(path, v); }
+            None => { p.labels.remove(&path); }
+        }
+    }
+    retrain_style(&app, &mut styles, style.as_deref());
+    styles.save();
+    styles.get(style.as_deref()).prefs.info()
+}
+
+#[tauri::command]
+fn prefs_info(app: AppHandle, style: Option<String>) -> prefs::PrefsInfo {
+    app.state::<AppState>().prefs.lock().unwrap().get(style.as_deref()).prefs.info()
+}
+
+#[tauri::command]
+fn prefs_reset(app: AppHandle, style: Option<String>) -> prefs::PrefsInfo {
+    let st = app.state::<AppState>();
+    let mut styles = st.prefs.lock().unwrap();
+    styles.get_mut(style.as_deref()).prefs.reset();
+    styles.save();
+    styles.get(style.as_deref()).prefs.info()
+}
+
+// ---------------------------------------------------------------- styles
+
+#[tauri::command]
+fn styles_list(app: AppHandle) -> Vec<prefs::StyleInfo> {
+    app.state::<AppState>().prefs.lock().unwrap().infos()
+}
+
+#[tauri::command]
+fn style_create(app: AppHandle, name: String) -> Vec<prefs::StyleInfo> {
+    let st = app.state::<AppState>();
+    let mut styles = st.prefs.lock().unwrap();
+    styles.create(&name);
+    styles.save();
+    styles.infos()
+}
+
+#[tauri::command]
+fn style_rename(app: AppHandle, id: String, name: String) -> Vec<prefs::StyleInfo> {
+    let st = app.state::<AppState>();
+    let mut styles = st.prefs.lock().unwrap();
+    styles.rename(&id, &name);
+    styles.save();
+    styles.infos()
+}
+
+#[tauri::command]
+fn style_delete(app: AppHandle, id: String) -> Vec<prefs::StyleInfo> {
+    let st = app.state::<AppState>();
+    let mut styles = st.prefs.lock().unwrap();
+    styles.delete(&id);
+    styles.save();
+    styles.infos()
+}
+
+#[tauri::command]
+fn style_set_default(app: AppHandle, id: String) -> Vec<prefs::StyleInfo> {
+    let st = app.state::<AppState>();
+    let mut styles = st.prefs.lock().unwrap();
+    styles.set_default(&id);
+    styles.save();
+    styles.infos()
+}
+
+/// Learns a style from a folder of past picks: the photos there are what this person chooses. Only their embeddings are kept, never the
+/// pictures. Progress goes out as `reference-progress`.
+#[tauri::command]
+async fn learn_from_folder(app: AppHandle, dir: String, style: Option<String>, compute: Option<String>, quality: Option<String>) -> Result<prefs::PrefsInfo, String> {
+    let want = scorer::Quality::parse(quality.as_deref());
+    let accel = compute.as_deref() != Some("cpu");
+    tauri::async_runtime::spawn_blocking(move || {
+        let files = list_images(&dir);
+        if files.is_empty() {
+            return Err("no photos in that folder".to_string());
+        }
+        // the embeddings must be the kind the analysed photos have (they are compared with them), so the same model is used
+        let scorer = scorer::ClipScorer::load(&models_dir(&app), accel, want)?;
+        let total = files.len();
+        let done = AtomicUsize::new(0);
+        let _ = app.emit("reference-progress", Progress { done: 0, total });
+        let refs: Vec<prefs::Reference> = files
+            .par_iter()
+            .filter_map(|p| {
+                let r = analyze::load_for_embedding(p).and_then(|img| scorer.embed(&img)).ok().map(|emb| prefs::Reference {
+                    stem: p.file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default(),
+                    emb,
+                });
+                let d = done.fetch_add(1, Ordering::Relaxed) + 1;
+                if d % 4 == 0 || d == total { let _ = app.emit("reference-progress", Progress { done: d, total }); }
+                r
+            })
+            .collect();
+        if refs.len() < 6 {
+            return Err("at least 6 readable photos are needed to learn from a folder".to_string());
+        }
+        let st = app.state::<AppState>();
+        let mut styles = st.prefs.lock().unwrap();
+        {
+            let p = &mut styles.get_mut(style.as_deref()).prefs;
+            p.refs = refs;
+            p.refs_from = dir;
+        }
+        retrain_style(&app, &mut styles, style.as_deref());
+        styles.save();
+        Ok(styles.get(style.as_deref()).prefs.info())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+struct MenuText {
+    settings: &'static str,
+    file: &'static str,
+    edit: &'static str,
+    view: &'static str,
+    window: &'static str,
+    open: &'static str,
+    sidebar: &'static str,
+    inspector: &'static str,
+}
+
+fn menu_text(locale: &str) -> MenuText {
+    if locale.starts_with("zh") {
+        MenuText { settings: "设置…", file: "文件", edit: "编辑", view: "视图", window: "窗口", open: "打开文件夹…", sidebar: "显示/隐藏侧边栏", inspector: "显示/隐藏检查器" }
+    } else {
+        MenuText { settings: "Settings…", file: "File", edit: "Edit", view: "View", window: "Window", open: "Open Folder…", sidebar: "Toggle Sidebar", inspector: "Toggle Inspector" }
+    }
+}
+
+fn build_menu(app: &AppHandle, locale: &str) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    let tx = menu_text(locale);
+    let open = MenuItemBuilder::with_id("open-folder", tx.open).accelerator("CmdOrCtrl+O").build(app)?;
+    let sidebar = MenuItemBuilder::with_id("toggle-sidebar", tx.sidebar).accelerator("CmdOrCtrl+Alt+S").build(app)?;
+    let inspector = MenuItemBuilder::with_id("toggle-inspector", tx.inspector).accelerator("CmdOrCtrl+Alt+I").build(app)?;
+    let settings = MenuItemBuilder::with_id("open-settings", tx.settings).accelerator("CmdOrCtrl+,").build(app)?;
+    let app_menu = SubmenuBuilder::new(app, "FleetingGleam")
+        .about(None)
+        .separator()
+        .item(&settings)
+        .separator()
+        .services()
+        .separator()
+        .hide()
+        .hide_others()
+        .show_all()
+        .separator()
+        .quit()
+        .build()?;
+    let file = SubmenuBuilder::new(app, tx.file).item(&open).separator().close_window().build()?;
+    let edit = SubmenuBuilder::new(app, tx.edit)
+        .undo()
+        .redo()
+        .separator()
+        .cut()
+        .copy()
+        .paste()
+        .select_all()
+        .build()?;
+    let view = SubmenuBuilder::new(app, tx.view).item(&sidebar).item(&inspector).separator().fullscreen().build()?;
+    let window = SubmenuBuilder::new(app, tx.window).minimize().maximize().build()?;
+    MenuBuilder::new(app).items(&[&app_menu, &file, &edit, &view, &window]).build()
+}
+
+fn thumbs_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app.path().app_cache_dir().map_err(|e| e.to_string())?.join("thumbs"))
+}
+
+#[tauri::command]
+fn cache_size(app: AppHandle) -> Result<u64, String> {
+    let dir = thumbs_dir(&app)?;
+    Ok(WalkDir::new(dir)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter_map(|e| e.metadata().ok())
+        .filter(|m| m.is_file())
+        .map(|m| m.len())
+        .sum())
+}
+
+#[tauri::command]
+fn clear_cache(app: AppHandle) -> Result<(), String> {
+    let dir = thumbs_dir(&app)?;
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+    }
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())
+}
+
+/// The frontend owns the language; it tells us so the native menu bar follows.
+#[tauri::command]
+fn set_locale(app: AppHandle, locale: String) -> Result<(), String> {
+    let menu = build_menu(&app, &locale).map_err(|e| e.to_string())?;
+    app.set_menu(menu).map(|_| ()).map_err(|e| e.to_string())
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    // Release builds refuse debugger attachment (macOS). A deterrent, not a wall: the real protection is sealing, stripping and code signing.
+    #[cfg(all(target_os = "macos", not(debug_assertions)))]
+    unsafe {
+        libc::ptrace(31 /* PT_DENY_ATTACH */, 0, std::ptr::null_mut(), 0);
+    }
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            let dir = data_dir(app.handle());
+            app.manage(Downloads::default());
+            app.manage(AppState { text: Mutex::new(None), cache: Mutex::new(None), prefs: Mutex::new(prefs::Styles::load(&dir)) });
+            let menu = build_menu(app.handle(), "en")?;
+            app.set_menu(menu)?;
+            Ok(())
+        })
+        .on_menu_event(|app, event| {
+            let _ = app.emit("menu", event.id().0.clone());
+        })
+        .invoke_handler(tauri::generate_handler![probe_folder, scan_project, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, trash_photos, reveal, preview_thumbs, photo_info, large_preview, search_status, search_index, search_photos, packs_status, pack_size, pack_download, pack_cancel, pack_remove])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod organize_tests {
+    use super::*;
+
+    #[test]
+    fn unique_names_never_overwrite() {
+        let dir = std::env::temp_dir().join(format!("fg_unique_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.jpg"), b"1").unwrap();
+        std::fs::write(dir.join("a (2).jpg"), b"2").unwrap();
+        assert_eq!(unique_path(&dir, std::ffi::OsStr::new("a.jpg")), dir.join("a (3).jpg"));
+        assert_eq!(unique_path(&dir, std::ffi::OsStr::new("b.jpg")), dir.join("b.jpg"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn trash_accepts_only_photos() {
+        let dir = std::env::temp_dir().join(format!("fg_trash_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let photo = dir.join("fg-test-photo.jpg");
+        let other = dir.join("notes.txt");
+        std::fs::write(&photo, b"not really a jpeg").unwrap();
+        std::fs::write(&other, b"keep me").unwrap();
+        let r = tauri::async_runtime::block_on(trash_photos(vec![photo.to_string_lossy().into(), other.to_string_lossy().into()])).unwrap();
+        println!("moved={} failed={:?}", r.moved, r.failed);
+        assert_eq!(r.moved, 1);
+        assert_eq!(r.failed.len(), 1);
+        assert!(!photo.exists(), "the photo should be in the trash now");
+        assert!(other.exists(), "a non-photo must never be touched");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+
+#[cfg(test)]
+mod filter_tests {
+    use super::*;
+
+    #[test]
+    fn hidden_and_system_names_are_junk() {
+        for n in [".DS_Store", "._IMG_0001.jpg", ".Trashes", "__MACOSX", "@eaDir", "Thumbs.db"] {
+            assert!(is_junk(n), "{n}");
+        }
+        for n in ["IMG_0001.jpg", "Trip 2026", "DSCF2586.JPG"] {
+            assert!(!is_junk(n), "{n}");
+        }
+    }
+
+    #[test]
+    fn only_readable_photos_are_listed() {
+        let dir = std::env::temp_dir().join(format!("fg-filter-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".hidden")).unwrap();
+        let img = image::RgbImage::from_fn(400, 300, |x, y| image::Rgb([(x % 256) as u8, (y % 256) as u8, ((x * y) % 256) as u8]));
+        img.save(dir.join("good.jpg")).unwrap();
+        img.save(dir.join(".hidden").join("inside.jpg")).unwrap();
+        img.save(dir.join("._good.jpg")).unwrap();
+        std::fs::write(dir.join("fake.jpg"), vec![7u8; 20_000]).unwrap(); // not an image
+        std::fs::write(dir.join("tiny.jpg"), b"x").unwrap();
+        std::fs::write(dir.join("notes.txt"), b"hello").unwrap();
+        std::fs::write(dir.join("clip.mov"), vec![0u8; 20_000]).unwrap();
+        let found = list_all(&[dir.to_string_lossy().into_owned()]);
+        let names: Vec<_> = found.iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        assert_eq!(names, vec!["good.jpg"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
