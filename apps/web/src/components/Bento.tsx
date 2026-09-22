@@ -13,7 +13,7 @@ function Tile({ className = "", i, children }: { className?: string; i: number; 
   const move = (e: MouseEvent<HTMLElement>) => { const r = e.currentTarget.getBoundingClientRect(); x.set(e.clientX - r.left); y.set(e.clientY - r.top); };
   return (
     <motion.article onMouseMove={move} initial={{ opacity: 0, y: 40 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, amount: 0.25 }} transition={{ duration: 0.8, ease: EASE, delay: (i % 2) * 0.08 }}
-      className={`group relative flex flex-col overflow-hidden rounded-3xl border border-line p-7 md:p-8 ${className}`}>
+      className={`group relative flex flex-col overflow-hidden rounded-3xl border border-line p-7 shadow-[var(--lift-sm)] md:p-8 ${className}`}>
       <motion.div aria-hidden className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-500 group-hover:opacity-100" style={{ background: glow }} />
       <div className="relative flex flex-1 flex-col">{children}</div>
     </motion.article>

@@ -1,16 +1,18 @@
 @import "tailwindcss";
 
 :root {
+  --lift: 0 50px 100px -50px rgba(0,0,0,.72), 0 8px 24px -14px rgba(0,0,0,.5);
+  --lift-sm: 0 2px 10px -6px rgba(0,0,0,.6);
   --canvas: #0e0e10; --panel: #151517; --surface: #1d1d20; --ink: #ededef; --ash: #9a9aa3; --line: rgba(255,255,255,.09);
   --on-ink: #0e0e10; --gleam: #e8b45c; --gleam-ink: #241703;
   color-scheme: dark;
 }
 @media (prefers-color-scheme: light) {
-  :root:not([data-theme]) { --canvas: #fbfbfc; --panel: #f3f3f5; --surface: #ebebee; --ink: #111113; --ash: #62626b; --line: rgba(0,0,0,.09); --on-ink: #fbfbfc; --gleam: #b9791a; color-scheme: light; }
+  :root:not([data-theme]) { --canvas: #fcfcfd; --panel: #f3f4f6; --surface: #e8eaee; --ink: #101114; --ash: #575a63; --line: rgba(12,14,22,.12); --on-ink: #fcfcfd; --gleam: #b4761c; --gleam-ink: #2a1c05; color-scheme: light; --lift: 0 34px 60px -30px rgba(12,14,22,.26), 0 6px 16px -8px rgba(12,14,22,.12); --lift-sm: 0 3px 12px -6px rgba(12,14,22,.14); }
 }
 
-:root[data-theme="dark"] { --canvas: #0e0e10; --panel: #151517; --surface: #1d1d20; --ink: #ededef; --ash: #9a9aa3; --line: rgba(255,255,255,.09); --on-ink: #0e0e10; --gleam: #e8b45c; color-scheme: dark; }
-:root[data-theme="light"] { --canvas: #fbfbfc; --panel: #f3f3f5; --surface: #ebebee; --ink: #111113; --ash: #62626b; --line: rgba(0,0,0,.09); --on-ink: #fbfbfc; --gleam: #b9791a; color-scheme: light; }
+:root[data-theme="dark"] { --lift-sm: 0 2px 10px -6px rgba(0,0,0,.6); --lift: 0 50px 100px -50px rgba(0,0,0,.72), 0 8px 24px -14px rgba(0,0,0,.5); --canvas: #0e0e10; --panel: #151517; --surface: #1d1d20; --ink: #ededef; --ash: #9a9aa3; --line: rgba(255,255,255,.09); --on-ink: #0e0e10; --gleam: #e8b45c; color-scheme: dark; }
+:root[data-theme="light"] { --canvas: #fcfcfd; --panel: #f3f4f6; --surface: #e8eaee; --ink: #101114; --ash: #575a63; --line: rgba(12,14,22,.12); --on-ink: #fcfcfd; --gleam: #b4761c; --gleam-ink: #2a1c05; color-scheme: light; --lift: 0 34px 60px -30px rgba(12,14,22,.26), 0 6px 16px -8px rgba(12,14,22,.12); --lift-sm: 0 3px 12px -6px rgba(12,14,22,.14); }
 
 /* Screenshots and icons that exist in a dark and a light version show the one for the current theme. */
 .for-light { display: none; }

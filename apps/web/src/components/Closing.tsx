@@ -9,15 +9,15 @@ export default function Closing({ lang }: { lang: Lang }) {
   const c = copy[lang];
   return (
     <>
-      {/* Set to the right on purpose: the first statement hugs the left edge, this one answers it from the other side. */}
+      {/* A pause before the close: one statement, set large, with a hairline to mark it off rather than an empty column. */}
       <section className="mx-auto max-w-6xl px-5 pt-40 md:pt-56">
-        <div className="md:ml-[34%]">
-          <motion.h2 {...rise} className="max-w-2xl text-[clamp(1.9rem,4.4vw,3.25rem)] font-semibold leading-[1.1] tracking-[-0.035em] text-balance">{c.honest.title}</motion.h2>
-          <motion.p {...rise} className="mt-6 max-w-xl text-lg text-ash">{c.honest.body}</motion.p>
+        <div className="border-t border-line pt-12 md:pt-16">
+          <motion.h2 {...rise} className="max-w-[26ch] text-[clamp(2rem,4.8vw,3.5rem)] font-semibold leading-[1.06] tracking-[-0.038em] text-balance">{c.honest.title}</motion.h2>
+          <motion.p {...rise} className="mt-7 max-w-[52ch] text-lg text-ash">{c.honest.body}</motion.p>
         </div>
       </section>
 
-      <section id="download" className="mx-auto max-w-6xl px-5 pb-8 pt-40 md:pt-56">
+      <section id="download" className="mx-auto max-w-6xl px-5 pb-8 pt-20 md:pt-28">
         <motion.div {...rise} className="relative isolate overflow-hidden rounded-3xl border border-line">
           <img src="/photos/sunset-1600.webp" srcSet="/photos/sunset-800.webp 800w, /photos/sunset-1600.webp 1600w" sizes="(min-width: 1200px) 1152px, 100vw" alt="" width={1600} height={900} loading="lazy" draggable={false} className="absolute inset-0 -z-20 h-full w-full object-cover" />
           {/* A scrim keeps the words readable on any part of the photograph. */}

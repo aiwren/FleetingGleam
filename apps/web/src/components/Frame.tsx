@@ -10,7 +10,7 @@ export default function Frame({ shot, alt, priority = false, className = "", siz
   );
   // The shadow is tinted with the ink colour of the theme, and a hairline of light runs along the top edge like a real bezel.
   return (
-    <div className={`overflow-hidden rounded-3xl border border-line bg-panel shadow-[inset_0_1px_0_color-mix(in_srgb,var(--ink)_14%,transparent),0_50px_100px_-50px_color-mix(in_srgb,var(--ink)_38%,transparent)] ${className}`}>
+    <div className={`overflow-hidden rounded-3xl border border-line bg-panel shadow-[inset_0_1px_0_color-mix(in_srgb,var(--ink)_12%,transparent),var(--lift)] ${className}`}>
       {img("dark")}{img("light")}
     </div>
   );
