@@ -4,6 +4,7 @@ mod prefs;
 pub mod seal;
 mod scorer;
 mod colorsig;
+mod mediapipe;
 mod modelpacks;
 mod textsearch;
 mod scene;
@@ -69,6 +70,8 @@ struct AppState {
     text: Mutex<Option<std::sync::Arc<textsearch::TextEncoder>>>,
     cache: Mutex<Option<cache::Cache>>,
     prefs: Mutex<prefs::Styles>,
+    /// Loaded once, on first use: the eye-openness models are a few MB each, not worth reopening per scan.
+    mediapipe_eyes: Mutex<Option<std::sync::Arc<mediapipe::MediapipeEyes>>>,
 }
 
 fn data_dir(app: &AppHandle) -> PathBuf {
@@ -80,6 +83,19 @@ fn with_cache<R>(app: &AppHandle, f: impl FnOnce(&mut cache::Cache) -> R) -> R {
     let mut guard = st.cache.lock().unwrap();
     let c = guard.get_or_insert_with(|| cache::Cache::load(data_dir(app).join("analysis-cache.json")));
     f(c)
+}
+
+/// The MediaPipe eye models, loaded once and kept: `None` only when the pack has not been downloaded, or failed to load.
+fn mediapipe_eyes(app: &AppHandle, model_dir: &Path) -> Option<std::sync::Arc<mediapipe::MediapipeEyes>> {
+    let st = app.state::<AppState>();
+    let mut guard = st.mediapipe_eyes.lock().unwrap();
+    if guard.is_none() && mediapipe::available(model_dir) {
+        match mediapipe::MediapipeEyes::load(model_dir) {
+            Ok(m) => *guard = Some(std::sync::Arc::new(m)),
+            Err(e) => eprintln!("MediaPipe eyes disabled: {e}"),
+        }
+    }
+    guard.clone()
 }
 
 /// Names that are never the user's photos: hidden files (this covers macOS `._IMG.jpg` resource forks and `.DS_Store`),
@@ -185,16 +201,19 @@ async fn probe_folder(app: AppHandle, dirs: Vec<String>, compute: Option<String>
 
 /// Analyses whatever is new or changed, reuses the cache for the rest, then groups and scores every photo
 /// together. `learn` blends in the on-device taste model; `quiet` suppresses progress events (used for
-/// instant re-opens and re-scoring).
+/// instant re-opens and re-scoring); `force` ignores the cache and re-analyses every photo.
 #[tauri::command]
-async fn scan_project(app: AppHandle, dirs: Vec<String>, compute: Option<String>, quality: Option<String>, learn: bool, quiet: bool, style: Option<String>) -> Result<Vec<Photo>, String> {
+async fn scan_project(app: AppHandle, dirs: Vec<String>, compute: Option<String>, quality: Option<String>, learn: bool, quiet: bool, style: Option<String>, force: Option<bool>, eye_method: Option<String>) -> Result<Vec<Photo>, String> {
+    let force = force.unwrap_or(false);
     let cpu_only = compute.as_deref() == Some("cpu");
     let want = scorer::Quality::parse(quality.as_deref());
+    let eye_method = analyze::EyeMethod::parse(eye_method.as_deref());
     let cache_dir = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("thumbs");
     std::fs::create_dir_all(&cache_dir).map_err(|e| e.to_string())?;
     let model_dir = models_dir(&app);
     let vision_bin = vision_bin(&app);
     let tag = scorer::analysis_tag(scorer::resolve(&model_dir, !cpu_only, want));
+    let mp = if eye_method == analyze::EyeMethod::Mediapipe { mediapipe_eyes(&app, &model_dir) } else { None };
 
     tauri::async_runtime::spawn_blocking(move || {
         let files = list_all(&dirs);
@@ -205,7 +224,7 @@ async fn scan_project(app: AppHandle, dirs: Vec<String>, compute: Option<String>
             for f in &files {
                 let key = f.to_string_lossy();
                 match cache::file_key(f) {
-                    Some((sz, mt)) => match c.get(&key, sz, mt, &tag) {
+                    Some((sz, mt)) => match if force { None } else { c.get(&key, sz, mt, &tag) } {
                         Some(p) => hits.push(p),
                         None => jobs.push((f.clone(), sz, mt)),
                     },
@@ -254,7 +273,7 @@ async fn scan_project(app: AppHandle, dirs: Vec<String>, compute: Option<String>
                             Stage { path: &key, stage, pct, thumb: thumb.map(|t| t.0), width: thumb.map(|t| t.1), height: thumb.map(|t| t.2) },
                         );
                     };
-                    let r = analyze::analyze(p, &cache_dir, scorer.as_ref().map(|s| s as &dyn scorer::AiScorer), vision.as_ref(), &on_stage);
+                    let r = analyze::analyze(p, &cache_dir, scorer.as_ref().map(|s| s as &dyn scorer::AiScorer), vision.as_ref(), eye_method, mp.as_deref(), &on_stage);
                     let d = done.fetch_add(1, Ordering::Relaxed) + 1;
                     if !quiet {
                         if let Ok(photo) = &r {
@@ -275,20 +294,23 @@ async fn scan_project(app: AppHandle, dirs: Vec<String>, compute: Option<String>
             });
         }
 
-        // Photos analysed before eye openness existed get it now, from their saved analysis copy (only those with faces).
+        // A photo missing eyes_open (analysed before that signal existed), or whose cached value came from the other
+        // method than the one now selected, gets it (re)measured from its saved analysis copy.
         let mut hits = hits;
-        if hits.iter().any(|p| p.face_count > 0 && p.eyes_open.is_none()) {
+        let method_tag = eye_method.tag();
+        if hits.iter().any(|p| p.face_count > 0 && p.eye_method.as_deref() != Some(method_tag)) {
             if let Some(v) = vision::Vision::start(&vision_bin, 2, cpu_only) {
                 let measured: Vec<(usize, f32)> = hits
                     .par_iter()
                     .enumerate()
-                    .filter(|(_, p)| p.face_count > 0 && p.eyes_open.is_none())
-                    .filter_map(|(i, p)| analyze::measure_eyes(Path::new(&p.path), &cache_dir, &v).map(|e| (i, e)))
+                    .filter(|(_, p)| p.face_count > 0 && p.eye_method.as_deref() != Some(method_tag))
+                    .filter_map(|(i, p)| analyze::measure_eyes(Path::new(&p.path), &cache_dir, &v, eye_method, mp.as_deref()).map(|e| (i, e)))
                     .collect();
                 if !measured.is_empty() {
                     for (i, e) in &measured {
                         // no face big enough to measure is remembered as "very open", so it is not asked again
                         hits[*i].eyes_open = Some(*e);
+                        hits[*i].eye_method = Some(method_tag.to_string());
                     }
                     with_cache(&app, |c| {
                         for (i, _) in &measured {
@@ -305,7 +327,7 @@ async fn scan_project(app: AppHandle, dirs: Vec<String>, compute: Option<String>
         photos.extend(fresh);
         photos.sort_by(|a, b| a.path.cmp(&b.path));
         let prefs = if learn { Some(app.state::<AppState>().prefs.lock().unwrap().get(style.as_deref()).prefs.clone()) } else { None };
-        analyze::group_and_score(&mut photos, prefs.as_ref().filter(|p| p.active()));
+        analyze::group_and_score(&mut photos, prefs.as_ref().filter(|p| p.active()), eye_method);
         Ok(photos)
     })
     .await
@@ -906,7 +928,7 @@ pub fn run() {
         .setup(|app| {
             let dir = data_dir(app.handle());
             app.manage(Downloads::default());
-            app.manage(AppState { text: Mutex::new(None), cache: Mutex::new(None), prefs: Mutex::new(prefs::Styles::load(&dir)) });
+            app.manage(AppState { text: Mutex::new(None), cache: Mutex::new(None), prefs: Mutex::new(prefs::Styles::load(&dir)), mediapipe_eyes: Mutex::new(None) });
             let menu = build_menu(app.handle(), "en")?;
             app.set_menu(menu)?;
             Ok(())

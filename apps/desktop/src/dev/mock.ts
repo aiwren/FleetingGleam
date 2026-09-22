@@ -92,7 +92,7 @@ function makePhotos(list: Src[]): Photo[] {
 
 document.documentElement.dataset.mock = "1"; // the browser has no native vibrancy, so give the sidebar a base colour
 const w = window as unknown as Record<string, unknown>;
-const packState: Record<"standard" | "high" | "ultra" | "search", boolean> = { standard: true, high: false, ultra: false, search: false };
+const packState: Record<"standard" | "high" | "ultra" | "search" | "eyes", boolean> = { standard: true, high: false, ultra: false, search: false, eyes: false };
 const emit = (event: string, payload: unknown) => (listeners.get(event) ?? []).forEach((h) => cbs.get(h)?.({ event, id: 0, payload }));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -180,8 +180,8 @@ w.__TAURI_INTERNALS__ = {
       case "reveal": return null;
       case "large_preview": return (args.path as string);
       case "photo_info": return { format: "JPEG", bytes: 9_400_000, color_space: "sRGB", bit_depth: "8, 8, 8", camera: "FUJIFILM X-T5", lens: "XF35mmF1.4 R", focal: "35 mm", aperture: "f/2", shutter: "1/250 s", iso: "400", software: null, taken: "2026-04-17 18:22:31" };
-      case "packs_status": return (["standard", "high", "ultra", "search"] as const).map((id) => ({ id, installed: packState[id], bytes: 0 }));
-      case "pack_size": return { standard: 266_000_000, high: 609_000_000, ultra: 870_000_000, search: 139_000_000 }[String(args.id) as "standard"];
+      case "packs_status": return (["standard", "high", "ultra", "search", "eyes"] as const).map((id) => ({ id, installed: packState[id], bytes: 0 }));
+      case "pack_size": return { standard: 266_000_000, high: 609_000_000, ultra: 870_000_000, search: 139_000_000, eyes: 7_000_000 }[String(args.id) as "standard"];
       case "pack_download": {
         for (let i = 1; i <= 10; i++) { await sleep(150); emit("model-progress", { pack: args.id, file: "x", done: i * 60_900_000, total: 609_000_000 }); }
         packState[String(args.id) as "standard"] = true;

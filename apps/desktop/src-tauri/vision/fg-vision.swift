@@ -28,17 +28,24 @@ func analyze(_ url: URL) throws -> [String: Any] {
     // Eye openness per face: height / width of each eye's outline, in pixels, averaged over both eyes.
     // About 0.25-0.4 for open eyes, below ~0.15 when they are closed.
     let size = ci.extent.size
-    let eyes: [Double] = (marks.results ?? []).compactMap { obs in
-        guard let l = obs.landmarks?.leftEye?.normalizedPoints, let r = obs.landmarks?.rightEye?.normalizedPoints, l.count > 3, r.count > 3 else { return nil }
+    // Same face, same order, as both `eyes` (the geometric ratio) and `eyeBoxes` (its crop, top-left-origin
+    // normalized, for a learned model to look at the same region): only faces big enough to measure eyes on.
+    var eyes: [Double] = []
+    var eyeBoxes: [[Double]] = []
+    for obs in marks.results ?? [] {
+        guard let l = obs.landmarks?.leftEye?.normalizedPoints, let r = obs.landmarks?.rightEye?.normalizedPoints, l.count > 3, r.count > 3 else { continue }
         let bw = Double(obs.boundingBox.width * size.width), bh = Double(obs.boundingBox.height * size.height)
         // The eyes of a face only a few dozen pixels tall cannot be measured: leave those faces out.
-        guard bh >= 0.11 * Double(max(size.width, size.height)) else { return nil }
+        guard bh >= 0.11 * Double(max(size.width, size.height)) else { continue }
         func ratio(_ pts: [CGPoint]) -> Double {
             let xs = pts.map { Double($0.x) }, ys = pts.map { Double($0.y) }
             let w = (xs.max()! - xs.min()!) * bw, h = (ys.max()! - ys.min()!) * bh
             return w > 0 ? h / w : 0
         }
-        return (ratio(Array(l)) + ratio(Array(r))) / 2
+        eyes.append((ratio(Array(l)) + ratio(Array(r))) / 2)
+        // Vision's boundingBox has a bottom-left origin; flip to top-left, matching the pixel buffer Rust crops.
+        let b = obs.boundingBox
+        eyeBoxes.append([Double(b.origin.x), Double(1 - b.origin.y - b.height), Double(b.width), Double(b.height)])
     }
     return [
         "ok": true,
@@ -46,6 +53,7 @@ func analyze(_ url: URL) throws -> [String: Any] {
         "utility": a?.isUtility ?? false,
         "faces": (face.results ?? []).compactMap { $0.faceCaptureQuality }.map { Double($0) },
         "eyes": eyes,
+        "eyeBoxes": eyeBoxes,
     ]
 }
 

@@ -16,6 +16,9 @@ pub struct VisionOut {
     pub faces: Vec<f32>,
     /// One eye-openness value per face whose eyes could be located (about 0.25-0.4 open, under 0.15 closed).
     pub eyes: Vec<f32>,
+    /// Same faces, same order as `eyes`: `[x, y, w, h]`, top-left origin, normalised to the image handed to `analyze`.
+    /// The crop a learned model (`mediapipe.rs`) looks at, when one is asked to look instead of the geometric ratio.
+    pub eye_boxes: Vec<[f32; 4]>,
 }
 
 #[derive(Deserialize)]
@@ -25,6 +28,8 @@ struct Reply {
     utility: Option<bool>,
     faces: Option<Vec<f32>>,
     eyes: Option<Vec<f32>>,
+    #[serde(rename = "eyeBoxes")]
+    eye_boxes: Option<Vec<[f32; 4]>>,
 }
 
 struct Proc {
@@ -50,6 +55,7 @@ impl Proc {
             utility: r.utility.unwrap_or(false),
             faces: r.faces.unwrap_or_default(),
             eyes: r.eyes.unwrap_or_default(),
+            eye_boxes: r.eye_boxes.unwrap_or_default(),
         })
     }
 }

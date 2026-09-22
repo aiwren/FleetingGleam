@@ -7,6 +7,7 @@ use image::imageops::FilterType;
 use image::{DynamicImage, GrayImage};
 use serde::{Deserialize, Serialize};
 
+use crate::mediapipe::MediapipeEyes;
 use crate::scoring;
 use crate::scorer::AiScorer;
 use crate::vision::Vision;
@@ -14,6 +15,23 @@ use crate::vision::Vision;
 const ANALYZE_SIZE: u32 = 1024;
 const THUMB_SIZE: u32 = 640;
 pub const IMAGE_EXTS: [&str; 5] = ["jpg", "jpeg", "png", "webp", "jpe"];
+
+/// Which signal `eyes_open` comes from. The geometric ratio is Apple Vision's own landmarks (macOS only, always
+/// available there); MediaPipe is a small downloaded pair of models that read the same crop with a classifier
+/// instead of a ratio (see `mediapipe.rs`). Only ever one active at a time for a whole scan.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum EyeMethod {
+    Vision,
+    Mediapipe,
+}
+impl EyeMethod {
+    pub fn parse(s: Option<&str>) -> Self {
+        match s { Some("mediapipe") => EyeMethod::Mediapipe, _ => EyeMethod::Vision }
+    }
+    pub fn tag(self) -> &'static str {
+        match self { EyeMethod::Vision => "vision", EyeMethod::Mediapipe => "mediapipe" }
+    }
+}
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Photo {
@@ -43,6 +61,10 @@ pub struct Photo {
     /// Openness of the most closed pair of eyes among the faces big enough to measure (see scoring::EYES_CLOSED); `None` = not measured.
     #[serde(default)]
     pub eyes_open: Option<f32>,
+    /// Which method last computed `eyes_open` ("vision" or "mediapipe"): lets a switch in Settings be noticed on a
+    /// photo that is otherwise still a cache hit, without forcing the whole (expensive) analysis to redo.
+    #[serde(default)]
+    pub eye_method: Option<String>,
     /// What kind of picture it is (see scene.rs); decides which checks weigh most.
     #[serde(default)]
     pub kind: String,
@@ -59,11 +81,20 @@ pub struct Photo {
     pub embedding: Vec<f32>,
 }
 
-/// Eye openness for a photo that was analysed before this signal existed: asks the Vision helper about the saved analysis copy.
-pub fn measure_eyes(path: &Path, cache_dir: &Path, vision: &Vision) -> Option<f32> {
+/// Eye openness for a photo whose cached value is missing or was computed by the other method: asks Vision about the
+/// saved analysis copy, then (for `Mediapipe`) hands Vision's face crops to the learned model instead of trusting
+/// Vision's own ratio.
+pub fn measure_eyes(path: &Path, cache_dir: &Path, vision: &Vision, method: EyeMethod, mp: Option<&MediapipeEyes>) -> Option<f32> {
     let copy = cache_name(path, ".a.jpg", cache_dir);
     let copy = if copy.exists() { copy } else { return None };
-    vision.analyze(&copy).map(|v| v.eyes.iter().cloned().reduce(f32::min).unwrap_or(1.0).min(1.0))
+    let v = vision.analyze(&copy)?;
+    match method {
+        EyeMethod::Vision => Some(v.eyes.iter().cloned().reduce(f32::min).unwrap_or(1.0).min(1.0)),
+        EyeMethod::Mediapipe => {
+            let img = image::open(&copy).ok()?;
+            mp.and_then(|m| m.openness(&img, &v.eye_boxes)).or_else(|| Some(v.eyes.iter().cloned().reduce(f32::min).unwrap_or(1.0).min(1.0)))
+        }
+    }
 }
 
 pub fn is_image(path: &Path) -> bool {
@@ -78,6 +109,8 @@ pub fn analyze(
     cache_dir: &Path,
     scorer: Option<&dyn AiScorer>,
     vision: Option<&Vision>,
+    eye_method: EyeMethod,
+    mp: Option<&MediapipeEyes>,
     on_stage: &dyn Fn(&str, u8, Option<(&str, u32, u32)>),
 ) -> Result<Photo, String> {
     on_stage("decode", 8, None);
@@ -106,9 +139,16 @@ pub fn analyze(
     let sys = vision.and_then(|v| save_analysis_copy(&work, path, cache_dir).and_then(|p| v.analyze(&p)));
     let utility = sys.as_ref().map_or(false, |s| s.utility);
     let sys_score = sys.as_ref().map(|s| s.aesthetic);
-    let (faces, eyes) = sys.map(|s| (s.faces, s.eyes)).unwrap_or_default();
-    let face_min = faces.iter().cloned().reduce(f32::min);
-    let eyes_open = eyes.iter().cloned().reduce(f32::min);
+    let face_min = sys.as_ref().and_then(|s| s.faces.iter().cloned().reduce(f32::min));
+    let face_count = sys.as_ref().map_or(0, |s| s.faces.len() as u32);
+    // MediaPipe reads the same crops Vision found, in the working copy already in memory; Vision's own ratio is the
+    // fallback whenever a face is there but the learned model is not (not downloaded, or not confident about that face).
+    let eyes_open = match (eye_method, &sys) {
+        (EyeMethod::Mediapipe, Some(s)) => mp.and_then(|m| m.openness(&work, &s.eye_boxes)).or_else(|| s.eyes.iter().cloned().reduce(f32::min)),
+        (_, Some(s)) => s.eyes.iter().cloned().reduce(f32::min),
+        (_, None) => None,
+    };
+    let eye_method_used = eyes_open.map(|_| eye_method.tag().to_string());
 
     let ai_score = scoring::combine_aesthetic(clip_score, sys_score);
     let flags = scoring::flags(sharp_score, brightness, clipped_high, utility);
@@ -133,9 +173,10 @@ pub fn analyze(
         sys_score,
         ai_score,
         pref_score: None,
-        face_count: faces.len() as u32,
+        face_count,
         face_min,
         eyes_open,
+        eye_method: eye_method_used,
         kind: String::new(),
         utility,
         flags,
@@ -354,7 +395,7 @@ fn orientation(p: &Photo) -> i8 {
 
 /// Groups near-duplicates, clusters looser scenes, then computes final scores (which need the
 /// group context for face comparison) and marks the best photo of every group.
-pub fn group_and_score(photos: &mut [Photo], prefs: Option<&crate::prefs::Prefs>) {
+pub fn group_and_score(photos: &mut [Photo], prefs: Option<&crate::prefs::Prefs>, eye_method: EyeMethod) {
     let groups = cluster(photos, |a, b| {
         if let (Some(x), Some(y)) = (a.taken_at, b.taken_at) {
             if (x - y).abs() > DUP_MAX_GAP_SECS {
@@ -413,8 +454,9 @@ pub fn group_and_score(photos: &mut [Photo], prefs: Option<&crate::prefs::Prefs>
         let kind = crate::scene::classify(&p.embedding).map(|(k, _)| crate::scene::with_faces(k, p.face_count)).unwrap_or(if p.face_count > 0 { "people" } else { "" });
         p.kind = kind.to_string();
         p.flags.retain(|f| f != "eyes");
-        if matches!(kind, "portrait" | "people") && p.eyes_open.map_or(false, |e| e < scoring::EYES_CLOSED)
-            && group_size[&groups[i]] > 1 && open_alt.get(&(groups[i] as usize)).map_or(false, |&m| m >= scoring::EYES_CLOSED) {
+        let closed_at = if eye_method == EyeMethod::Mediapipe { scoring::MEDIAPIPE_EYES_CLOSED } else { scoring::EYES_CLOSED };
+        if matches!(kind, "portrait" | "people") && p.eyes_open.map_or(false, |e| e < closed_at)
+            && group_size[&groups[i]] > 1 && open_alt.get(&(groups[i] as usize)).map_or(false, |&m| m >= closed_at) {
             p.flags.push("eyes".to_string());
         }
         p.score = scoring::final_score(kind, p.ai_score, p.sharp_score, p.expo_score, face_rel, &p.flags);
@@ -457,7 +499,7 @@ mod tests {
             p
         }).collect();
         photos.sort_by(|a, b| a.path.cmp(&b.path));
-        group_and_score(&mut photos, None);
+        group_and_score(&mut photos, None, EyeMethod::Vision);
         let mut by: std::collections::BTreeMap<String, usize> = Default::default();
         photos.iter().for_each(|p| *by.entry(p.kind.clone()).or_default() += 1);
         println!("kinds: {by:?}");
@@ -510,9 +552,9 @@ mod tests {
         println!("clip={} vision={}", scorer.is_some(), vision.is_some());
         let mut photos: Vec<Photo> = paths
             .iter()
-            .map(|p| analyze(p, &tmp, scorer.as_ref().map(|s| s as &dyn AiScorer), vision.as_ref(), &|_, _, _| {}).unwrap())
+            .map(|p| analyze(p, &tmp, scorer.as_ref().map(|s| s as &dyn AiScorer), vision.as_ref(), EyeMethod::Vision, None, &|_, _, _| {}).unwrap())
             .collect();
-        group_and_score(&mut photos, None);
+        group_and_score(&mut photos, None, EyeMethod::Vision);
         for p in &photos {
             println!(
                 "{:<14} score={:.2} sharp={:.2} expo={:.2} clip={:?} sys={:?} faces={} flags={:?} group={} scene={} best={}",
@@ -520,6 +562,34 @@ mod tests {
                 p.clip_score.map(|v| (v * 100.0).round() / 100.0), p.sys_score.map(|v| (v * 100.0).round() / 100.0),
                 p.face_count, p.flags, p.group, p.scene, p.group_best
             );
+        }
+    }
+
+    /// The real code path (`analyze()`, not a hand-rolled crop) on real photos, both eye methods side by side: this is
+    /// what actually ships, not a numeric spot check of the models in isolation.
+    #[test]
+    #[ignore = "needs FG_LIBRARY (a folder of real photos with faces), models/ and bin/fg-vision"]
+    fn eye_methods_on_real_photos() {
+        let Ok(dir) = std::env::var("FG_LIBRARY") else { return };
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let model_dir = root.join("../models");
+        let vision = Vision::start(&root.join("bin/fg-vision"), 2, false).expect("fg-vision (macOS only)");
+        let mp = MediapipeEyes::load(&model_dir).expect("load MediaPipe eyes (needs models/ from the `eyes` pack)");
+        let tmp = std::env::temp_dir().join("fg_eye_methods_test");
+        std::fs::create_dir_all(&tmp).unwrap();
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| is_image(p)).collect();
+        files.sort();
+        files.truncate(40);
+        println!("{} photos", files.len());
+        for f in &files {
+            let a = analyze(f, &tmp, None, Some(&vision), EyeMethod::Vision, None, &|_, _, _| {});
+            let b = analyze(f, &tmp, None, Some(&vision), EyeMethod::Mediapipe, Some(&mp), &|_, _, _| {});
+            match (a, b) {
+                (Ok(a), Ok(b)) if a.face_count > 0 => {
+                    println!("{:<28} faces={} vision={:>6.3} mediapipe={:>6.3}", a.name, a.face_count, a.eyes_open.unwrap_or(-1.0), b.eyes_open.unwrap_or(-1.0));
+                }
+                _ => {}
+            }
         }
     }
 
@@ -591,7 +661,7 @@ mod tests {
                 let t = Instant::now();
                 let done: usize = paths
                     .par_iter()
-                    .map(|q| analyze(q, &tmp, Some(&scorer as &dyn AiScorer), vision.as_ref(), &|_, _, _| {}).is_ok() as usize)
+                    .map(|q| analyze(q, &tmp, Some(&scorer as &dyn AiScorer), vision.as_ref(), EyeMethod::Vision, None, &|_, _, _| {}).is_ok() as usize)
                     .sum();
                 let secs = t.elapsed().as_secs_f64();
                 println!("vision={:<5} clip={:<12} {done} photos in {secs:>5.1}s  ({:.0} ms/photo)", with_vision, scorer.backend, secs * 1000.0 / done as f64);

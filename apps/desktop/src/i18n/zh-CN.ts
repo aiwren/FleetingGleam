@@ -3,6 +3,7 @@ const zh = {
   nav: {
     group: "功能",
     cull: "定格", cullSub: "照片筛选",
+    styles: "风格",
     meter: "测光", meterSub: "摄影参数",
     soon: "即将推出",
     soonBody: "这个模块还没有做。它会和「{{name}}」一样，有自己的工作区和检查器。",
@@ -49,16 +50,17 @@ const zh = {
   single: { pagePrev: "上一页", pageNext: "下一页" },
   search: { label: "搜索照片", placeholder: "搜索照片：烟花、两个人、雨伞…", globalPlaceholder: "搜索所有项目里的照片", clear: "清除", indexing: "正在为搜索建立索引 {{pct}}%", none: "没有找到「{{q}}」", noneHint: "试试换个说法，比如描述画面里的东西或场景。", inProject: "在「{{name}}」", results: "{{count}} 张" },
   models: {
-    ask: { standard: "下载标准分析模型", high: "下载高质量分析模型", ultra: "下载极致分析模型", search: "下载照片搜索模型" },
+    ask: { standard: "下载标准分析模型", high: "下载高质量分析模型", ultra: "下载极致分析模型", search: "下载照片搜索模型", eyes: "下载 MediaPipe 眼睛模型" },
     body: {
       standard: "第一次分析照片前，需要先下载分析模型（约 {{size}}）。只在第一次使用时下载，之后完全离线；你的照片不会被上传。",
       high: "高质量分析需要先下载更强的分析模型（约 {{size}}）。只在第一次使用时下载，之后完全离线；你的照片不会被上传。",
       ultra: "极致分析使用最新一代的美学评分模型（约 {{size}}，体积很大）。这是实验性的一档：更慢，但对观感的判断可能更细。只在第一次使用时下载，之后完全离线；你的照片不会被上传。",
       search: "用文字搜索照片需要先下载搜索模型（约 {{size}}），之后会在后台为照片建立索引。只下载一次，之后完全离线；你的照片不会被上传。",
+      eyes: "MediaPipe 的闭眼检测需要先下载两个小模型（约 {{size}}）。只在第一次使用时下载，之后完全离线；你的照片不会被上传。",
     },
     download: "下载（{{size}}）", retry: "重试", error: "下载没有成功，请检查网络后重试。",
-    name: { standard: "标准分析", high: "高质量分析", ultra: "极致分析（实验）", search: "照片搜索" },
-    desc: { standard: "日常够用，速度快", high: "更准，对模糊、构图和观感更敏感", ultra: "最新一代美学评分，更慢，实验性", search: "用文字描述来找照片" },
+    name: { standard: "标准分析", high: "高质量分析", ultra: "极致分析（实验）", search: "照片搜索", eyes: "MediaPipe 眼睛检测" },
+    desc: { standard: "日常够用，速度快", high: "更准，对模糊、构图和观感更敏感", ultra: "最新一代美学评分，更慢，实验性", search: "用文字描述来找照片", eyes: "更能分辨眯眼大笑和真的闭眼" },
     have: "已下载", none: "未下载", get: "下载", remove: "删除", title: "已下载的模型",
     titleDesc: "模型只在需要时才下载，之后完全离线使用。不用的可以删除，需要时会再次询问。",
   },
@@ -74,6 +76,7 @@ const zh = {
     stats: "{{labels}} 次手动选择 · {{refs}} 张参考照片", learnFolder: "从文件夹学习…", makeDefault: "设为默认", reset: "清空", delete: "删除",
     new: "新建风格", newPlaceholder: "风格名称，例如：街拍、婚礼",
     project: "选片风格", projectDesc: "这个项目用哪一种风格来挑照片。", followDefault: "跟随默认风格",
+    open: "管理风格 →", pageDesc: "在这里创建、训练和管理你的选片风格。",
   },
   cmp: { count: "同时对比的张数", rail: "同组的其他照片", groupOf: "第 {{i}} / {{n}} 组相似照片", prev: "上一组", next: "下一组", best: "推荐", kept: "已保留", rejected: "已淘汰", hint: "滚轮缩放 · 拖动平移 · 双击放大到 2.5 倍（同步） · 悬停一张，按 P 保留 · X 淘汰 · ↑↓ 换对手 · ← → 换组", emptyTitle: "这张没有相似的照片可以对比", emptyBody: "对比用来在同一瞬间连拍的几张里挑出最好的一张。", jump: "跳到下一组相似照片" },
   inspector: {
@@ -127,6 +130,9 @@ const zh = {
     quality: "分析质量", qualityShort: "高质量更准，但分析更慢。更换后会重新分析。", qualityFast: "标准", qualityHigh: "高质量",
     qualityDesc: "标准速度快，日常够用；高质量使用能力更强的模型和更细致的评分，对模糊、构图和整体观感更敏感，但每张会慢很多；极致（实验）使用最新一代的美学评分，对整体观感、构图是否干净的判断更细，但每张约要两秒，适合小批量试用，几千张的相册建议用标准或高质量。高质量和极致需要开启加速（“自动”），选“仅 CPU”时会自动退回标准。",
     modelUsed: "分析质量",
+    eyeMethod: "闭眼检测", eyeMethodShort: "换一种方法判断照片里的眼睛是不是闭着。",
+    eyeMethodVision: "系统（Vision）", eyeMethodMediapipe: "MediaPipe",
+    eyeMethodDesc: "系统用 macOS 自带的 Vision 框架，量一个几何比例，快，但眯眼大笑有时会被当成闭眼。MediaPipe 是 Google 训练的一个小模型，看的是同一张脸，能更好地分清“笑眯了”和“真的闭上了”，第一次使用需要下载。两种都只用 Vision 找到的人脸位置，都只在这台电脑上运行。",
     lastRun: "上次分析实际使用的硬件", lastRunNone: "还没有分析过照片。分析一次后，这里会显示真实用到了什么。",
     backendClip: "本地 AI 模型", backendVision: "系统美学与人脸", backendCores: "并行线程",
     clipCpu: "处理器", clipGpu: "GPU / 神经网络引擎",
@@ -143,6 +149,7 @@ const zh = {
     learn: "学习我的喜好", learnShort: "根据你的保留和淘汰，学习你的口味。只保存在这台电脑上。", learnDesc: "根据你手动保留和淘汰的照片，在这台电脑上学习你的口味，并用它微调评分。学到的内容只保存在本机，不会上传，也可以随时重置。",
     learnStatus: "已从 {{n}} 次手动选择中学习（其中保留 {{k}} 张）", learnActive: "偏好模型已生效", learnWarm: "还需要更多选择才会生效（保留和淘汰各至少 3 张）", learnNone: "还没有学习记录。在检查器里对照片按 P、R、X 就会开始积累。",
     learnReset: "重置已学习的偏好", learnResetDone: "已重置",
+    customStyles: "启用自定义风格", customStylesDesc: "默认只训练一个风格。打开后可以新建多个风格，分别训练、按项目选用。",
     about: "关于",
     models: "本地模型", modelsBody: "分析所用的模型随应用放在本机，全程离线运行；在 macOS 上另外使用系统自带的图像美学与人脸质量评估。",
   },
@@ -182,6 +189,7 @@ const zh = {
     sort: "默认排序", learn: "为这个项目学习我的喜好", learnDesc: "关闭后，这个项目不用你学到的偏好来微调评分。",
     danger: "删除项目", dangerDesc: "项目会移到回收站，7 天内可以恢复。照片文件不会被删除。", confirmBin: "再点一次确认",
     settings: "项目设置", sortTip: "排序",
+    rescan: "重新分析", rescanDesc: "忽略缓存，重新分析这个项目里的所有照片。已有的保留/淘汰标记不会丢失。", rescanBtn: "重新分析",
   },
 };
 export default zh;

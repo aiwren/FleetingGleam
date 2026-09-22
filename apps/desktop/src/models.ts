@@ -6,7 +6,7 @@ import { listen } from "@tauri-apps/api/event";
  * Models are downloaded when they are first needed, one pack at a time. `ensurePack` is the single door: call it before anything that
  * needs a pack, and it either says "ready" straight away or asks the person (size shown), downloads with progress, and answers.
  */
-export type PackId = "standard" | "high" | "ultra" | "search";
+export type PackId = "standard" | "high" | "ultra" | "search" | "eyes";
 export type PackInfo = { id: PackId; installed: boolean };
 export type Answer = "ready" | "downloaded" | "cancelled";
 export type Gate = { id: PackId; phase: "ask" | "downloading" | "error"; bytes: number; done: number; total: number; error?: string; resolve: (a: Answer) => void };

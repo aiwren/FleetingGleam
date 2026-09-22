@@ -4,7 +4,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 export type Compute = "auto" | "cpu";
 export type Theme = "system" | "light" | "dark";
 export type Quality = "fast" | "high" | "ultra";
-export type Settings = { compute: Compute; theme: Theme; learn: boolean; quality: Quality; search: boolean };
+export type EyeMethod = "vision" | "mediapipe";
+export type Settings = { compute: Compute; theme: Theme; learn: boolean; quality: Quality; search: boolean; customStyles: boolean; eyeMethod: EyeMethod };
 /** What the last analysis actually ran on, reported by the backend. */
 export type ScanInfo = { cpu_only: boolean; clip: string | null; model: string | null; vision: boolean; cores: number };
 
@@ -19,7 +20,7 @@ function read<T>(key: string, fallback: T): T {
 }
 function write(key: string, v: unknown) { try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* storage may be unavailable */ } }
 
-let state: Settings = read<Settings>(KEY, { compute: "auto", theme: "system", learn: true, quality: "fast", search: false });
+let state: Settings = read<Settings>(KEY, { compute: "auto", theme: "system", learn: true, quality: "fast", search: false, customStyles: false, eyeMethod: "vision" });
 // High quality needs acceleration, so an old combination of High + CPU-only is brought in line.
 if (state.quality !== "fast" && state.compute === "cpu") state = { ...state, compute: "auto" };
 let info: ScanInfo | null = (() => { try { const raw = localStorage.getItem(INFO_KEY); return raw ? (JSON.parse(raw) as ScanInfo) : null; } catch { return null; } })();

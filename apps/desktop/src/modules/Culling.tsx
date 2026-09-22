@@ -59,16 +59,16 @@ const LAYOUTS: { id: ViewStyle; icon: ReactNode }[] = [
   { id: "compare", icon: <><rect x="1.5" y="2.5" width="5.5" height="11" rx="1.2" /><rect x="9" y="2.5" width="5.5" height="11" rx="1.2" /></> },
 ];
 
-export default function Culling({ active, inspectorHidden, onToggleInspector }: {
+export default function Culling({ active, inspectorHidden, onToggleInspector, onOpenStyles }: {
   active: boolean;
   inspectorHidden: boolean;
   onToggleInspector: () => void;
   /** Called when the user selects a photo, so the shell can slide the inspector open. */
+  onOpenStyles: () => void;
 }) {
   const { t, i18n } = useTranslation();
   const store = useProjects();
   const project: Project | null = store.projects.find((p) => p.id === store.activeId && !p.trashed) ?? null;
-  const liveCount = store.projects.filter((p) => !p.trashed).length;
   const settings = useSettings();
 
   const [phase, setPhase] = useState<Phase>("idle");
@@ -122,7 +122,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector }: 
     if (!raf.current) raf.current = requestAnimationFrame(() => { raf.current = 0; setTick((n) => n + 1); });
   }, []);
 
-  const runScan = useCallback(async (proj: Project, total: number, quiet: boolean, tok: number) => {
+  const runScan = useCallback(async (proj: Project, total: number, quiet: boolean, tok: number, force = false) => {
     results.current.clear(); stages.current.clear(); lastStage.current = null;
     startedAt.current = performance.now();
     setProgress({ done: 0, total });
@@ -145,7 +145,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector }: 
       }),
     ]);
     try {
-      const res = await invoke<Photo[]>("scan_project", { dirs: proj.folders, compute: getSettings().compute, quality: getSettings().quality, style: proj.style, learn: getSettings().learn && proj.learn !== false, quiet });
+      const res = await invoke<Photo[]>("scan_project", { dirs: proj.folders, compute: getSettings().compute, quality: getSettings().quality, style: proj.style, learn: getSettings().learn && proj.learn !== false, quiet, force, eyeMethod: getSettings().eyeMethod });
       if (tok !== token.current) return;
       setPhotos(res);
       setPhase("done");
@@ -181,7 +181,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector }: 
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [folderKey, reloadKey, settings.quality, settings.compute]);
+  }, [folderKey, reloadKey, settings.quality, settings.compute, settings.eyeMethod]);
 
   // Quick 640px previews for the photos shown on the confirmation screen, so the UI never decodes originals.
   useEffect(() => {
@@ -200,9 +200,11 @@ export default function Culling({ active, inspectorHidden, onToggleInspector }: 
     for (const pack of q === "ultra" ? (["standard", "ultra"] as const) : q === "high" ? (["high"] as const) : (["standard"] as const)) {
       if ((await ensurePack(pack)) === "cancelled") return;
     }
+    if (getSettings().eyeMethod === "mediapipe" && (await ensurePack("eyes")) === "cancelled") return;
     runScan(project, files.length, false, token.current);
   };
   const reevaluate = () => { if (project) runScan(project, files.length, true, token.current); };
+  const forceRescan = () => { if (project) runScan(project, files.length, false, token.current, true); };
 
   const addFolder = async () => {
     const dir = await pickFolder();
@@ -417,7 +419,6 @@ export default function Culling({ active, inspectorHidden, onToggleInspector }: 
             </div>
           )}
           <div className="toolbar-right" data-tauri-drag-region>
-            {!project && liveCount > 0 && <button className="btn primary sm" onClick={() => newProjectFromDialog()}>{t("home.new")}</button>}
             <AnimatePresence>
               {project && phase === "done" && settings.learn && project.learn !== false && dirty > 0 && (
                 <motion.button className="btn reeval" onClick={reevaluate} title={t("cull.reevalTip")} initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }}>{t("cull.reeval")}</motion.button>
@@ -477,7 +478,8 @@ export default function Culling({ active, inspectorHidden, onToggleInspector }: 
           {!project && store.projects.length > 0 && (
             <ProjectHome projects={store.projects} onOpen={(id) => setActive(id)} onNew={() => newProjectFromDialog()}
               search={index.available && allFolders.length > 0 ? { query, setQuery, hits, progress: index.progress, inputRef: searchRef } : undefined}
-              onPick={(id, path) => { setPendingSelect(path); setQuery(""); setActive(id); }} />
+              onPick={(id, path) => { setPendingSelect(path); setQuery(""); setActive(id); }}
+              onOpenStyles={settings.customStyles ? onOpenStyles : undefined} />
           )}
 
           {!project && store.projects.length === 0 && (
@@ -602,7 +604,8 @@ export default function Culling({ active, inspectorHidden, onToggleInspector }: 
 
       {project && (
         <ProjectSettings open={settingsOpen} project={project} onClose={() => setSettingsOpen(false)} onAddFolder={addFolder} onRemoveFolder={removeFolder}
-          onTrash={() => { setSettingsOpen(false); trashProject(project.id); }} />
+          onTrash={() => { setSettingsOpen(false); trashProject(project.id); }}
+          onForceRescan={() => { setSettingsOpen(false); forceRescan(); }} />
       )}
 
       <AnimatePresence>

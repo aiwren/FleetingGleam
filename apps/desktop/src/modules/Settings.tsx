@@ -1,5 +1,4 @@
-import { PrefsInfo, bumpPrefsRevision, learnFromFolder, refreshStyles, useStyles } from "../styles";
-import StylesAdvanced from "./StylesAdvanced";
+import { PrefsInfo, bumpPrefsRevision, learnFromFolder, refreshStyles } from "../styles";
 import { pickFolder, baseName } from "../projectActions";
 import { ensurePack, removePack, usePacks } from "../models";
 import { ReactNode, useEffect, useRef, useState } from "react";
@@ -12,7 +11,7 @@ import Segmented from "../components/Segmented";
 import Select from "../components/Select";
 import { LANGS, Pref, setPref, storedPref } from "../i18n";
 import { SPRING } from "../motion";
-import { Compute, Quality, Theme, setSettings, useScanInfo, useSettings } from "../settings";
+import { Compute, EyeMethod, Quality, Theme, setSettings, useScanInfo, useSettings } from "../settings";
 
 
 function Group({ id, title, index, children }: { id: string; title: string; index: number; children: ReactNode }) {
@@ -39,7 +38,7 @@ function Row({ label, desc, children, info }: { label: string; desc?: string; ch
   );
 }
 
-export default function Settings({ active }: { active: boolean }) {
+export default function Settings({ active, onOpenStyles }: { active: boolean; onOpenStyles: () => void }) {
   const { t, i18n } = useTranslation();
   const s = useSettings();
   const info = useScanInfo();
@@ -103,7 +102,6 @@ export default function Settings({ active }: { active: boolean }) {
   };
 
   const packs = usePacks();
-  const styles = useStyles();
   const [refBusy, setRefBusy] = useState<number | null>(null);
   const [refFailed, setRefFailed] = useState(false);
   const learnRefs = async () => {
@@ -115,7 +113,6 @@ export default function Settings({ active }: { active: boolean }) {
     if (!ok) setRefFailed(true);
     else invoke<PrefsInfo>("prefs_info").then(setPrefs).catch(() => {});
   };
-  void styles;
   const clipLabel = !info ? "—" : info.clip === null ? t("settings.off") : info.clip.startsWith("coreml") ? t("settings.clipGpu") : t("settings.clipCpu");
   const learnStatus = !prefs || prefs.labels === 0 ? t("settings.learnNone")
     : `${t("settings.learnStatus", { n: prefs.labels, k: prefs.keeps })} · ${prefs.active ? t("settings.learnActive") : t("settings.learnWarm")}`;
@@ -184,6 +181,15 @@ export default function Settings({ active }: { active: boolean }) {
                   options={[{ value: "auto", label: t("settings.auto") }, { value: "cpu", label: t("settings.cpuOnly"), disabled: s.quality !== "fast", tip: t("settings.cpuNeedsStandard") }]}
                   onChange={(v) => setSettings({ compute: v })} />
               </Row>
+              <Row label={t("settings.eyeMethod")} desc={t("settings.eyeMethodShort")} info={<p className="ash">{t("settings.eyeMethodDesc")}</p>}>
+                <Segmented<EyeMethod> id="eyeMethod" value={s.eyeMethod}
+                  options={[{ value: "vision", label: t("settings.eyeMethodVision") }, { value: "mediapipe", label: t("settings.eyeMethodMediapipe") }]}
+                  onChange={async (v) => {
+                    // the MediaPipe models are fetched the first time this is chosen; re-evaluate picks the new reading up for photos already analysed
+                    if (v === "mediapipe" && (await ensurePack("eyes")) === "cancelled") return;
+                    setSettings({ eyeMethod: v });
+                  }} />
+              </Row>
             </Group>
 
             <Group id="sec-search" title={t("searchset.title")} index={2}>
@@ -207,7 +213,14 @@ export default function Settings({ active }: { active: boolean }) {
                 info={<p className="ash">{t("styles.fromFolderInfo")}</p>}>
                 <button className="btn" disabled={refBusy !== null} onClick={learnRefs}>{refBusy !== null ? t("styles.learning", { pct: Math.round(refBusy * 100) }) : t("styles.chooseFolder")}</button>
               </Row>
-              <div className="srow-wrap"><div className="srow adv"><StylesAdvanced /></div></div>
+              <Row label={t("settings.customStyles")} desc={t("settings.customStylesDesc")}>
+                <button className="switch" role="switch" aria-checked={s.customStyles} aria-label={t("settings.customStyles")} onClick={() => setSettings({ customStyles: !s.customStyles })} />
+              </Row>
+              {s.customStyles && (
+                <Row label={t("styles.title")} desc={t("styles.desc")}>
+                  <button className="btn" onClick={onOpenStyles}>{t("styles.open")}</button>
+                </Row>
+              )}
               {prefs && (prefs.labels > 0 || prefs.refs > 0) && (
                 <Row label={t("settings.learnReset")} desc={t("settings.learned", { count: prefs.labels + prefs.refs, n: prefs.labels + prefs.refs })}>
                   <button className="btn" onClick={resetPrefs}>{prefsReset ? t("settings.learnResetDone") : t("settings.learnReset")}</button>

@@ -60,7 +60,11 @@ pub fn flags(sharp: f32, brightness: f32, clipped_high: f32, utility: bool) -> V
 }
 
 /// Eyes measured below this are treated as closed (about 0.25-0.4 when open; a wide smile can squint down to ~0.18).
+/// This is a geometric ratio, calibrated for `eyes_open` when `analyze::EyeMethod::Vision` computed it.
 pub const EYES_CLOSED: f32 = 0.13;
+/// The MediaPipe blink classifier's own openness (`1 - blink probability`), not a ratio: below half, the model
+/// itself is saying "more likely closed than open", which is the natural place to draw the line.
+pub const MEDIAPIPE_EYES_CLOSED: f32 = 0.5;
 
 /// How much each check counts for a kind of picture: (aesthetic, sharpness, exposure, face comparison within a group).
 /// Common sense, not measurement: a portrait lives or dies by the face, a landscape by clean exposure and overall sharpness,

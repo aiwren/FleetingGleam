@@ -3,6 +3,7 @@ const en = {
   nav: {
     group: "Modules",
     cull: "Cull", cullSub: "Photo culling",
+    styles: "Styles",
     meter: "Meter", meterSub: "Shooting data",
     soon: "Soon",
     soonBody: "This module isn't built yet. Like {{name}}, it will have its own workspace and inspector.",
@@ -51,16 +52,17 @@ const en = {
   single: { pagePrev: "Previous page", pageNext: "Next page" },
   search: { label: "Search photos", placeholder: "Search photos: fireworks, two people, umbrella…", globalPlaceholder: "Search photos in every project", clear: "Clear", indexing: "Building the search index {{pct}}%", none: "Nothing found for \u201c{{q}}\u201d", noneHint: "Try describing what is in the picture in other words.", inProject: "In \u201c{{name}}\u201d", results: "{{count}}" },
   models: {
-    ask: { standard: "Download the standard analysis model", high: "Download the high-quality analysis model", ultra: "Download the ultra analysis model", search: "Download the photo search model" },
+    ask: { standard: "Download the standard analysis model", high: "Download the high-quality analysis model", ultra: "Download the ultra analysis model", search: "Download the photo search model", eyes: "Download the MediaPipe eye models" },
     body: {
       standard: "Before the first analysis a model is needed (about {{size}}). It is downloaded once, after which everything works offline. Your photos are never uploaded.",
       high: "High-quality analysis needs a more capable model (about {{size}}). It is downloaded once, after which everything works offline. Your photos are never uploaded.",
       ultra: "Ultra analysis uses the newest generation of aesthetic scoring model (about {{size}}, a large download). It is an experimental tier: slower, and possibly finer in judging the look. Downloaded once, then fully offline. Your photos are never uploaded.",
       search: "Searching photos by words needs a search model (about {{size}}); the photos are then indexed in the background. Downloaded once, then fully offline. Your photos are never uploaded.",
+      eyes: "MediaPipe's closed-eye detection needs two small models first (about {{size}}). Downloaded once, then fully offline. Your photos are never uploaded.",
     },
     download: "Download ({{size}})", retry: "Try again", error: "The download did not succeed. Check your connection and try again.",
-    name: { standard: "Standard analysis", high: "High-quality analysis", ultra: "Ultra analysis (experimental)", search: "Photo search" },
-    desc: { standard: "Good for everyday use, quick", high: "More accurate; more sensitive to blur, composition and look", ultra: "Newest aesthetic scoring; slower, experimental", search: "Find photos by describing them" },
+    name: { standard: "Standard analysis", high: "High-quality analysis", ultra: "Ultra analysis (experimental)", search: "Photo search", eyes: "MediaPipe eye detection" },
+    desc: { standard: "Good for everyday use, quick", high: "More accurate; more sensitive to blur, composition and look", ultra: "Newest aesthetic scoring; slower, experimental", search: "Find photos by describing them", eyes: "Tells a laughing squint from an actual closed eye" },
     have: "Downloaded", none: "Not downloaded", get: "Download", remove: "Remove", title: "Downloaded models",
     titleDesc: "Models are only downloaded when needed and then work offline. Remove the ones you do not use; you will be asked again when they are needed.",
   },
@@ -76,6 +78,7 @@ const en = {
     stats: "{{labels}} manual choices \u00b7 {{refs}} reference photos", learnFolder: "Learn from folder\u2026", makeDefault: "Make default", reset: "Clear", delete: "Delete",
     new: "New style", newPlaceholder: "Style name, e.g. Street, Weddings",
     project: "Selection style", projectDesc: "Which style chooses this project's photos.", followDefault: "Follow the default style",
+    open: "Manage styles →", pageDesc: "Create, train and manage your selection styles here.",
   },
   cmp: { count: "Photos side by side", rail: "Other photos in this group", groupOf: "Group {{i}} of {{n}}", prev: "Previous group", next: "Next group", best: "Suggested", kept: "Kept", rejected: "Rejected", hint: "Wheel to zoom · drag to pan · double-click 2.5× (in sync) · hover a photo, P keeps · X rejects · ↑↓ next challenger · ← → next group", emptyTitle: "No similar shots to compare", emptyBody: "Compare is for picking the best of a burst taken at the same moment.", jump: "Jump to the next group of similar shots" },
   inspector: {
@@ -129,6 +132,9 @@ const en = {
     quality: "Analysis quality", qualityShort: "High is more accurate but slower. Changing it re-analyzes.", qualityFast: "Standard", qualityHigh: "High",
     qualityDesc: "Standard is quick and fine for everyday use. High uses a more capable model and a finer score: more sensitive to blur, composition and overall look, but much slower per photo. Ultra (experimental) uses the newest generation of aesthetic scoring, finer about the overall look and whether a picture is clean, but takes about two seconds per photo: good for a small batch, not for albums of thousands. High and Ultra need acceleration (Auto); with CPU only they fall back to Standard.",
     modelUsed: "Analysis quality",
+    eyeMethod: "Closed-eye detection", eyeMethodShort: "Switch how a photo's eyes are read as open or closed.",
+    eyeMethodVision: "System (Vision)", eyeMethodMediapipe: "MediaPipe",
+    eyeMethodDesc: "System uses macOS's own Vision framework: a fast geometric ratio, which a wide laughing squint can sometimes read as closed. MediaPipe is a small model Google trained that looks at the same face and is better at telling a squint from an actual closed eye; it needs a download the first time. Both only ever use the face position Vision already found, and both run only on this computer.",
     lastRun: "Hardware used in the last analysis", lastRunNone: "No analysis yet. After one run, this shows what was actually used.",
     backendClip: "On-device AI model", backendVision: "System aesthetics & faces", backendCores: "Parallel threads",
     clipCpu: "Processor", clipGpu: "GPU / Neural Engine",
@@ -145,6 +151,7 @@ const en = {
     learn: "Learn my taste", learnShort: "Learns your taste from what you keep and reject. Stays on this computer.", learnDesc: "Learns your taste on this computer from the photos you keep and reject by hand, and uses it to nudge scores. What it learns stays on this device, is never uploaded, and can be reset any time.",
     learnStatus: "Learned from {{n}} manual choices ({{k}} kept)", learnActive: "Taste model is active", learnWarm: "Needs a few more choices before it kicks in (at least 3 kept and 3 rejected)", learnNone: "Nothing learned yet. Press P, R or X on photos in the inspector to start.",
     learnReset: "Reset learned taste", learnResetDone: "Reset",
+    customStyles: "Enable custom styles", customStylesDesc: "Only the default style is trained by default. Turn this on to create several styles, each trained on its own and picked per project.",
     about: "About",
     models: "On-device models", modelsBody: "The models used for analysis ship with the app and run entirely offline. On macOS the system's own image aesthetics and face-quality checks are used as well.",
   },
@@ -184,6 +191,7 @@ const en = {
     sort: "Default sort", learn: "Learn my taste in this project", learnDesc: "When off, this project doesn\u2019t use your learned taste to nudge scores.",
     danger: "Delete project", dangerDesc: "The project moves to the recycle bin and can be restored for 7 days. Photo files are never deleted.", confirmBin: "Click again to confirm",
     settings: "Project settings", sortTip: "Sort",
+    rescan: "Re-analyze", rescanDesc: "Ignore the cache and re-analyze every photo in this project. Your keep/reject marks are kept.", rescanBtn: "Re-analyze",
   },
 };
 export default en;

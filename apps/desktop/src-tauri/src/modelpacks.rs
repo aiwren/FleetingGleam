@@ -21,11 +21,12 @@ pub struct Pack {
     pub files: &'static [&'static str],
 }
 
-pub const PACKS: [Pack; 4] = [
+pub const PACKS: [Pack; 5] = [
     Pack { id: "standard", files: &["clip_vit_b32_vision_fp16.onnx", "clip_vit_b32_vision_int8.onnx", "aesthetic_head_vit_b_32.json"] },
     Pack { id: "high", files: &["clip_vit_l14_vision_fp16.onnx", "aesthetic_head_vit_l_14.json"] },
     Pack { id: "ultra", files: &["siglip_so400m_vision_fp16.onnx", "aesthetic_v25_head.json"] },
     Pack { id: "search", files: &["text_multilingual_qint8.onnx", "text_multilingual_tokenizer.json", "text_multilingual_dense.bin"] },
+    Pack { id: "eyes", files: &[crate::mediapipe::LANDMARKS_FILE, crate::mediapipe::BLENDSHAPES_FILE] },
 ];
 
 pub fn pack(id: &str) -> Option<&'static Pack> {
