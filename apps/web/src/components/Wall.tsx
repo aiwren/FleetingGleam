@@ -65,8 +65,10 @@ export default function Wall({ lang, progress }: { lang: Lang; progress: () => n
     const tick = () => {
       raf = 0;
       if (!live) return;
-      // Eased towards the scroll position, so a flick of the wheel still lands softly.
-      at += (progress() - at) * 0.12;
+      // A lead-in before the first verdict and a tail after the last, so a small scroll barely moves the pass, and the
+      // reader is never surprised by the wall emptying under them. Eased so a flick of the wheel still lands softly.
+      const want = Math.min(1, Math.max(0, (progress() - 0.12) / 0.74));
+      at += (want - at) * 0.07;
       el.style.setProperty("--p", at.toFixed(4));
       const done = tiles.slice(0, Math.round(at * total)).filter((t) => t.kept).length;
       if (done !== seen && readout.current) {

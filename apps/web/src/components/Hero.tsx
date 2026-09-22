@@ -35,10 +35,10 @@ export default function Hero({ lang }: { lang: Lang }) {
 
   const { scrollYProgress } = useScroll({ target: track, offset: ["start start", "end end"] });
   // Once the pass begins the sentence steps back a little, rather than competing with the photographs.
-  const textFade = useTransform(scrollYProgress, [0.06, 0.28], [1, 0.55]);
+  const textFade = useTransform(scrollYProgress, [0.12, 0.34], [1, 0.55]);
 
   return (
-    <section ref={track} className="relative h-[260vh] md:h-[300vh]">
+    <section ref={track} className="relative h-[300vh] md:h-[360vh]">
       <div className="sticky top-16 flex h-[calc(100dvh-4rem)] flex-col justify-center overflow-hidden">
         <div className="mx-auto w-full max-w-[1400px] px-5">
           <motion.div style={reduce ? undefined : { opacity: textFade }}

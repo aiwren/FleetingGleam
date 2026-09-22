@@ -2,7 +2,7 @@ import { PrefsInfo, bumpPrefsRevision, learnFromFolder, refreshStyles, useStyles
 import StylesAdvanced from "./StylesAdvanced";
 import { pickFolder, baseName } from "../projectActions";
 import { ensurePack, removePack, usePacks } from "../models";
-import { ReactNode, useEffect, useState } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { motion } from "motion/react";
@@ -15,9 +15,9 @@ import { SPRING } from "../motion";
 import { Compute, Quality, Theme, setSettings, useScanInfo, useSettings } from "../settings";
 
 
-function Group({ title, index, children }: { title: string; index: number; children: ReactNode }) {
+function Group({ id, title, index, children }: { id: string; title: string; index: number; children: ReactNode }) {
   return (
-    <motion.section className="sgroup" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ ...SPRING.soft, delay: 0.05 + index * 0.06 }}>
+    <motion.section id={id} className="sgroup" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ ...SPRING.soft, delay: 0.05 + index * 0.06 }}>
       <h2>{title}</h2>
       <div className="scard">{children}</div>
     </motion.section>
@@ -49,6 +49,16 @@ export default function Settings({ active }: { active: boolean }) {
   const [cleared, setCleared] = useState(false);
   const [prefs, setPrefs] = useState<PrefsInfo | null>(null);
   const [prefsReset, setPrefsReset] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const sections = [
+    { id: "sec-general", label: t("settings.general") },
+    { id: "sec-performance", label: t("settings.performance") },
+    { id: "sec-search", label: t("searchset.title") },
+    { id: "sec-personal", label: t("settings.personal") },
+    { id: "sec-data", label: t("settings.data") },
+    { id: "sec-about", label: t("settings.about") },
+  ];
+  const [current, setCurrent] = useState(sections[0].id);
 
   useEffect(() => {
     if (!active) return;
@@ -57,6 +67,28 @@ export default function Settings({ active }: { active: boolean }) {
     invoke<PrefsInfo>("prefs_info").then((v) => setPrefs(v && typeof v === "object" ? v : null)).catch(() => setPrefs(null));
     invoke<number>("cache_size").then((n) => setCache(typeof n === "number" ? n : null)).catch(() => setCache(null));
     getVersion().then((v) => setVersion(v ?? "dev")).catch(() => setVersion("dev"));
+  }, [active]);
+
+  // Highlights the nav item for whichever section has scrolled closest to the top.
+  useEffect(() => {
+    if (!active) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      // Near the bottom, the last section may never reach the threshold (not enough room below it to scroll further).
+      if (el.scrollHeight - el.scrollTop - el.clientHeight < 4) { setCurrent(sections[sections.length - 1].id); return; }
+      const top = el.getBoundingClientRect().top;
+      let hit = sections[0].id;
+      for (const { id } of sections) {
+        const sec = document.getElementById(id);
+        if (sec && sec.getBoundingClientRect().top - top <= 96) hit = id;
+      }
+      setCurrent(hit);
+    };
+    onScroll();
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
 
   const bytes = (b: number) => {
@@ -94,9 +126,18 @@ export default function Settings({ active }: { active: boolean }) {
         <header className="toolbar" data-tauri-drag-region>
           <div className="toolbar-title" data-tauri-drag-region><b>{t("settings.title")}</b></div>
         </header>
-        <div className="scroll">
+        <div className="scroll" ref={scrollRef}>
+          <div className="settings-layout">
+          <nav className="settings-nav" aria-label={t("settings.title")}>
+            {sections.map((sec) => (
+              <button key={sec.id} className={sec.id === current ? "active" : ""}
+                onClick={() => document.getElementById(sec.id)?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+                {sec.label}
+              </button>
+            ))}
+          </nav>
           <div className="settings-body">
-            <Group title={t("settings.general")} index={0}>
+            <Group id="sec-general" title={t("settings.general")} index={0}>
               <Row label={t("settings.language")} desc={t("settings.languageDesc")}>
                 <Select className="langselect" value={pref} aria-label={t("settings.language")}
                   onChange={(e) => { const p = e.target.value as Pref; setPrefState(p); setPref(p); }}>
@@ -111,7 +152,7 @@ export default function Settings({ active }: { active: boolean }) {
               </Row>
             </Group>
 
-            <Group title={t("settings.performance")} index={1}>
+            <Group id="sec-performance" title={t("settings.performance")} index={1}>
               <Row label={t("settings.quality")} desc={t("settings.qualityShort")} info={<p className="ash">{t("settings.qualityDesc")}</p>}>
                 <Segmented<Quality> id="quality" value={s.quality}
                   options={[{ value: "fast", label: t("settings.qualityFast") }, { value: "high", label: t("settings.qualityHigh") }, { value: "ultra", label: t("settings.qualityUltra") }]}
@@ -145,7 +186,7 @@ export default function Settings({ active }: { active: boolean }) {
               </Row>
             </Group>
 
-            <Group title={t("searchset.title")} index={2}>
+            <Group id="sec-search" title={t("searchset.title")} index={2}>
               <Row label={t("searchset.title")} desc={t("searchset.desc")} info={<p className="ash">{t("searchset.info")}</p>}>
                 <button className="switch" role="switch" aria-checked={s.search} aria-label={t("searchset.title")} onClick={async () => {
                   if (!s.search) {
@@ -157,7 +198,7 @@ export default function Settings({ active }: { active: boolean }) {
               </Row>
             </Group>
 
-            <Group title={t("settings.personal")} index={3}>
+            <Group id="sec-personal" title={t("settings.personal")} index={3}>
               <Row label={t("settings.learn")} desc={t("settings.learnShort")}
                 info={(<><p className="ash">{t("settings.learnDesc")}</p><p className="ash">{learnStatus}</p></>)}>
                 <button className="switch" role="switch" aria-checked={s.learn} aria-label={t("settings.learn")} onClick={() => setSettings({ learn: !s.learn })} />
@@ -174,7 +215,7 @@ export default function Settings({ active }: { active: boolean }) {
               )}
             </Group>
 
-            <Group title={t("settings.data")} index={3}>
+            <Group id="sec-data" title={t("settings.data")} index={3}>
               <div className="srow-wrap">
                 <div className="srow"><div className="stext"><b>{t("models.title")}</b><p className="ash">{t("models.titleDesc")}</p></div></div>
               </div>
@@ -192,11 +233,12 @@ export default function Settings({ active }: { active: boolean }) {
               <Row label={t("settings.privacy")} desc={t("settings.privacyBody")} />
             </Group>
 
-            <Group title={t("settings.about")} index={4}>
+            <Group id="sec-about" title={t("settings.about")} index={4}>
               <Row label={t("brand.name")} desc={i18n.language === "en" ? undefined : t("brand.latin")} info={<p className="ash">{t("settings.modelsBody")}</p>}>
                 <span className="mono ash">{version ? `v${version}` : ""}</span>
               </Row>
             </Group>
+          </div>
           </div>
         </div>
       </section>

@@ -358,7 +358,13 @@ input[type=range]::-webkit-slider-thumb { appearance: none; width: 14px; height:
 .sidebar li kbd { margin-left: auto; }
 
 /* ---------- settings page ---------- */
-.settings-body { max-width: 640px; margin: 0 auto; padding: 8px 0 48px; display: grid; gap: 28px; }
+.settings-layout { display: flex; justify-content: center; gap: 32px; max-width: 840px; margin: 0 auto; }
+.settings-nav { position: sticky; top: 8px; align-self: flex-start; display: flex; flex-direction: column; gap: 2px; width: 152px; flex: none; padding-top: 12px; }
+.settings-nav button { border: 0; background: transparent; text-align: left; padding: 7px 10px; border-radius: 7px; color: var(--ash); font-size: 13px; cursor: pointer; transition: background .15s, color .15s; }
+.settings-nav button:hover { background: var(--line); }
+.settings-nav button.active { color: var(--ink); font-weight: 500; background: var(--line); }
+@media (max-width: 900px) { .settings-nav { display: none; } }
+.settings-body { max-width: 640px; padding: 8px 0 48px; display: grid; gap: 28px; }
 .sgroup h2 { font-size: 11px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--ash); margin: 0 0 8px 4px; }
 .scard { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); overflow: hidden; }
 .srow { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 14px 16px; }

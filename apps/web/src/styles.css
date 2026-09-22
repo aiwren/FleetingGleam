@@ -83,7 +83,7 @@ body { background: var(--canvas); color: var(--ink); font-family: var(--font-san
 .wall-rows { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .wall-rows::after { content: ""; flex-grow: 1e4; }
 .wall-tile {
-  --k: clamp(0, calc((var(--p) * var(--n) - var(--i)) * 2.4), 1);
+  --k: clamp(0, calc((var(--p) * var(--n) - var(--i)) * 1.15), 1);
   position: relative; margin: 0; overflow: hidden; border-radius: 10px;
   flex-grow: var(--a); flex-basis: calc(var(--a) * 108px); height: 108px;
   background: var(--surface);
