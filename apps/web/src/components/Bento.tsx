@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactNode, type MouseEvent } from "react";
 import { AnimatePresence, motion, useMotionTemplate, useMotionValue, useReducedMotion } from "motion/react";
-import { Check, MagnifyingGlass } from "@phosphor-icons/react";
+import { MagnifyingGlass } from "@phosphor-icons/react";
 import { copy, type Lang } from "../content";
+import { Gleam } from "./Gleam";
 import Frame from "./Frame";
 
 const EASE = [0.16, 1, 0.3, 1] as const;
@@ -13,7 +14,7 @@ function Tile({ className = "", i, children }: { className?: string; i: number; 
   const move = (e: MouseEvent<HTMLElement>) => { const r = e.currentTarget.getBoundingClientRect(); x.set(e.clientX - r.left); y.set(e.clientY - r.top); };
   return (
     <motion.article onMouseMove={move} initial={{ opacity: 0, y: 40 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, amount: 0.25 }} transition={{ duration: 0.8, ease: EASE, delay: (i % 2) * 0.08 }}
-      className={`group relative flex flex-col overflow-hidden rounded-3xl border border-line p-7 shadow-[var(--lift-sm)] md:p-8 ${className}`}>
+      className={`group relative flex flex-col overflow-hidden glass rounded-3xl border border-line p-7 md:p-8 ${className}`}>
       <motion.div aria-hidden className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-500 group-hover:opacity-100" style={{ background: glow }} />
       <div className="relative flex flex-1 flex-col">{children}</div>
     </motion.article>
@@ -66,7 +67,7 @@ function Typer({ phrases }: { phrases: readonly (readonly [string, string])[] })
   }, [phrases, reduce]);
   return (
     <div className="mt-auto pt-8" aria-hidden>
-      <div className="flex h-12 items-center gap-3 rounded-full border border-line bg-canvas/60 px-5 text-ink">
+      <div className="flex h-12 items-center gap-3 rounded-full border border-line bg-canvas/45 px-5 backdrop-blur-md text-ink">
         <MagnifyingGlass size={18} className="shrink-0 text-ash" />
         <span className="truncate">{text}</span>
         <motion.i className="-ml-2 h-5 w-px bg-gleam" animate={reduce ? undefined : { opacity: [1, 0, 1] }} transition={{ duration: 1, repeat: Infinity }} />
@@ -92,7 +93,7 @@ function Styles({ styles }: { styles: readonly (readonly [string, readonly strin
   const [name, photos, kept] = styles[on];
   return (
     <div className="mt-auto pt-8">
-      <div className="inline-flex w-fit max-w-full flex-wrap gap-1 rounded-full border border-line bg-canvas/60 p-1" role="tablist" aria-label={name}>
+      <div className="inline-flex w-fit max-w-full flex-wrap gap-1 rounded-full border border-line bg-canvas/45 p-1 backdrop-blur-md" role="tablist" aria-label={name}>
         {styles.map(([label], i) => (
           <button key={label} type="button" role="tab" aria-selected={i === on} onClick={() => setOn(i)}
             className={`relative rounded-full px-4 py-2 text-sm transition-colors duration-300 active:translate-y-px ${i === on ? "text-on-ink" : "text-ash hover:text-ink"}`}>
@@ -109,11 +110,12 @@ function Styles({ styles }: { styles: readonly (readonly [string, readonly strin
                 initial={reduce ? false : { opacity: 0, scale: 1.05 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.55, ease: EASE, delay: i * 0.05 }}
                 className="absolute inset-0 h-full w-full object-cover" />
             </AnimatePresence>
+            {/* The app's own mark for a kept photo: the gleam, lit, with nothing around it. */}
             <AnimatePresence>
               {kept.includes(i) && (
-                <motion.span key={`${name}-${i}`} initial={reduce ? false : { scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0, opacity: 0 }}
+                <motion.span key={`${name}-${i}`} initial={reduce ? false : { scale: 0, opacity: 0, rotate: -90 }} animate={{ scale: 1, opacity: 1, rotate: 0 }} exit={{ scale: 0, opacity: 0 }}
                   transition={{ type: "spring", stiffness: 380, damping: 22, delay: 0.25 + i * 0.12 }}
-                  className="absolute right-2 top-2 grid size-6 place-items-center rounded-full bg-gleam text-gleam-ink"><Check size={13} weight="bold" /></motion.span>
+                  className="absolute right-2 top-2 drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)]"><Gleam size={17} /></motion.span>
               )}
             </AnimatePresence>
           </div>

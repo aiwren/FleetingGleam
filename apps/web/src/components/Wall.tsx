@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Check } from "@phosphor-icons/react";
 import { copy, type Lang } from "../content";
+import { Gleam } from "./Gleam";
 
 /**
  * The app's own photo wall, alive in the page. Not a picture of the product and not a drawing of one: these are real tiles in
@@ -107,9 +107,8 @@ export default function Wall({ lang, progress }: { lang: Lang; progress: () => n
             style={{ ["--a" as string]: t.a, ["--i" as string]: k }}>
             <img src={`/wall/${pad(t.i)}.webp`} alt="" width={600} height={400} draggable={false}
               loading={k < 6 ? "eager" : "lazy"} fetchPriority={k < 3 ? "high" : "auto"} decoding="async" />
-            {t.kept
-              ? <s className="wall-check" aria-hidden><Check size={12} weight="bold" /></s>
-              : <s className="wall-out" aria-hidden>{c.reject}</s>}
+            {/* Kept photos wear the gleam. A rejected one wears nothing: the light simply falls away from it. */}
+            {t.kept && <i className="wall-mark" aria-hidden><Gleam size={17} /></i>}
           </figure>
         ))}
       </div>
