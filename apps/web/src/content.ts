@@ -9,12 +9,14 @@ export const copy = {
     title: "FleetingGleam | Local photo culling for your Mac",
     description: "FleetingGleam groups your bursts and picks the best frame on your own computer. Nothing is uploaded.",
     nav: [["Features", "#features"], ["Privacy", "#privacy"], ["How it works", "#flow"]],
+    menu: "Menu",
     hero: {
-      title: ["Thousands of photos.", "Keep the few worth freezing."],
+      title: ["Thousands of photos.", "A few worth freezing."],
       body: "FleetingGleam groups your bursts and picks the best frame, all on your Mac. Nothing is uploaded.",
-      cta: "macOS version coming soon", secondary: "How it works",
+      cta: "See how it works",
       alt: "The FleetingGleam photo wall with an inspector showing the score of the selected photo",
     },
+    burst: { title: ["One moment, six frames.", "It keeps the one you would have kept."], body: "Scroll to watch it read them.", note: "Sample frames. Scores are illustrative." },
     privacy: {
       text: "Your photos stay on your computer. Analysis, search and learning your taste all run on this machine. Models download once, only when needed.",
       points: [["ShieldCheck", "No account, no uploads"], ["Aperture", "Models on demand"], ["Sparkle", "Works offline after setup"]],
@@ -24,7 +26,8 @@ export const copy = {
       a: { t: "Bursts, grouped for you", d: "Frames of one moment sit together and the best one is marked. Faces, orientation and time gap all count.", alt: "Two frames of one moment side by side, with scores and a suggested best" },
       b: { t: "Scored by kind of scene", d: "Fourteen kinds of scene, each weighed differently. Portraits by faces, sport by focus, and a night shot is not marked down for being dark.", kinds: ["Portrait", "People", "Landscape", "Architecture", "Food", "Animal", "Object", "Document", "Street", "Night", "Sport", "Macro", "Stage", "Vehicle"] },
       c: { t: "Find by describing", d: "Type what you remember. English and Chinese both work, and photos are found by what is in them.", phrases: [["sunset over a field", "field"], ["a small boat on calm water", "boat"], ["white houses on a hill", "village"], ["green forest and stream", "forest"]] },
-      d: { t: "Learns your taste", d: "Point it at a folder of past picks and it learns in one go. Keep one style for weddings, another for street.", styles: ["Travel", "Street", "Wedding"] },
+      d: { t: "Learns your taste", d: "Point it at a folder of past picks and it learns in one go. Keep one style for weddings, another for street.",
+        styles: [["Travel", ["field", "village", "boat", "forest"], [0, 1, 2]], ["Street", ["st0", "st1", "st2", "st3"], [1, 3]], ["Wedding", ["wd0", "wd1", "wd2", "wd3"], [0, 2, 3]]] },
     },
     flow: {
       title: "Open a folder. It does the rest.",
@@ -45,12 +48,14 @@ export const copy = {
     title: "惊鸿 FleetingGleam | 本地照片筛选",
     description: "惊鸿在你的电脑上把连拍分好组，挑出最好的一张。照片不上传。",
     nav: [["功能", "#features"], ["隐私", "#privacy"], ["怎么用", "#flow"]],
+    menu: "菜单",
     hero: {
       title: ["几千张照片，", "只留值得定格的几张。"],
       body: "惊鸿在你的 Mac 上把连拍分好组，挑出最好的一张。照片不上传。",
-      cta: "macOS 版即将发布", secondary: "怎么用",
+      cta: "了解怎么用",
       alt: "惊鸿的照片墙，右侧检查器显示所选照片的评分",
     },
+    burst: { title: ["同一瞬间，六张连拍。", "它留下你本来会留的那张。"], body: "向下滚动，看它逐张读。", note: "示例连拍，评分仅作示意。" },
     privacy: {
       text: "你的照片只在你的电脑上。分析、搜索和学习你的喜好，全部在本机完成。模型只在用到时下载一次。",
       points: [["ShieldCheck", "无需账号，不上传"], ["Aperture", "模型按需下载"], ["Sparkle", "设置好后可离线使用"]],
@@ -60,7 +65,8 @@ export const copy = {
       a: { t: "连拍自动分组", d: "同一瞬间的连拍排在一起，最好的一张有标记。人脸、方向和拍摄间隔都会参与判断。", alt: "同一瞬间的两张照片并排，显示评分和推荐" },
       b: { t: "按场景打分", d: "十四种场景，各有各的评分侧重。人像看脸，运动看对焦，夜景不会因为暗被扣分。", kinds: ["人像", "人物场景", "风景", "建筑", "美食", "动物", "物品", "文档", "街拍", "夜景", "运动", "微距", "舞台演出", "交通工具"] },
       c: { t: "用一句话找照片", d: "输入你记得的样子，中英文都可以，按照片里的内容来找。", phrases: [["田野上的日落", "field"], ["平静水面上的小船", "boat"], ["山坡上的白色房屋", "village"], ["森林里的溪流", "forest"]] },
-      d: { t: "学你的口味", d: "指一个你过去挑好的文件夹，一次学会。婚礼一套风格，街拍另一套。", styles: ["旅行", "街拍", "婚礼"] },
+      d: { t: "学你的口味", d: "指一个你过去挑好的文件夹，一次学会。婚礼一套风格，街拍另一套。",
+        styles: [["旅行", ["field", "village", "boat", "forest"], [0, 1, 2]], ["街拍", ["st0", "st1", "st2", "st3"], [1, 3]], ["婚礼", ["wd0", "wd1", "wd2", "wd3"], [0, 2, 3]]] },
     },
     flow: {
       title: "打开文件夹，剩下的交给它。",

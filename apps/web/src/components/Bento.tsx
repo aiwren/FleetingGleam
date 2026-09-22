@@ -40,11 +40,15 @@ function Kinds({ kinds }: { kinds: readonly string[] }) {
   );
 }
 
-/** Types a few descriptions one after another, the way the search box is used; the photo that matches appears once it is typed. */
+/**
+ * Types a few descriptions one after another, the way the search box is used. The result frame is never empty: the previous match
+ * stays, dimmed, while the next phrase is being typed, so the card has no hole in it at any point in the loop.
+ */
 function Typer({ phrases }: { phrases: readonly (readonly [string, string])[] }) {
   const reduce = useReducedMotion();
   const [text, setText] = useState(reduce ? phrases[0][0] : "");
-  const [shown, setShown] = useState<string | null>(reduce ? phrases[0][1] : null);
+  const [shown, setShown] = useState(phrases[0][1]);
+  const [full, setFull] = useState(reduce);
   useEffect(() => {
     if (reduce) return;
     let alive = true, p = 0, n = 0, dir = 1, timer: ReturnType<typeof setTimeout>;
@@ -52,64 +56,69 @@ function Typer({ phrases }: { phrases: readonly (readonly [string, string])[] })
       if (!alive) return;
       const chars = [...phrases[p][0]];
       n += dir; setText(chars.slice(0, n).join(""));
-      if (dir === 1 && n >= chars.length) { setShown(phrases[p][1]); dir = -1; timer = setTimeout(tick, 2200); return; }
-      if (dir === -1 && n === chars.length - 1) setShown(null);
-      if (dir === -1 && n <= 0) { dir = 1; p = (p + 1) % phrases.length; timer = setTimeout(tick, 350); return; }
+      if (dir === 1 && n >= chars.length) { setShown(phrases[p][1]); setFull(true); dir = -1; timer = setTimeout(tick, 2400); return; }
+      if (dir === -1 && n === chars.length - 1) setFull(false);
+      if (dir === -1 && n <= 0) { dir = 1; p = (p + 1) % phrases.length; timer = setTimeout(tick, 380); return; }
       timer = setTimeout(tick, dir === 1 ? 55 : 22);
     };
     timer = setTimeout(tick, 600);
     return () => { alive = false; clearTimeout(timer); };
   }, [phrases, reduce]);
   return (
-    <div className="mt-8" aria-hidden>
+    <div className="mt-auto pt-8" aria-hidden>
       <div className="flex h-12 items-center gap-3 rounded-full border border-line bg-canvas/60 px-5 text-ink">
         <MagnifyingGlass size={18} className="shrink-0 text-ash" />
         <span className="truncate">{text}</span>
         <motion.i className="-ml-2 h-5 w-px bg-gleam" animate={reduce ? undefined : { opacity: [1, 0, 1] }} transition={{ duration: 1, repeat: Infinity }} />
       </div>
       <div className="relative mt-4 aspect-[3/2] overflow-hidden rounded-2xl">
-        <AnimatePresence>
-          {shown && (
-            <motion.img key={shown} src={`/photos/${shown}.webp`} alt="" width={720} height={480} loading="lazy" draggable={false}
-              initial={{ opacity: 0, scale: 1.06 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.7, ease: EASE }}
-              className="absolute inset-0 h-full w-full object-cover" />
-          )}
+        <AnimatePresence mode="popLayout" initial={false}>
+          <motion.img key={shown} src={`/photos/${shown}.webp`} alt="" width={720} height={480} loading="lazy" draggable={false}
+            initial={{ opacity: 0, scale: 1.06 }} animate={{ opacity: full ? 1 : 0.42, scale: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.7, ease: EASE }}
+            className="absolute inset-0 h-full w-full object-cover" />
         </AnimatePresence>
       </div>
     </div>
   );
 }
 
-/** Styles are switched, not stacked: one is active, and the active one glides. */
-function Styles({ styles }: { styles: readonly string[] }) {
-  const [on, setOn] = useState(0);
-  return (
-    <div className="mt-8 inline-flex w-fit max-w-full flex-wrap gap-1 rounded-full border border-line bg-canvas/60 p-1">
-      {styles.map((s, i) => (
-        <button key={s} type="button" onClick={() => setOn(i)} aria-pressed={i === on}
-          className={`relative rounded-full px-4 py-1.5 text-sm transition-colors duration-300 active:translate-y-px ${i === on ? "text-on-ink" : "text-ash hover:text-ink"}`}>
-          {i === on && <motion.i layoutId="style-pill" className="absolute inset-0 rounded-full bg-ink" transition={{ type: "spring", stiffness: 300, damping: 30 }} />}
-          <span className="relative">{s}</span>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-/** A folder of past picks: each photo gets its amber mark in turn, the way the app reads them as the taste to learn from. */
-function Picks() {
+/**
+ * The styles and the folder they learned from are one control, not two decorations: picking a style swaps the past picks below it
+ * and re-marks the frames that style kept, which is exactly what choosing a style does in the app.
+ */
+function Styles({ styles }: { styles: readonly (readonly [string, readonly string[], readonly number[]])[] }) {
   const reduce = useReducedMotion();
-  const names = ["field", "village", "boat", "forest"];
+  const [on, setOn] = useState(0);
+  const [name, photos, kept] = styles[on];
   return (
-    <div className="mt-auto grid grid-cols-2 gap-3 pt-10 sm:grid-cols-4" aria-hidden>
-      {names.map((n, i) => (
-        <div key={n} className="relative aspect-[3/2] overflow-hidden rounded-2xl">
-          <img src={`/photos/${n}.webp`} alt="" width={720} height={480} loading="lazy" draggable={false} className="h-full w-full object-cover" />
-          <motion.span initial={reduce ? false : { scale: 0, opacity: 0 }} whileInView={{ scale: 1, opacity: 1 }} viewport={{ once: true, amount: 0.8 }}
-            transition={{ type: "spring", stiffness: 380, damping: 22, delay: 0.5 + i * 0.28 }}
-            className="absolute right-2 top-2 grid size-6 place-items-center rounded-full bg-gleam text-gleam-ink"><Check size={13} weight="bold" /></motion.span>
-        </div>
-      ))}
+    <div className="mt-auto pt-8">
+      <div className="inline-flex w-fit max-w-full flex-wrap gap-1 rounded-full border border-line bg-canvas/60 p-1" role="tablist" aria-label={name}>
+        {styles.map(([label], i) => (
+          <button key={label} type="button" role="tab" aria-selected={i === on} onClick={() => setOn(i)}
+            className={`relative rounded-full px-4 py-2 text-sm transition-colors duration-300 active:translate-y-px ${i === on ? "text-on-ink" : "text-ash hover:text-ink"}`}>
+            {i === on && <motion.i layoutId="style-pill" className="absolute inset-0 rounded-full bg-ink" transition={{ type: "spring", stiffness: 300, damping: 30 }} />}
+            <span className="relative">{label}</span>
+          </button>
+        ))}
+      </div>
+      <div className="mt-5 grid grid-cols-2 gap-3" aria-hidden>
+        {photos.map((n, i) => (
+          <div key={n} className="relative aspect-[3/2] overflow-hidden rounded-2xl">
+            <AnimatePresence initial={false}>
+              <motion.img key={n} src={`/photos/${n}.webp`} alt="" width={720} height={480} loading="lazy" draggable={false}
+                initial={reduce ? false : { opacity: 0, scale: 1.05 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.55, ease: EASE, delay: i * 0.05 }}
+                className="absolute inset-0 h-full w-full object-cover" />
+            </AnimatePresence>
+            <AnimatePresence>
+              {kept.includes(i) && (
+                <motion.span key={`${name}-${i}`} initial={reduce ? false : { scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0, opacity: 0 }}
+                  transition={{ type: "spring", stiffness: 380, damping: 22, delay: 0.25 + i * 0.12 }}
+                  className="absolute right-2 top-2 grid size-6 place-items-center rounded-full bg-gleam text-gleam-ink"><Check size={13} weight="bold" /></motion.span>
+              )}
+            </AnimatePresence>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -133,11 +142,11 @@ export default function Bento({ lang }: { lang: Lang }) {
         <Tile i={1} className="bg-gleam/[0.09] md:col-span-2">
           <H>{c.b.t}</H><P>{c.b.d}</P><Kinds kinds={c.b.kinds} />
         </Tile>
-        <Tile i={2} className="bg-surface md:col-span-2">
+        <Tile i={2} className="bg-surface md:col-span-3">
           <H>{c.c.t}</H><P>{c.c.d}</P><Typer phrases={c.c.phrases} />
         </Tile>
-        <Tile i={3} className="bg-panel md:col-span-4">
-          <H>{c.d.t}</H><P>{c.d.d}</P><Styles styles={c.d.styles} /><Picks />
+        <Tile i={3} className="bg-panel md:col-span-3">
+          <H>{c.d.t}</H><P>{c.d.d}</P><Styles styles={c.d.styles} />
         </Tile>
       </div>
     </section>
