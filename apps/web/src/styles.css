@@ -65,3 +65,48 @@ body { background: var(--canvas); color: var(--ink); font-family: var(--font-san
 .a-fade { animation: fade-up 0.8s var(--ease-out-expo) both; animation-delay: var(--d, 0s); }
 .a-shot { animation: shot-in 1.1s var(--ease-out-expo) both; animation-delay: 0.55s; }
 @media (prefers-reduced-motion: reduce) { .a-line, .a-fade, .a-shot { animation: none; } }
+
+/* ---- The live photo wall in the hero ---------------------------------------------------------------------------------
+   Every tile derives its own state from one number, --p, written once per frame on the wall. --k is this tile's share of
+   that number: 0 before the pass reaches it, 1 once it has been read. No per-tile JavaScript, no React renders.        */
+@property --p { syntax: "<number>"; inherits: true; initial-value: 0; }
+
+.wall-live { --p: 0; }
+.wall-bar { position: relative; height: 2px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.wall-bar i {
+  position: absolute; inset: 0 auto 0 0; width: calc(var(--p) * 100%);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--gleam) 45%, transparent), var(--gleam));
+  box-shadow: 0 0 12px 1px color-mix(in srgb, var(--gleam) 55%, transparent);
+}
+
+/* Justified rows: each tile grows in proportion to its own aspect, so a row fills the width and the pictures keep shape. */
+.wall-rows { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.wall-rows::after { content: ""; flex-grow: 1e4; }
+.wall-tile {
+  --k: clamp(0, calc((var(--p) * var(--n) - var(--i)) * 2.4), 1);
+  position: relative; margin: 0; overflow: hidden; border-radius: 10px;
+  flex-grow: var(--a); flex-basis: calc(var(--a) * 108px); height: 108px;
+  background: var(--surface);
+  transition: none;
+}
+.wall-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* A frame the app turns down keeps every bit of its colour. It steps back and it is labelled, and that is all. */
+.wall-tile.out { opacity: calc(1 - 0.5 * var(--k)); scale: calc(1 - 0.055 * var(--k)); }
+.wall-tile.keep { box-shadow: inset 0 0 0 calc(2px * var(--k)) var(--gleam); }
+.wall-check, .wall-out {
+  position: absolute; text-decoration: none; opacity: var(--k);
+  scale: calc(0.6 + 0.4 * var(--k));
+}
+.wall-check {
+  inset: 7px 7px auto auto; display: grid; place-items: center; width: 19px; height: 19px;
+  border-radius: 50%; background: var(--gleam); color: var(--gleam-ink);
+}
+.wall-out {
+  inset: auto auto 7px 7px; padding: 1px 7px; border-radius: 6px; font-size: 10px; line-height: 1.5;
+  background: color-mix(in srgb, var(--canvas) 62%, transparent); color: var(--ink);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+@media (min-width: 640px) { .wall-tile { flex-basis: calc(var(--a) * 132px); height: 132px; } }
+@media (min-width: 1024px) { .wall-tile { flex-basis: calc(var(--a) * 162px); height: 162px; } }
+@media (min-width: 1280px) { .wall-tile { flex-basis: calc(var(--a) * 176px); height: 176px; } }
+@media (prefers-reduced-transparency: reduce) { .wall-out { background: var(--canvas); backdrop-filter: none; } }

@@ -16,7 +16,7 @@ export const copy = {
       cta: "See how it works",
       alt: "The FleetingGleam photo wall with an inspector showing the score of the selected photo",
     },
-    burst: { title: ["One moment, six frames.", "It keeps the one you would have kept."], body: "Scroll to watch it read them.", note: "Sample frames. Scores are illustrative." },
+    wall: { kept: "kept", reject: "out", note: "Sample photos. Frames 8 to 10 are one moment." },
     privacy: {
       text: "Your photos stay on your computer. Analysis, search and learning your taste all run on this machine. Models download once, only when needed.",
       points: [["ShieldCheck", "No account, no uploads"], ["Aperture", "Models on demand"], ["Sparkle", "Works offline after setup"]],
@@ -55,7 +55,7 @@ export const copy = {
       cta: "了解怎么用",
       alt: "惊鸿的照片墙，右侧检查器显示所选照片的评分",
     },
-    burst: { title: ["同一瞬间，六张连拍。", "它留下你本来会留的那张。"], body: "向下滚动，看它逐张读。", note: "示例连拍，评分仅作示意。" },
+    wall: { kept: "已保留", reject: "淘汰", note: "示例照片。第 8 至 10 张是同一瞬间。" },
     privacy: {
       text: "你的照片只在你的电脑上。分析、搜索和学习你的喜好，全部在本机完成。模型只在用到时下载一次。",
       points: [["ShieldCheck", "无需账号，不上传"], ["Aperture", "模型按需下载"], ["Sparkle", "设置好后可离线使用"]],

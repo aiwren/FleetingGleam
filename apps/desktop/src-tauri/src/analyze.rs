@@ -443,6 +443,9 @@ pub fn group_and_score(photos: &mut [Photo], prefs: Option<&crate::prefs::Prefs>
 }
 
 #[cfg(test)]
+mod tests {
+    use super::*;
+
     /// Runs the whole grouping and scoring on the photos of a real analysis cache and prints what the scene kinds and eyes did.
     #[test]
     #[ignore = "needs a real analysis cache (FG_CACHE)"]
@@ -467,8 +470,6 @@ pub fn group_and_score(photos: &mut [Photo], prefs: Option<&crate::prefs::Prefs>
             println!("{kind}: best {:?}", v.iter().take(3).map(|p| format!("{}:{:.2}", p.name, p.score)).collect::<Vec<_>>());
         }
     }
-mod tests {
-    use super::*;
 
     /// Prints sharpness for a real photo and progressively blurred copies, to calibrate scoring.rs.
     #[test]

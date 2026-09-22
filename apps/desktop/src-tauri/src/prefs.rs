@@ -56,15 +56,6 @@ impl Prefs {
         p
     }
 
-    pub fn save(&self) {
-        if let Some(dir) = self.path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        if let Ok(bytes) = serde_json::to_vec(self) {
-            let _ = std::fs::write(&self.path, bytes);
-        }
-    }
-
     pub fn active(&self) -> bool {
         self.n >= 2 * MIN_PER_CLASS && !self.w.is_empty()
     }

@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useRef, type CSSProperties } from "react";
 import { motion, useReducedMotion, useScroll, useTransform } from "motion/react";
 import { copy, type Lang } from "../content";
-import BurstScene from "./Burst";
+import Wall from "./Wall";
 
 const d = (s: number) => ({ "--d": `${s}s` }) as CSSProperties;
 
@@ -15,23 +15,14 @@ function Line({ children, delay, quiet }: { children: string; delay: number; qui
 }
 
 /**
- * The opening holds still while the reader scrolls, and what they scroll is the work itself: a burst of six frames of one moment,
- * advancing towards them a frame at a time, each read and scored, until only the one worth keeping is left in focus. The sentence
- * sits on the left over the page's own light, the way it would over a photograph.
+ * The opening holds still while the reader scrolls, and what they scroll is the work: the app's own wall of a trip's photographs,
+ * read left to right, keepers taking the amber mark and the rest stepping back. By the end of the pinned run the wall has been
+ * culled, which is the product in one screen.
  */
 export default function Hero({ lang }: { lang: Lang }) {
-  const c = copy[lang].hero, b = copy[lang].burst;
+  const c = copy[lang].hero;
   const reduce = useReducedMotion();
   const track = useRef<HTMLDivElement>(null);
-  const [compact, setCompact] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    const m = window.matchMedia("(max-width: 860px)");
-    const read = () => setCompact(m.matches);
-    read();
-    m.addEventListener("change", read);
-    return () => m.removeEventListener("change", read);
-  }, []);
 
   // How far through the pinned run the reader has come, read on demand rather than held in React state.
   const progress = useCallback(() => {
@@ -43,31 +34,29 @@ export default function Hero({ lang }: { lang: Lang }) {
   }, []);
 
   const { scrollYProgress } = useScroll({ target: track, offset: ["start start", "end end"] });
-  // Once the reading begins, the sentence steps back to a whisper instead of competing with the frames.
-  const textFade = useTransform(scrollYProgress, [0.08, 0.3], [1, 0.32]);
+  // Once the pass begins the sentence steps back a little, rather than competing with the photographs.
+  const textFade = useTransform(scrollYProgress, [0.06, 0.28], [1, 0.55]);
 
   return (
-    <section ref={track} className="relative h-[300vh] md:h-[340vh]">
-      <div className="sticky top-16 h-[calc(100dvh-4rem)] overflow-hidden">
-        {compact !== null && <BurstScene compact={compact} progress={progress} />}
-
-        {/* The words keep a side of the page to themselves: below the frames on a phone, beside them on a wide screen. */}
-        <div aria-hidden className="pointer-events-none absolute inset-0 bg-gradient-to-t from-canvas from-20% via-canvas/60 via-38% to-transparent md:bg-gradient-to-r md:from-42% md:via-canvas/55 md:via-50% md:to-45%" />
-
-        <div className="relative mx-auto flex h-full max-w-6xl flex-col justify-end px-5 pb-14 md:justify-center md:pb-0">
-          <motion.div style={reduce || compact ? undefined : { opacity: textFade }}>
-            <h1 className="max-w-[15ch] text-[clamp(2.1rem,4.2vw,3.4rem)] font-semibold leading-[1.03] tracking-[-0.042em]">
+    <section ref={track} className="relative h-[260vh] md:h-[300vh]">
+      <div className="sticky top-16 flex h-[calc(100dvh-4rem)] flex-col justify-center overflow-hidden">
+        <div className="mx-auto w-full max-w-[1400px] px-5">
+          <motion.div style={reduce ? undefined : { opacity: textFade }}
+            className="flex flex-col gap-6 pb-8 md:flex-row md:items-end md:justify-between md:gap-12 md:pb-10">
+            <h1 className="max-w-[16ch] text-[clamp(2rem,4vw,3.1rem)] font-semibold leading-[1.04] tracking-[-0.04em]">
               <Line delay={0.05} quiet>{c.title[0]}</Line>
               <Line delay={0.16}>{c.title[1]}</Line>
             </h1>
-            <p className="a-fade mt-6 max-w-[30ch] text-lg text-ash" style={d(0.4)}>{c.body}</p>
-            <div className="a-fade mt-9" style={d(0.5)}>
-              <a href="#flow" className="inline-flex min-h-12 items-center whitespace-nowrap rounded-full bg-ink px-6 py-3 font-medium text-on-ink transition-transform duration-150 active:translate-y-px">{c.cta}</a>
+            <div className="a-fade shrink-0 md:max-w-[32ch] md:text-right" style={d(0.4)}>
+              <p className="text-lg text-ash">{c.body}</p>
+              <a href="#flow" className="mt-6 inline-flex min-h-12 items-center whitespace-nowrap rounded-full bg-ink px-6 py-3 font-medium text-on-ink transition-transform duration-150 active:translate-y-px">{c.cta}</a>
             </div>
           </motion.div>
-        </div>
 
-        <p className="pointer-events-none absolute inset-x-0 bottom-4 mx-auto max-w-6xl px-5 text-right text-xs text-ash/70">{b.note}</p>
+          <div className="a-fade" style={d(0.6)}>
+            <Wall lang={lang} progress={progress} />
+          </div>
+        </div>
       </div>
     </section>
   );
