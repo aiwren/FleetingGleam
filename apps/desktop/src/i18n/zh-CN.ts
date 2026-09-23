@@ -77,6 +77,15 @@ const zh = {
     new: "新建风格", newPlaceholder: "风格名称，例如：街拍、婚礼",
     project: "选片风格", projectDesc: "这个项目用哪一种风格来挑照片。", followDefault: "跟随默认风格",
     open: "管理风格 →", pageDesc: "在这里创建、训练和管理你的选片风格。",
+    count_other: "{{count}} 个风格", backToSettings: "设置",
+    search: "搜索风格…", searchNone: "没有风格叫「{{query}}」", searchNoneBody: "换个名字试试，或者清空搜索看看全部风格。",
+    sortAria: "排序方式", sortName: "名称", sortRecent: "最近创建", sortUsage: "使用次数",
+    active: "已生效", warming: "训练中",
+    usedBy_other: "用于 {{count}} 个项目", more: "更多操作",
+    confirmDeleteTitle: "删除「{{name}}」？",
+    confirmDeleteBody: "它学到的 {{labels}} 次选择和 {{refs}} 张参考照片会被永久清除，无法恢复。",
+    confirmDeleteUsed: "目前 {{count}} 个项目在用这个风格，删除后它们会改用默认风格：{{names}}。",
+    confirmDeleteAction: "永久删除", createdOn: "创建于 {{date}}",
   },
   cmp: { count: "同时对比的张数", rail: "同组的其他照片", groupOf: "第 {{i}} / {{n}} 组相似照片", prev: "上一组", next: "下一组", best: "推荐", kept: "已保留", rejected: "已淘汰", hint: "滚轮缩放 · 拖动平移 · 双击放大到 2.5 倍（同步） · 悬停一张，按 P 保留 · X 淘汰 · ↑↓ 换对手 · ← → 换组", emptyTitle: "这张没有相似的照片可以对比", emptyBody: "对比用来在同一瞬间连拍的几张里挑出最好的一张。", jump: "跳到下一组相似照片" },
   inspector: {
@@ -162,6 +171,7 @@ const zh = {
     new: "新建项目", back: "项目",
     photos_other: "{{count}} 张", folders_other: "{{count}} 个文件夹",
     empty: "还没有照片", delete: "删除项目", confirm: "再点一次确认删除",
+    newDetailed: "手动创建 →", namePlaceholder: "例如：日本关西之旅",
   },
   more: { open: "了解详情", close: "收起" },
   bin: {

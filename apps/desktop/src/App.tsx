@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { MotionConfig, motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 import Culling from "./modules/Culling";
+import Styles from "./modules/Styles";
 import Settings from "./modules/Settings";
 import { newProjectFromDialog } from "./projectActions";
 import { purgeExpired, setActive } from "./projects";
@@ -103,8 +104,9 @@ export default function App() {
           </nav>
         </div>
         <main className="content">
-          <Culling active={moduleId === "culling"} inspectorHidden={inspectorHidden} onToggleInspector={toggleInspector} />
-          <Settings active={moduleId === "settings"} />
+          <Culling active={moduleId === "culling"} inspectorHidden={inspectorHidden} onToggleInspector={toggleInspector} onOpenStyles={() => setModuleId("styles")} />
+          <Styles active={moduleId === "styles"} onBack={() => setModuleId("settings")} />
+          <Settings active={moduleId === "settings"} onOpenStyles={() => setModuleId("styles")} />
           {current && !current.ready && (
             <div className="module soon">
               <div className="empty">

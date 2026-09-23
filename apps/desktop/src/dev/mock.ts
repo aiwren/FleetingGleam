@@ -96,9 +96,12 @@ const packState: Record<"standard" | "high" | "ultra" | "search" | "eyes", boole
 const emit = (event: string, payload: unknown) => (listeners.get(event) ?? []).forEach((h) => cbs.get(h)?.({ event, id: 0, payload }));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+let lastPhotos: Photo[] = [];
+
 async function scan(dirs: string[], quiet: boolean): Promise<Photo[]> {
   const list = inDirs(dirs);
   const photos = makePhotos(list);
+  lastPhotos = photos;
   const todo = photos.filter((p) => !cached.has(p.path));
   if (quiet || todo.length === 0) { list.forEach((s) => cached.add(s.path)); return photos; }
   const total = photos.length;
@@ -131,6 +134,14 @@ let dialogCalls = 0;
 let labels = 0, keeps = 0;
 const prefsInfo = () => ({ labels, keeps, active: labels >= 6 && keeps >= 3 && labels - keeps >= 3 });
 
+type MockStyle = { id: string; name: string; is_default: boolean; info: { labels: number; keeps: number; refs: number; refs_from: string; active: boolean } };
+const now = Date.now();
+const mockStyles: MockStyle[] = [
+  { id: "default", name: "", is_default: true, info: { labels: 34, keeps: 19, refs: 0, refs_from: "", active: true } },
+  { id: `s${now - 6 * 86400_000}`, name: "Street", is_default: false, info: { labels: 12, keeps: 7, refs: 40, refs_from: "/Users/me/Photos/Street", active: true } },
+  { id: `s${now - 1 * 86400_000}`, name: "Weddings", is_default: false, info: { labels: 2, keeps: 1, refs: 0, refs_from: "", active: false } },
+];
+
 w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
 w.__TAURI_INTERNALS__ = {
   metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main", windowLabel: "main" } },
@@ -161,6 +172,23 @@ w.__TAURI_INTERNALS__ = {
         return { files, bytes: files.filter((f) => !f.cached).length * 9_000_000, uncached: files.filter((f) => !f.cached).length };
       }
       case "scan_project": return scan(args.dirs as string[], !!args.quiet);
+      // A rough stand-in for the real (Rust-side) keep/review/reject logic: just enough to exercise the UI in a
+      // plain browser. The actual ranking algorithm lives only in src-tauri/src/decide.rs.
+      case "decide_photos": {
+        const keepRatio = Number(args.keepRatio ?? 0.3);
+        const overrides = (args.overrides ?? {}) as Record<string, string>;
+        const sorted = [...lastPhotos].sort((a, b) => b.score - a.score);
+        const keepN = Math.max(1, Math.round(sorted.length * keepRatio));
+        const reviewN = Math.max(1, Math.round(sorted.length * 0.15));
+        const out: Record<string, { state: string; manual: boolean; reasons: { k: string; p?: Record<string, number> }[] }> = {};
+        sorted.forEach((p, i) => {
+          const auto = i < keepN ? "keep" : i < keepN + reviewN ? "review" : "reject";
+          const manual = Object.prototype.hasOwnProperty.call(overrides, p.path);
+          const state = manual ? overrides[p.path] : auto;
+          out[p.path] = { state, manual, reasons: [{ k: state === "keep" ? "reason.keepSolo" : state === "review" ? "reason.nearBest" : "reason.belowLine", p: { score: Math.round(p.score * 100) } }] };
+        });
+        return out;
+      }
       case "record_label": {
         const cur = args.label;
         if (cur !== null) { labels++; if (cur) keeps++; }
@@ -189,10 +217,33 @@ w.__TAURI_INTERNALS__ = {
       }
       case "pack_cancel": return null;
       case "pack_remove": packState[String(args.id) as "standard"] = false; return null;
-      case "styles_list": return [{ id: "default", name: "", is_default: true, info: { labels: 0, keeps: 0, refs: 0, refs_from: "", active: false } }];
-      case "style_create": case "style_rename": case "style_delete": case "style_set_default":
-        return [{ id: "default", name: "", is_default: true, info: { labels: 0, keeps: 0, refs: 0, refs_from: "", active: false } }, { id: "s1", name: String(args.name ?? "Street"), is_default: false, info: { labels: 0, keeps: 0, refs: 0, refs_from: "", active: false } }];
-      case "learn_from_folder": return { labels: 0, keeps: 0, refs: 24, refs_from: String(args.dir), active: true };
+      // Real Tauri IPC always hands back a freshly JSON-deserialized array, so `useSyncExternalStore`'s
+      // reference check sees a change on every call; mutating mockStyles in place and returning it directly
+      // would not, so every mutator here returns a shallow copy to match that behavior.
+      case "styles_list": return [...mockStyles];
+      case "style_create": {
+        mockStyles.push({ id: `s${Date.now()}`, name: String(args.name ?? ""), is_default: false, info: { labels: 0, keeps: 0, refs: 0, refs_from: "", active: false } });
+        return [...mockStyles];
+      }
+      case "style_rename": {
+        const s = mockStyles.find((x) => x.id === args.id);
+        if (s) s.name = String(args.name ?? "");
+        return [...mockStyles];
+      }
+      case "style_delete": {
+        const i = mockStyles.findIndex((x) => x.id === args.id);
+        if (i >= 0) mockStyles.splice(i, 1);
+        return [...mockStyles];
+      }
+      case "style_set_default": {
+        for (const s of mockStyles) s.is_default = s.id === args.id;
+        return [...mockStyles];
+      }
+      case "learn_from_folder": {
+        const s = mockStyles.find((x) => x.id === args.style) ?? mockStyles.find((x) => x.is_default);
+        if (s) { s.info.refs = 24; s.info.refs_from = String(args.dir); s.info.active = true; }
+        return prefsInfo();
+      }
       case "search_status": return { total: inDirs(args.dirs as string[]).length, ready: inDirs(args.dirs as string[]).length, available: true };
       case "search_index": return 0;
       case "search_photos": {
@@ -201,7 +252,12 @@ w.__TAURI_INTERNALS__ = {
       }
       case "preview_thumbs": return (args.paths as string[]).map((p) => p.replace(".jpg", ".thumb"));
       case "prefs_info": return prefsInfo();
-      case "prefs_reset": labels = 0; keeps = 0; return prefsInfo();
+      case "prefs_reset": {
+        const s = mockStyles.find((x) => x.id === args.style);
+        if (s) { s.info = { labels: 0, keeps: 0, refs: 0, refs_from: "", active: false }; }
+        else { labels = 0; keeps = 0; }
+        return prefsInfo();
+      }
       case "set_locale": return null;
       case "cache_size": return 48_300_000;
       case "clear_cache": return null;

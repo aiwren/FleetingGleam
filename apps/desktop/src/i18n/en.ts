@@ -79,6 +79,15 @@ const en = {
     new: "New style", newPlaceholder: "Style name, e.g. Street, Weddings",
     project: "Selection style", projectDesc: "Which style chooses this project's photos.", followDefault: "Follow the default style",
     open: "Manage styles →", pageDesc: "Create, train and manage your selection styles here.",
+    count_one: "{{count}} style", count_other: "{{count}} styles", backToSettings: "Settings",
+    search: "Search styles…", searchNone: "No style named “{{query}}”", searchNoneBody: "Try another name, or clear the search to see every style.",
+    sortAria: "Sort by", sortName: "Name", sortRecent: "Recently created", sortUsage: "Most used",
+    active: "Active", warming: "Warming up",
+    usedBy_one: "Used by {{count}} project", usedBy_other: "Used by {{count}} projects", more: "More actions",
+    confirmDeleteTitle: "Delete “{{name}}”?",
+    confirmDeleteBody: "The {{labels}} choices and {{refs}} reference photos it learned from are erased for good.",
+    confirmDeleteUsed: "{{count}} project(s) currently use this style; after deleting they fall back to the default style: {{names}}.",
+    confirmDeleteAction: "Delete permanently", createdOn: "Created {{date}}",
   },
   cmp: { count: "Photos side by side", rail: "Other photos in this group", groupOf: "Group {{i}} of {{n}}", prev: "Previous group", next: "Next group", best: "Suggested", kept: "Kept", rejected: "Rejected", hint: "Wheel to zoom · drag to pan · double-click 2.5× (in sync) · hover a photo, P keeps · X rejects · ↑↓ next challenger · ← → next group", emptyTitle: "No similar shots to compare", emptyBody: "Compare is for picking the best of a burst taken at the same moment.", jump: "Jump to the next group of similar shots" },
   inspector: {
@@ -165,6 +174,7 @@ const en = {
     photos_one: "{{count}} photo", photos_other: "{{count}} photos", folders_one: "{{count}} folder", folders_other: "{{count}} folders",
     confirmTitle: "Delete this project?", confirmBody: "\u201c{{name}}\u201d moves to the bin and can be restored for {{days}} days. The photo files themselves are never deleted.",
     empty: "No photos yet", delete: "Delete project", confirm: "Click again to delete",
+    newDetailed: "Create manually →", namePlaceholder: "e.g. Kansai trip",
   },
   more: { open: "Learn more", close: "Hide" },
   bin: {

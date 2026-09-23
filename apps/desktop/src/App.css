@@ -1042,3 +1042,26 @@ html[data-mock] .sidebar-wrap { background: var(--panel); }
 .style-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .style-new { display: flex; gap: 8px; }
 .style-new input { flex: 1; min-width: 0; height: 28px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; font-size: 12.5px; }
+
+/* ---------- styles page (dedicated) ---------- */
+.styles-page { max-width: 640px; margin: 0 auto; padding: 24px 0 64px; display: grid; gap: 24px; }
+.styles-toolbar { display: flex; align-items: center; gap: 10px; }
+.styles-toolbar-add { margin-left: auto; }
+.styles-toolbar-add.single { display: flex; justify-content: flex-start; }
+.style-new-inline { display: flex; gap: 8px; }
+.style-new-inline input { width: 200px; height: 30px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; font-size: 12.5px; }
+.styles-list { display: grid; gap: 14px; }
+.style-card { display: grid; gap: 10px; padding: 18px 20px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+.style-avatar { display: grid; place-items: center; width: 30px; height: 30px; flex: none; border-radius: 50%; background: var(--surface-2); font-size: 13px; font-weight: 600; color: var(--ink); }
+.style-card .style-head { gap: 10px; }
+.style-card .style-name { font-size: 15px; }
+.style-card .ktag.on { color: var(--panel); background: var(--ink); }
+.style-stats { padding-left: 40px; margin-top: -4px; }
+.style-actions { padding-top: 10px; border-top: 1px solid var(--line); justify-content: flex-end; }
+.style-actions .btn.ghost { border-color: transparent; color: var(--ash); }
+.style-actions .btn.ghost:hover { color: var(--ink); border-color: var(--line); }
+.style-menu { position: relative; margin-left: auto; }
+.style-menu-panel { right: 0; width: 168px; }
+.style-menu-panel .vmlist button.danger { color: #c8473d; }
+.style-menu-panel .vmlist button.danger:hover { background: color-mix(in srgb, #c8473d 12%, transparent); }
+.style-empty { display: grid; gap: 4px; padding: 40px 4px; text-align: center; }
