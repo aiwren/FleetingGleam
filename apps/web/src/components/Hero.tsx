@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 import { copy, type Lang } from "../content";
-import HeroPick from "./HeroPick";
+import HeroFan from "./HeroFan";
 
 const d = (s: number) => ({ "--d": `${s}s` }) as CSSProperties;
 
@@ -14,14 +14,14 @@ function Line({ children, delay, quiet }: { children: string; delay: number; qui
 }
 
 /**
- * The first screen makes its whole case without asking for a scroll: headline, promise, and one small real decision (three
- * takes of a moment, the keeper marked) resolving in front of the reader. The full pass, scrubbed by scroll, is its own
- * section further down — a second act, not the opening line.
+ * The first screen makes its whole case without asking for a scroll: headline and promise up top, and below them the one
+ * showpiece — a burst of real photos fanned out, settling with weight and answering to the pointer. The full pass, scrubbed
+ * by scroll, is its own section further down — a second act, not the opening line.
  */
 export default function Hero({ lang }: { lang: Lang }) {
   const c = copy[lang].hero;
   return (
-    <section className="mx-auto flex min-h-[calc(100dvh-4rem)] w-full max-w-[1400px] flex-col justify-center px-5 pb-16 pt-8">
+    <section className="mx-auto flex min-h-[calc(100dvh-4rem)] w-full max-w-[1400px] flex-col justify-center px-5 pb-10 pt-8">
       <div className="flex flex-col gap-8 md:flex-row md:items-end md:justify-between md:gap-12">
         <h1 className="max-w-[16ch] text-[clamp(2.1rem,4.6vw,3.4rem)] font-semibold leading-[1.04] tracking-[-0.04em]">
           <Line delay={0.05} quiet>{c.title[0]}</Line>
@@ -33,8 +33,8 @@ export default function Hero({ lang }: { lang: Lang }) {
         </div>
       </div>
 
-      <div className="a-fade mt-14" style={d(0.6)}>
-        <HeroPick />
+      <div className="mt-10 sm:mt-14 md:mt-16">
+        <HeroFan />
       </div>
     </section>
   );
