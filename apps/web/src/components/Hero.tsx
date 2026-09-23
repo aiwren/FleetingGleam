@@ -1,7 +1,6 @@
-import { useCallback, useRef, type CSSProperties } from "react";
-import { motion, useReducedMotion, useScroll, useTransform } from "motion/react";
+import type { CSSProperties } from "react";
 import { copy, type Lang } from "../content";
-import Wall from "./Wall";
+import HeroPick from "./HeroPick";
 
 const d = (s: number) => ({ "--d": `${s}s` }) as CSSProperties;
 
@@ -15,48 +14,27 @@ function Line({ children, delay, quiet }: { children: string; delay: number; qui
 }
 
 /**
- * The opening holds still while the reader scrolls, and what they scroll is the work: the app's own wall of a trip's photographs,
- * read left to right, keepers taking the amber mark and the rest stepping back. By the end of the pinned run the wall has been
- * culled, which is the product in one screen.
+ * The first screen makes its whole case without asking for a scroll: headline, promise, and one small real decision (three
+ * takes of a moment, the keeper marked) resolving in front of the reader. The full pass, scrubbed by scroll, is its own
+ * section further down — a second act, not the opening line.
  */
 export default function Hero({ lang }: { lang: Lang }) {
   const c = copy[lang].hero;
-  const reduce = useReducedMotion();
-  const track = useRef<HTMLDivElement>(null);
-
-  // How far through the pinned run the reader has come, read on demand rather than held in React state.
-  const progress = useCallback(() => {
-    const el = track.current;
-    if (!el) return 0;
-    const r = el.getBoundingClientRect();
-    const run = r.height - window.innerHeight;
-    return run <= 0 ? 1 : Math.min(1, Math.max(0, -r.top / run));
-  }, []);
-
-  const { scrollYProgress } = useScroll({ target: track, offset: ["start start", "end end"] });
-  // Once the pass begins the sentence steps back a little, rather than competing with the photographs.
-  const textFade = useTransform(scrollYProgress, [0.12, 0.34], [1, 0.55]);
-
   return (
-    <section ref={track} className="relative h-[300vh] md:h-[360vh]">
-      <div className="sticky top-16 flex h-[calc(100dvh-4rem)] flex-col justify-center overflow-hidden">
-        <div className="mx-auto w-full max-w-[1400px] px-5">
-          <motion.div style={reduce ? undefined : { opacity: textFade }}
-            className="flex flex-col gap-6 pb-8 md:flex-row md:items-end md:justify-between md:gap-12 md:pb-10">
-            <h1 className="max-w-[16ch] text-[clamp(2rem,4vw,3.1rem)] font-semibold leading-[1.04] tracking-[-0.04em]">
-              <Line delay={0.05} quiet>{c.title[0]}</Line>
-              <Line delay={0.16}>{c.title[1]}</Line>
-            </h1>
-            <div className="a-fade shrink-0 md:max-w-[32ch] md:text-right" style={d(0.4)}>
-              <p className="text-lg text-ash">{c.body}</p>
-              <a href="#flow" className="mt-6 inline-flex min-h-12 items-center whitespace-nowrap rounded-full bg-ink px-6 py-3 font-medium text-on-ink transition-transform duration-150 active:translate-y-px">{c.cta}</a>
-            </div>
-          </motion.div>
-
-          <div className="a-fade" style={d(0.6)}>
-            <Wall lang={lang} progress={progress} />
-          </div>
+    <section className="mx-auto flex min-h-[calc(100dvh-4rem)] w-full max-w-[1400px] flex-col justify-center px-5 pb-16 pt-8">
+      <div className="flex flex-col gap-8 md:flex-row md:items-end md:justify-between md:gap-12">
+        <h1 className="max-w-[16ch] text-[clamp(2.1rem,4.6vw,3.4rem)] font-semibold leading-[1.04] tracking-[-0.04em]">
+          <Line delay={0.05} quiet>{c.title[0]}</Line>
+          <Line delay={0.16}>{c.title[1]}</Line>
+        </h1>
+        <div className="a-fade shrink-0 md:max-w-[30ch] md:text-right" style={d(0.4)}>
+          <p className="text-lg text-ash">{c.body}</p>
+          <a href="#flow" className="mt-6 inline-flex min-h-12 items-center whitespace-nowrap rounded-full bg-ink px-6 py-3 font-medium text-on-ink transition-transform duration-150 active:translate-y-px">{c.cta}</a>
         </div>
+      </div>
+
+      <div className="a-fade mt-14" style={d(0.6)}>
+        <HeroPick />
       </div>
     </section>
   );
