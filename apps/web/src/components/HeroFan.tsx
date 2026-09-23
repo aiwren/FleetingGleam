@@ -6,12 +6,14 @@ const SPRING_OUT = { type: "spring", stiffness: 240, damping: 22, mass: 0.9 } as
 const SPRING_LIFT = { type: "spring", stiffness: 420, damping: 30 } as const;
 
 /** Real photos, not stock cards: the fan is what a burst actually looks like spread out in your hand. */
-const CARDS = ["field", "village", "boat", "st1", "wd1", "forest"] as const;
-const KEPT = 2; // st1 sits centre-top of the fan and is the one the app would keep.
+const CARDS = ["field", "village", "st0", "boat", "st1", "wd0", "wd1", "forest"] as const;
+const KEPT = 3; // the boat sits just left of centre, on top, and is the one the app would keep.
 
-/** Card footprint and spread in pixels, small screens first — the fan has to fit inside the viewport, not bleed past it. */
-const SIZE = { w: 96, h: 68, spread: 34, arc: 5 };
-const SIZE_WIDE = { w: 224, h: 184, spread: 62, arc: 7 };
+/** Card footprint and spread in pixels, by breakpoint. Wide screens get a fan large enough to run past the container's own
+ * edges — the point of a fan is that it fills the hand, not that it sits politely inside a box. */
+const SIZE = { w: 78, h: 56, spread: 27, arc: 4.5 };
+const SIZE_WIDE = { w: 190, h: 152, spread: 66, arc: 6.5 };
+const SIZE_LARGE = { w: 270, h: 212, spread: 102, arc: 8 };
 
 /**
  * The hero's one showpiece: a burst of real photos fanned like a hand of prints. It settles into place once, with weight,
@@ -21,20 +23,23 @@ const SIZE_WIDE = { w: 224, h: 184, spread: 62, arc: 7 };
 export default function HeroFan() {
   const reduce = useReducedMotion();
   const [hover, setHover] = useState<number | null>(null);
-  const [wide, setWide] = useState(false);
+  const [tier, setTier] = useState<0 | 1 | 2>(0);
   useEffect(() => {
-    const m = window.matchMedia("(min-width: 640px)");
-    const read = () => setWide(m.matches);
+    const mWide = window.matchMedia("(min-width: 640px)");
+    const mLarge = window.matchMedia("(min-width: 1024px)");
+    const read = () => setTier(mLarge.matches ? 2 : mWide.matches ? 1 : 0);
     read();
-    m.addEventListener("change", read);
-    return () => m.removeEventListener("change", read);
+    mWide.addEventListener("change", read);
+    mLarge.addEventListener("change", read);
+    return () => { mWide.removeEventListener("change", read); mLarge.removeEventListener("change", read); };
   }, []);
-  const s = wide ? SIZE_WIDE : SIZE;
+  const s = tier === 2 ? SIZE_LARGE : tier === 1 ? SIZE_WIDE : SIZE;
+  const wide = tier > 0;
   const n = CARDS.length;
   const centre = (n - 1) / 2;
 
   return (
-    <div className="relative select-none" style={{ perspective: 1400, height: s.h + 120 }}>
+    <div className="relative left-1/2 w-screen -translate-x-1/2 select-none" style={{ perspective: 1400, height: s.h + 130 }}>
       <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
         {CARDS.map((photo, i) => {
           const off = i - centre;
@@ -65,11 +70,13 @@ export default function HeroFan() {
               whileTap={{ scale: 1.03 }}>
               <img src={`/photos/${photo}.webp`} alt="" width={720} height={480} loading="eager" fetchPriority={i === KEPT ? "high" : "auto"} draggable={false}
                 className="h-full w-full object-cover" />
-              <div aria-hidden className="pointer-events-none absolute inset-0 shadow-[inset_0_1px_0_rgba(255,255,255,.18),inset_0_-24px_28px_-24px_rgba(0,0,0,.35)]" />
+              <div aria-hidden className="pointer-events-none absolute inset-0 shadow-[inset_0_1px_0_rgba(255,255,255,.18),inset_0_-32%_38%_-24%_rgba(0,0,0,.4)]" />
               {kept && (
                 <motion.i aria-hidden initial={reduce ? false : { opacity: 0, scale: 0, rotate: -90 }} animate={{ opacity: 1, scale: 1, rotate: 0 }}
                   transition={{ type: "spring", stiffness: 380, damping: 22, delay: reduce ? 0 : 0.15 + KEPT * 0.07 + 0.4 }}
-                  className="absolute right-1.5 top-1.5 drop-shadow-[0_1px_3px_rgba(0,0,0,.55)] sm:right-2.5 sm:top-2.5"><Gleam size={wide ? 20 : 13} /></motion.i>
+                  style={{ position: "absolute", right: s.w * 0.06, top: s.w * 0.06 }} className="drop-shadow-[0_1px_3px_rgba(0,0,0,.55)]">
+                  <Gleam size={tier === 2 ? 26 : tier === 1 ? 19 : 12} />
+                </motion.i>
               )}
             </motion.button>
           );
