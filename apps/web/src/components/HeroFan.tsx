@@ -5,15 +5,21 @@ import { Gleam } from "./Gleam";
 const SPRING_OUT = { type: "spring", stiffness: 240, damping: 22, mass: 0.9 } as const;
 const SPRING_LIFT = { type: "spring", stiffness: 420, damping: 30 } as const;
 
-/** Real photos, not stock cards: the fan is what a burst actually looks like spread out in your hand. */
-const CARDS = ["field", "village", "st0", "boat", "st1", "wd0", "wd1", "forest"] as const;
-const KEPT = 3; // the boat sits just left of centre, on top, and is the one the app would keep.
+/**
+ * Real photos, not stock cards — but only the ones that actually hold up at this size. Half of `/public/photos` carries a
+ * dated warm-filter, lens-flare stock-photo look (wd0-3, field, forest) that reads as generic the moment it's the largest
+ * thing on the page; st2/st3 are strong but black-and-white, which breaks with the rest of the site's colour. These four
+ * are the only ones that look like something a person actually shot: fewer cards, all of them good, which is the page's
+ * own headline in miniature.
+ */
+const CARDS = ["st0", "village", "boat", "st1"] as const;
+const KEPT = 2; // the boat sits centre-top of the fan and is the one the app would keep.
 
 /** Card footprint and spread in pixels, by breakpoint. Wide screens get a fan large enough to run past the container's own
  * edges — the point of a fan is that it fills the hand, not that it sits politely inside a box. */
-const SIZE = { w: 78, h: 56, spread: 27, arc: 4.5 };
-const SIZE_WIDE = { w: 190, h: 152, spread: 66, arc: 6.5 };
-const SIZE_LARGE = { w: 270, h: 212, spread: 102, arc: 8 };
+const SIZE = { w: 100, h: 72, spread: 40, arc: 6 };
+const SIZE_WIDE = { w: 230, h: 182, spread: 96, arc: 9 };
+const SIZE_LARGE = { w: 320, h: 250, spread: 150, arc: 11 };
 
 /**
  * The hero's one showpiece: a burst of real photos fanned like a hand of prints. It settles into place once, with weight,
