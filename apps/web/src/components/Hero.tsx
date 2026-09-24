@@ -21,9 +21,9 @@ function Line({ children, delay, quiet }: { children: string; delay: number; qui
 export default function Hero({ lang }: { lang: Lang }) {
   const c = copy[lang].hero;
   return (
-    <section className="mx-auto flex min-h-[calc(100dvh-4rem)] w-full max-w-[1400px] flex-col justify-center px-5 pb-10 pt-8">
+    <section className="mx-auto flex min-h-[calc(100dvh-4rem)] w-full max-w-6xl flex-col justify-center px-5 pb-6 pt-8">
       <div className="flex flex-col gap-8 md:flex-row md:items-end md:justify-between md:gap-12">
-        <h1 className="max-w-[16ch] text-[clamp(2.1rem,4.6vw,3.4rem)] font-semibold leading-[1.04] tracking-[-0.04em]">
+        <h1 className="text-[clamp(2.1rem,5.4vw,4.5rem)] font-semibold leading-[1.02] tracking-[-0.045em]">
           <Line delay={0.05} quiet>{c.title[0]}</Line>
           <Line delay={0.16}>{c.title[1]}</Line>
         </h1>
@@ -33,7 +33,7 @@ export default function Hero({ lang }: { lang: Lang }) {
         </div>
       </div>
 
-      <div className="mt-10 sm:mt-14 md:mt-16">
+      <div className="mt-8 md:mt-10">
         <HeroFan />
       </div>
     </section>
