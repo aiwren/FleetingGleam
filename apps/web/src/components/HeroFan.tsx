@@ -51,14 +51,6 @@ export default function HeroFan() {
   // A very light tilt toward the pointer, on the group as a whole — the one place this fan reaches for real depth.
   const rx = useSpring(0, { stiffness: 120, damping: 16 });
   const ry = useSpring(0, { stiffness: 120, damping: 16 });
-  const onMove = (e: MouseEvent<HTMLDivElement>) => {
-    if (reduce) return;
-    const r = e.currentTarget.getBoundingClientRect();
-    ry.set(((e.clientX - r.left) / r.width - 0.5) * 10);
-    rx.set(((e.clientY - r.top) / r.height - 0.5) * -6);
-  };
-  const onLeave = () => { rx.set(0); ry.set(0); };
-
   const { scrollY } = useScroll();
   const drift = useTransform(scrollY, [0, 520], [0, -48]);
   const shrink = useTransform(scrollY, [0, 520], [1, 0.93]);
@@ -71,6 +63,26 @@ export default function HeroFan() {
   const n = CARDS.length;
   const centre = (n - 1) / 2;
   const active = hover ?? KEPT;
+
+  // Hover is decided from where the pointer is over the fan's *resting* layout, not from whichever animated card is under it.
+  // A lifted card moves out from under the pointer, and a per-card hover would then drop it, re-enter it, and flicker forever
+  // wherever two cards overlap; the resting geometry doesn't move, so it can't.
+  const onMove = (e: MouseEvent<HTMLDivElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    if (!reduce) {
+      ry.set(((e.clientX - r.left) / r.width - 0.5) * 10);
+      rx.set(((e.clientY - r.top) / r.height - 0.5) * -6);
+    }
+    const dx = e.clientX - (r.left + r.width / 2);
+    const dy = e.clientY - (r.top + r.height / 2);
+    const maxArc = Math.abs(centre) ** 1.4 * arcK;
+    if (Math.abs(dx) > centre * step + w / 2 || dy < -h / 2 - 8 || dy > h / 2 + maxArc + 8) { setHover(null); return; }
+    setHover((cur) => {
+      if (cur !== null && Math.abs(dx - (cur - centre) * step) < step * 0.6) return cur;
+      return Math.min(n - 1, Math.max(0, Math.round(dx / step + centre)));
+    });
+  };
+  const onLeave = () => { rx.set(0); ry.set(0); setHover(null); };
 
   return (
     <div className="relative isolate left-1/2 w-screen -translate-x-1/2 select-none" style={{ perspective: 1400, height: h + Math.round(w * 0.5) }}
@@ -98,9 +110,8 @@ export default function HeroFan() {
           const yield_ = hover !== null && hover !== i ? Math.sign(off - (hover - centre)) * (step * 0.3) : 0;
           const transition = lifted ? SPRING_LIFT : hover !== null || entered ? SPRING_YIELD : { ...SPRING_OUT, delay: reduce ? 0 : 0.1 + Math.abs(off) * 0.085 };
           return (
-            <motion.button key={src} type="button" aria-label={`${score}`} tabIndex={-1}
-              onHoverStart={() => setHover(i)} onHoverEnd={() => setHover(null)}
-              className="absolute left-0 top-0 origin-bottom cursor-default overflow-hidden rounded-[clamp(12px,1.2vw,20px)] border border-line/70 bg-panel shadow-[var(--lift-sm)] transition-shadow duration-300"
+            <motion.div key={src} aria-hidden
+              className="pointer-events-none absolute left-0 top-0 origin-bottom overflow-hidden rounded-[clamp(12px,1.2vw,20px)] border border-line/70 bg-panel shadow-[var(--lift-sm)] transition-shadow duration-300"
               style={{
                 width: w, height: h, marginLeft: -w / 2, marginTop: -h / 2,
                 zIndex: lifted ? 50 : kept ? 30 : 20 - Math.round(Math.abs(off) * 2), boxShadow: lifted ? "var(--lift)" : undefined,
@@ -113,8 +124,7 @@ export default function HeroFan() {
                 rotate: lifted ? angle * 0.35 : angle,
                 scale: lifted ? 1.07 : 1,
               }}
-              transition={transition}
-              whileTap={{ scale: 1.03 }}>
+              transition={transition}>
               <img src={src} alt="" width={720} height={480} loading="eager" fetchPriority={kept ? "high" : "auto"} draggable={false}
                 className="h-full w-full object-cover" />
               <div aria-hidden className="pointer-events-none absolute inset-0 shadow-[inset_0_1px_0_rgba(255,255,255,.18),inset_0_-32%_38%_-24%_rgba(0,0,0,.5)]" />
@@ -129,7 +139,7 @@ export default function HeroFan() {
                   <Gleam size={Math.round(Math.max(12, Math.min(30, w * 0.085)))} />
                 </motion.i>
               )}
-            </motion.button>
+            </motion.div>
           );
         })}
       </motion.div>
