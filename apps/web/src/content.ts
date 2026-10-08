@@ -15,6 +15,8 @@ export const copy = {
       body: "FleetingGleam groups your bursts and picks the best frame, all on your Mac. Nothing is uploaded.",
       cta: "See how it works",
       alt: "The FleetingGleam photo wall with an inspector showing the score of the selected photo",
+      marks: [["Focus", "0.97 on the hull"], ["Composition", "subject on the thirds"], ["Exposure", "balanced, no clipping"], ["Colour", "teal against orange"]],
+      kept: "Kept",
     },
     wall: { title: "Watch it choose.", body: "Scroll, and a real pass runs: bursts sit together, and the keeper gets the mark.", kept: "kept", note: "Sample photos. Frames 8 to 10 are one moment." },
     privacy: {
@@ -54,6 +56,8 @@ export const copy = {
       body: "惊鸿在你的 Mac 上把连拍分好组，挑出最好的一张。照片不上传。",
       cta: "了解怎么用",
       alt: "惊鸿的照片墙，右侧检查器显示所选照片的评分",
+      marks: [["对焦", "船身 0.97"], ["构图", "主体落在三分线"], ["曝光", "均衡，无过曝"], ["色彩", "青绿衬橙红"]],
+      kept: "已保留",
     },
     wall: { title: "看它怎么选。", body: "往下滚，一次真实的筛选就会开始：同一瞬间的连拍排在一起，留下的那张会被标记。", kept: "已保留", note: "示例照片。第 8 至 10 张是同一瞬间。" },
     privacy: {
