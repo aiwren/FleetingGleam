@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 import { copy, type Lang } from "../content";
-import Mosaic from "./Mosaic";
+import HeroTunnel from "./HeroTunnel";
 
 const d = (s: number) => ({ "--d": `${s}s` }) as CSSProperties;
 
@@ -21,20 +21,17 @@ function Line({ children, delay, quiet }: { children: string; delay: number; qui
 export default function Hero({ lang }: { lang: Lang }) {
   const c = copy[lang].hero;
   return (
-    <section className="mx-auto flex min-h-[calc(100dvh-4rem)] w-full max-w-6xl flex-col justify-center px-5 pb-6 pt-8">
-      <div className="flex flex-col gap-8 md:flex-row md:items-end md:justify-between md:gap-12">
-        <h1 className="text-[clamp(2.1rem,5.4vw,4.5rem)] font-semibold leading-[1.02] tracking-[-0.045em]">
+    <section className="relative isolate mx-auto flex min-h-[calc(100dvh-4rem)] w-full max-w-6xl flex-col justify-center px-5 pb-16 pt-8">
+      <HeroTunnel />
+      <div data-hero-text className="flex max-w-3xl flex-col items-start gap-8">
+        <h1 className="text-[clamp(2.3rem,5.6vw,4.9rem)] font-semibold leading-[1.02] tracking-[-0.045em]">
           <Line delay={0.05} quiet>{c.title[0]}</Line>
           <Line delay={0.16}>{c.title[1]}</Line>
         </h1>
-        <div className="a-fade shrink-0 md:max-w-[30ch] md:text-right" style={d(0.4)}>
-          <p className="text-lg text-ash">{c.body}</p>
+        <div className="a-fade max-w-full" style={d(0.4)}>
+          <p className="max-w-[min(34ch,100%)] text-lg text-ash">{c.body}</p>
           <a href="#flow" className="mt-6 inline-flex min-h-12 items-center whitespace-nowrap rounded-full bg-ink px-6 py-3 font-medium text-on-ink transition-transform duration-150 active:translate-y-px">{c.cta}</a>
         </div>
-      </div>
-
-      <div className="mt-6 md:mt-8">
-        <Mosaic />
       </div>
     </section>
   );
