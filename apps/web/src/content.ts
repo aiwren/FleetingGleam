@@ -18,6 +18,7 @@ export const copy = {
       marks: [["Focus", "0.97 on the hull"], ["Composition", "subject on the thirds"], ["Exposure", "balanced, no clipping"], ["Colour", "teal against orange"]],
       kept: "Kept",
     },
+    read: { title: "It reads each photo the way you would.", body: "Focus, framing, exposure and colour are measured on the picture itself, and the best frame of a moment takes the mark." },
     wall: { title: "Watch it choose.", body: "Scroll, and a real pass runs: bursts sit together, and the keeper gets the mark.", kept: "kept", note: "Sample photos. Frames 8 to 10 are one moment." },
     privacy: {
       text: "Your photos stay on your computer. Analysis, search and learning your taste all run on this machine. Models download once, only when needed.",
@@ -59,6 +60,7 @@ export const copy = {
       marks: [["对焦", "船身 0.97"], ["构图", "主体落在三分线"], ["曝光", "均衡，无过曝"], ["色彩", "青绿衬橙红"]],
       kept: "已保留",
     },
+    read: { title: "像你一样看每一张照片。", body: "对焦、构图、曝光和色彩都落在画面本身上量，同一瞬间里最好的那张会得到标记。" },
     wall: { title: "看它怎么选。", body: "往下滚，一次真实的筛选就会开始：同一瞬间的连拍排在一起，留下的那张会被标记。", kept: "已保留", note: "示例照片。第 8 至 10 张是同一瞬间。" },
     privacy: {
       text: "你的照片只在你的电脑上。分析、搜索和学习你的喜好，全部在本机完成。模型只在用到时下载一次。",

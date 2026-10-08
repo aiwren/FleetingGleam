@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 import { copy, type Lang } from "../content";
-import HeroAnnotate from "./HeroAnnotate";
+import Mosaic from "./Mosaic";
 
 const d = (s: number) => ({ "--d": `${s}s` }) as CSSProperties;
 
@@ -15,7 +15,7 @@ function Line({ children, delay, quiet }: { children: string; delay: number; qui
 
 /**
  * The first screen makes its whole case without asking for a scroll: headline and promise up top, and below them the one
- * showpiece — one real photograph with the app's measurements drawn onto it. The full pass, scrubbed
+ * showpiece — a wall of real photographs that the pointer brings up out of the crowd. The full pass, scrubbed
  * by scroll, is its own section further down — a second act, not the opening line.
  */
 export default function Hero({ lang }: { lang: Lang }) {
@@ -33,8 +33,8 @@ export default function Hero({ lang }: { lang: Lang }) {
         </div>
       </div>
 
-      <div className="mt-10 md:mt-12">
-        <HeroAnnotate lang={lang} />
+      <div className="mt-6 md:mt-8">
+        <Mosaic />
       </div>
     </section>
   );
