@@ -136,8 +136,8 @@ export default function Bento({ lang }: { lang: Lang }) {
           <H>{c.a.t}</H><P>{c.a.d}</P>
           <div className="relative mt-8 h-[260px] overflow-hidden rounded-2xl md:h-[300px]">
             {(["dark", "light"] as const).map((t) => (
-              <img key={t} src={`/shots/compare-${t}-1200.webp`} srcSet={`/shots/compare-${t}-1200.webp 1200w, /shots/compare-${t}-2400.webp 2400w`} sizes="(min-width: 768px) 700px, 100vw" alt={c.a.alt} loading="lazy" width={2400} height={1500} draggable={false}
-                className={`h-full w-full object-cover object-top transition-transform duration-700 ease-out-expo group-hover:scale-[1.03] ${t === "dark" ? "for-dark" : "for-light"}`} />
+              <img key={t} src={`/shots/wall-${t}-1200.webp`} srcSet={`/shots/wall-${t}-1200.webp 1200w, /shots/wall-${t}-2400.webp 2400w`} sizes="(min-width: 768px) 1100px, 100vw" alt={c.a.alt} loading="lazy" width={2400} height={1500} draggable={false}
+                className={`h-full w-full origin-top-left scale-[1.55] object-cover object-left-top transition-transform duration-700 ease-out-expo group-hover:scale-[1.6] ${t === "dark" ? "for-dark" : "for-light"}`} />
             ))}
           </div>
         </Tile>

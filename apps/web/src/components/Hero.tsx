@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 import { copy, type Lang } from "../content";
-import HeroTunnel from "./HeroTunnel";
+import HeroApp from "./HeroApp";
 
 const d = (s: number) => ({ "--d": `${s}s` }) as CSSProperties;
 
@@ -14,24 +14,26 @@ function Line({ children, delay, quiet }: { children: string; delay: number; qui
 }
 
 /**
- * The first screen makes its whole case without asking for a scroll: headline and promise up top, and below them the one
- * showpiece — a wall of real photographs that the pointer brings up out of the crowd. The full pass, scrubbed
- * by scroll, is its own section further down — a second act, not the opening line.
+ * The first screen says what the product does, in the product's own pictures: the headline and promise, and under them the
+ * real app window, large and still. The scrolled culling pass is the next section, not the opening line.
  */
 export default function Hero({ lang }: { lang: Lang }) {
   const c = copy[lang].hero;
   return (
-    <section className="relative isolate mx-auto flex min-h-[calc(100dvh-4rem)] w-full max-w-6xl flex-col justify-center px-5 pb-16 pt-8">
-      <HeroTunnel />
-      <div data-hero-text className="flex max-w-3xl flex-col items-start gap-8">
-        <h1 className="text-[clamp(2.3rem,5.6vw,4.9rem)] font-semibold leading-[1.02] tracking-[-0.045em]">
+    <section className="mx-auto w-full max-w-6xl px-5 pb-8 pt-14 md:pt-20">
+      <div className="flex flex-col items-start gap-8 md:flex-row md:items-end md:justify-between md:gap-12">
+        <h1 className={`font-semibold leading-[1.04] tracking-[-0.045em] ${lang === "zh" ? "text-[clamp(2rem,4.5vw,3.9rem)]" : "text-[clamp(2.3rem,5.6vw,4.9rem)]"}`}>
           <Line delay={0.05} quiet>{c.title[0]}</Line>
           <Line delay={0.16}>{c.title[1]}</Line>
         </h1>
-        <div className="a-fade max-w-full" style={d(0.4)}>
-          <p className="max-w-[min(34ch,100%)] text-lg text-ash">{c.body}</p>
+        <div className="a-fade max-w-full md:max-w-[30ch] md:text-right" style={d(0.4)}>
+          <p className="text-lg text-ash">{c.body}</p>
           <a href="#flow" className="mt-6 inline-flex min-h-12 items-center whitespace-nowrap rounded-full bg-ink px-6 py-3 font-medium text-on-ink transition-transform duration-150 active:translate-y-px">{c.cta}</a>
         </div>
+      </div>
+
+      <div className="mt-12 md:mt-16">
+        <HeroApp lang={lang} />
       </div>
     </section>
   );

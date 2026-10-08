@@ -15,10 +15,8 @@ export const copy = {
       body: "FleetingGleam groups your bursts and picks the best frame, all on your Mac. Nothing is uploaded.",
       cta: "See how it works",
       alt: "The FleetingGleam photo wall with an inspector showing the score of the selected photo",
-      marks: [["Focus", "0.97 on the hull"], ["Composition", "subject on the thirds"], ["Exposure", "balanced, no clipping"], ["Colour", "teal against orange"]],
-      kept: "Kept",
+      pins: ["The best frame is marked", "Near-identical frames sit together", "Each score comes with its reasons", "Processed on this Mac"],
     },
-    read: { title: "It reads each photo the way you would.", body: "Focus, framing, exposure and colour are measured on the picture itself, and the best frame of a moment takes the mark." },
     wall: { title: "Watch it choose.", body: "Scroll, and a real pass runs: bursts sit together, and the keeper gets the mark.", kept: "kept", note: "Sample photos. Frames 8 to 10 are one moment." },
     privacy: {
       text: "Your photos stay on your computer. Analysis, search and learning your taste all run on this machine. Models download once, only when needed.",
@@ -26,7 +24,7 @@ export const copy = {
     },
     features: {
       title: "Sees the shoot the way you do.",
-      a: { t: "Bursts, grouped for you", d: "Frames of one moment sit together and the best one is marked. Faces, orientation and time gap all count.", alt: "Two frames of one moment side by side, with scores and a suggested best" },
+      a: { t: "Bursts, grouped for you", d: "Frames of one moment sit together and the best one is marked. Faces, orientation and time gap all count.", alt: "Frames of one moment grouped together, the best of each marked with a gold star" },
       b: { t: "Scored by kind of scene", d: "Fourteen kinds of scene, each weighed differently. Portraits by faces, sport by focus, and a night shot is not marked down for being dark.", kinds: ["Portrait", "People", "Landscape", "Architecture", "Food", "Animal", "Object", "Document", "Street", "Night", "Sport", "Macro", "Stage", "Vehicle"] },
       c: { t: "Find by describing", d: "Type what you remember. English and Chinese both work, and photos are found by what is in them.", phrases: [["sunset over a field", "field"], ["a small boat on calm water", "boat"], ["white houses on a hill", "village"], ["green forest and stream", "forest"]] },
       d: { t: "Learns your taste", d: "Point it at a folder of past picks and it learns in one go. Keep one style for weddings, another for street.",
@@ -57,10 +55,8 @@ export const copy = {
       body: "惊鸿在你的 Mac 上把连拍分好组，挑出最好的一张。照片不上传。",
       cta: "了解怎么用",
       alt: "惊鸿的照片墙，右侧检查器显示所选照片的评分",
-      marks: [["对焦", "船身 0.97"], ["构图", "主体落在三分线"], ["曝光", "均衡，无过曝"], ["色彩", "青绿衬橙红"]],
-      kept: "已保留",
+      pins: ["最好的一张会被标记", "几乎一样的连拍排在一起", "每个分数都附带理由", "全程在这台 Mac 上处理"],
     },
-    read: { title: "像你一样看每一张照片。", body: "对焦、构图、曝光和色彩都落在画面本身上量，同一瞬间里最好的那张会得到标记。" },
     wall: { title: "看它怎么选。", body: "往下滚，一次真实的筛选就会开始：同一瞬间的连拍排在一起，留下的那张会被标记。", kept: "已保留", note: "示例照片。第 8 至 10 张是同一瞬间。" },
     privacy: {
       text: "你的照片只在你的电脑上。分析、搜索和学习你的喜好，全部在本机完成。模型只在用到时下载一次。",
@@ -68,7 +64,7 @@ export const copy = {
     },
     features: {
       title: "按你的眼光看片。",
-      a: { t: "连拍自动分组", d: "同一瞬间的连拍排在一起，最好的一张有标记。人脸、方向和拍摄间隔都会参与判断。", alt: "同一瞬间的两张照片并排，显示评分和推荐" },
+      a: { t: "连拍自动分组", d: "同一瞬间的连拍排在一起，最好的一张有标记。人脸、方向和拍摄间隔都会参与判断。", alt: "同一瞬间的照片排在一起，每组最好的一张带金色星标" },
       b: { t: "按场景打分", d: "十四种场景，各有各的评分侧重。人像看脸，运动看对焦，夜景不会因为暗被扣分。", kinds: ["人像", "人物场景", "风景", "建筑", "美食", "动物", "物品", "文档", "街拍", "夜景", "运动", "微距", "舞台演出", "交通工具"] },
       c: { t: "用一句话找照片", d: "输入你记得的样子，中英文都可以，按照片里的内容来找。", phrases: [["田野上的日落", "field"], ["平静水面上的小船", "boat"], ["山坡上的白色房屋", "village"], ["森林里的溪流", "forest"]] },
       d: { t: "学你的口味", d: "指一个你过去挑好的文件夹，一次学会。婚礼一套风格，街拍另一套。",

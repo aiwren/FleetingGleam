@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useInView, useReducedMotion } from "motion/react";
 import { copy, type Lang } from "../content";
 import Frame from "./Frame";
+import ScrollTilt from "./ScrollTilt";
 
 const SHOTS = ["wall", "compare", "wall"] as const;
 const EASE = [0.16, 1, 0.3, 1] as const;
@@ -38,22 +39,22 @@ export default function Flow({ lang }: { lang: Lang }) {
       <motion.h2 initial={reduce ? false : { opacity: 0, y: 24 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ duration: 0.8, ease: EASE }}
         className="max-w-2xl text-[clamp(1.9rem,4.4vw,3.25rem)] font-semibold leading-[1.1] tracking-[-0.035em] text-balance">{c.title}</motion.h2>
 
-      <div className="mt-12 grid items-center gap-x-14 gap-y-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
+      <div className="mt-12 grid items-center gap-x-14 gap-y-10 lg:grid-cols-[minmax(0,.78fr)_minmax(0,1.5fr)]">
         <ol>
           {c.steps.map(([t, d], i) => (
             <Step key={t} n={i + 1} title={t} body={d} on={now === i} onEnter={() => setNow(i)} onPick={() => setNow(i)} />
           ))}
         </ol>
 
-        <div>
+        <ScrollTilt from={10}>
           <AnimatePresence mode="popLayout" initial={false}>
             <motion.div key={now}
               initial={reduce ? false : { opacity: 0, scale: 0.985, y: 12 }} animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={reduce ? undefined : { opacity: 0, scale: 1.008 }} transition={{ duration: 0.5, ease: EASE }}>
-              <Frame shot={SHOTS[now]} alt={c.steps[now][0]} sizes="(min-width: 1024px) 660px, 100vw" />
+              <Frame shot={SHOTS[now]} alt={c.steps[now][0]} sizes="(min-width: 1024px) 760px, 100vw" />
             </motion.div>
           </AnimatePresence>
-        </div>
+        </ScrollTilt>
       </div>
     </section>
   );

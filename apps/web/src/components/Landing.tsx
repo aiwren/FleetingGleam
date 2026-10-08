@@ -3,7 +3,6 @@ import { GleamDefs } from "./Gleam";
 import Header from "./Header";
 import Hero from "./Hero";
 import WallDemo from "./WallDemo";
-import AnnotateSection from "./AnnotateSection";
 import Manifesto from "./Manifesto";
 import Bento from "./Bento";
 import Flow from "./Flow";
@@ -17,7 +16,6 @@ export default function Landing({ lang }: { lang: Lang }) {
       <main>
         <Hero lang={lang} />
         <WallDemo lang={lang} />
-        <AnnotateSection lang={lang} />
         <Manifesto lang={lang} />
         <Bento lang={lang} />
         <Flow lang={lang} />
