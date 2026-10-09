@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 import { copy, type Lang } from "../content";
-import HeroApp from "./HeroApp";
+import HeroStage from "./HeroStage";
 
 const d = (s: number) => ({ "--d": `${s}s` }) as CSSProperties;
 
@@ -20,20 +20,18 @@ function Line({ children, delay, quiet }: { children: string; delay: number; qui
 export default function Hero({ lang }: { lang: Lang }) {
   const c = copy[lang].hero;
   return (
-    <section className="mx-auto w-full max-w-6xl px-5 pb-8 pt-14 md:pt-20">
-      <div className="flex flex-col items-start gap-8 md:flex-row md:items-end md:justify-between md:gap-12">
-        <h1 className={`font-semibold leading-[1.04] tracking-[-0.045em] ${lang === "zh" ? "text-[clamp(2rem,4.5vw,3.9rem)]" : "text-[clamp(2.3rem,5.6vw,4.9rem)]"}`}>
-          <Line delay={0.05} quiet>{c.title[0]}</Line>
-          <Line delay={0.16}>{c.title[1]}</Line>
-        </h1>
-        <div className="a-fade max-w-full md:max-w-[30ch] md:text-right" style={d(0.4)}>
-          <p className="text-lg text-ash">{c.body}</p>
-          <a href="#flow" className="mt-6 inline-flex min-h-12 items-center whitespace-nowrap rounded-full bg-ink px-6 py-3 font-medium text-on-ink transition-transform duration-150 active:translate-y-px">{c.cta}</a>
-        </div>
+    <section className="mx-auto w-full max-w-6xl px-5 pb-8 pt-8 text-center md:pt-10">
+      <h1 className={`mx-auto font-semibold leading-[1.04] tracking-[-0.045em] ${lang === "zh" ? "text-[clamp(1.9rem,min(4vw,7.4vh),3.5rem)]" : "text-[clamp(2.1rem,min(4.4vw,7.8vh),3.9rem)]"}`}>
+        <Line delay={0.05} quiet>{c.title[0]}</Line>
+        <Line delay={0.16}>{c.title[1]}</Line>
+      </h1>
+      <div className="a-fade mx-auto mt-5" style={d(0.4)}>
+        <p className="mx-auto max-w-[66ch] text-[17px] leading-relaxed text-ash md:text-lg">{c.body}</p>
+        <a href="#flow" className="mt-6 inline-flex min-h-12 items-center whitespace-nowrap rounded-full bg-ink px-6 py-3 font-medium text-on-ink transition-transform duration-150 active:translate-y-px">{c.cta}</a>
       </div>
 
-      <div className="mt-12 md:mt-16">
-        <HeroApp lang={lang} />
+      <div className="mt-9 md:mt-10">
+        <HeroStage lang={lang} />
       </div>
     </section>
   );

@@ -12,10 +12,10 @@ export const copy = {
     menu: "Menu",
     hero: {
       title: ["Thousands of photos.", "A few worth freezing."],
-      body: "FleetingGleam groups your bursts and picks the best frame, all on your Mac. Nothing is uploaded.",
+      body: "FleetingGleam is a photo culling app for Mac. It groups your bursts, picks the best frame in each, and shows you why. All on your computer, nothing uploaded.",
       cta: "See how it works",
       alt: "The FleetingGleam photo wall with an inspector showing the score of the selected photo",
-      pins: ["The best frame is marked", "Near-identical frames sit together", "Each score comes with its reasons", "Processed on this Mac"],
+      steps: ["Groups your bursts", "Picks the best frame", "Shows you why"],
     },
     wall: { title: "Watch it choose.", body: "Scroll, and a real pass runs: bursts sit together, and the keeper gets the mark.", kept: "kept", note: "Sample photos. Frames 8 to 10 are one moment." },
     privacy: {
@@ -52,10 +52,10 @@ export const copy = {
     menu: "菜单",
     hero: {
       title: ["几千张照片，", "只留值得定格的几张。"],
-      body: "惊鸿在你的 Mac 上把连拍分好组，挑出最好的一张。照片不上传。",
+      body: "惊鸿是一款 Mac 上的选片软件：把连拍自动分好组，挑出每组最好的一张，并告诉你为什么。全程在你的电脑上完成，照片不上传。",
       cta: "了解怎么用",
       alt: "惊鸿的照片墙，右侧检查器显示所选照片的评分",
-      pins: ["最好的一张会被标记", "几乎一样的连拍排在一起", "每个分数都附带理由", "全程在这台 Mac 上处理"],
+      steps: ["连拍自动分组", "挑出最好的一张", "告诉你为什么"],
     },
     wall: { title: "看它怎么选。", body: "往下滚，一次真实的筛选就会开始：同一瞬间的连拍排在一起，留下的那张会被标记。", kept: "已保留", note: "示例照片。第 8 至 10 张是同一瞬间。" },
     privacy: {
