@@ -7,7 +7,12 @@ export type Project = {
   name: string;
   folders: string[];
   overrides: Record<string, State>;
+  /** Legacy: the old keep quota. Ignored now; see `keepCap`. */
   keepRatio: number;
+  /** At most this share of the photos is kept (a ceiling for when you want fewer). Unset = keep every good photo. */
+  keepCap?: number;
+  /** true = of a group of similar shots only the best can be kept (the others go to review or are rejected). Off by default. */
+  onePerGroup?: boolean;
   count: number;
   /** Up to four thumbnail paths shown on the project card. */
   cover?: string[];
@@ -15,6 +20,10 @@ export type Project = {
   sort?: "group" | "order" | "time" | "score";
   /** Which selection style judges this project (unset = the default style). */
   style?: string;
+  /** How picks favour coverage: "diverse" (default) spreads keeps across scenes, "best" just takes the top scores. */
+  pickMode?: "diverse" | "best";
+  /** Free text the user keeps about the shoot (who, where, what to look for). */
+  note?: string;
   /** Search on or off for this project; when unset it follows the app setting. */
   search?: boolean;
   /** false = this project ignores the learned taste model. */

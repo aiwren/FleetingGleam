@@ -82,6 +82,9 @@ function makePhotos(list: Src[]): Photo[] {
       sharp_score: sharp, expo_score: expo, tech_score: 0.65 * sharp + 0.35 * expo,
       clip_score: ai, sys_score: ai - 0.2, ai_score: ai, pref_score: null, face_count: i % 4 === 0 ? 2 : 0, face_min: i % 4 === 0 ? 0.3 : null,
       utility: flags.includes("utility"), flags, eyes_open: null, kind: i % 3 === 0 ? "portrait" : "people", taken_at: 1_780_000_000 + i * 300, score, group: Math.floor(i / 2.6), scene: Math.floor(i / 5), group_best: false,
+      face_boxes: i % 4 === 0 ? [[0.3, 0.25, 0.14, 0.2], [0.55, 0.3, 0.13, 0.19]] : i % 4 === 1 ? [[0.42, 0.28, 0.16, 0.22]] : [],
+      people: i % 4 === 0 ? [0, 1] : i % 4 === 1 ? [i % 8 === 1 ? 0 : 1] : [],
+      hdr: i % 3 === 0, motion: i % 7 === 0,
     };
   });
   const best = new Map<number, Photo>();
@@ -92,8 +95,10 @@ function makePhotos(list: Src[]): Photo[] {
 
 document.documentElement.dataset.mock = "1"; // the browser has no native vibrancy, so give the sidebar a base colour
 const w = window as unknown as Record<string, unknown>;
-const packState: Record<"standard" | "high" | "ultra" | "search" | "eyes", boolean> = { standard: true, high: false, ultra: false, search: false, eyes: false };
+const packState: Record<"standard" | "high" | "ultra" | "search" | "eyes" | "faces" | "scenetext", boolean> = { standard: true, high: false, ultra: false, search: false, eyes: false, faces: true, scenetext: true };
 const emit = (event: string, payload: unknown) => (listeners.get(event) ?? []).forEach((h) => cbs.get(h)?.({ event, id: 0, payload }));
+// lets a test play the part of the native layer (e.g. `__mockEmit("hdr-view", {...})`)
+(window as unknown as { __mockEmit?: typeof emit }).__mockEmit = emit;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 let lastPhotos: Photo[] = [];
@@ -108,7 +113,7 @@ async function scan(dirs: string[], quiet: boolean): Promise<Photo[]> {
   let done = total - todo.length;
   emit("scan-info", { cpu_only: false, clip: "coreml-fp16", model: "ViT-L/14", vision: true, cores: 10 });
   emit("scan-progress", { done, total });
-  for (const p of photos) if (cached.has(p.path)) emit("scan-photo", p);
+  { const known = photos.filter((p) => cached.has(p.path)); for (let i = 0; i < known.length; i += 250) emit("scan-photos", known.slice(i, i + 250)); }
   const order = todo.map((p) => photos.indexOf(p));
   const worker = async () => {
     while (order.length) {
@@ -172,17 +177,34 @@ w.__TAURI_INTERNALS__ = {
         return { files, bytes: files.filter((f) => !f.cached).length * 9_000_000, uncached: files.filter((f) => !f.cached).length };
       }
       case "scan_project": return scan(args.dirs as string[], !!args.quiet);
+      // The native HDR layer exists only in the app; here the calls are just recorded (window.__hdrCalls) so the page's side can be checked.
+      case "hdr_overlay_supported": return true;
+      case "hdr_overlay_show": case "hdr_overlay_move": case "hdr_overlay_hide": {
+        ((window as unknown as { __hdrCalls?: unknown[] }).__hdrCalls ??= []).push({ cmd, args: JSON.parse(JSON.stringify(args)) });
+        return cmd === "hdr_overlay_show" ? true : null;
+      }
+      case "scene_text": {
+        const pool = ["A green lawn with trees in the background", "A river with buildings along the shore", "A large white church with a wide staircase", "A cafe with tables and chairs", "A field of pink flowers", "A street with tall buildings"];
+        const zh = !!args.zh, zhPool = ["绿色的草地，背景有树", "河边，沿岸有建筑", "白色的教堂和宽阔的台阶", "有桌椅的咖啡馆", "一片粉红色的花田", "有高楼的街道"];
+        const reqs = args.scenes as { id: number }[];
+        // most scenes are named at once (as the real vocabulary step does); the rest follow one by one
+        const named = Math.floor(reqs.length * 0.8);
+        setTimeout(() => emit("scene-texts", reqs.slice(0, named).map((r, i) => ({ id: r.id, text: (zh ? zhPool : pool)[i % pool.length] }))), 300);
+        reqs.slice(named).forEach((r, i) => setTimeout(() => { emit("scene-text", { id: r.id, text: (zh ? zhPool : pool)[i % pool.length] }); emit("scene-text-progress", { done: i + 1, total: reqs.length - named }); }, 600 + i * 80));
+        return null;
+      }
       // A rough stand-in for the real (Rust-side) keep/review/reject logic: just enough to exercise the UI in a
       // plain browser. The actual ranking algorithm lives only in src-tauri/src/decide.rs.
       case "decide_photos": {
-        const keepRatio = Number(args.keepRatio ?? 0.3);
+        const keepRatio = Number(args.keepRatio ?? 1);
         const overrides = (args.overrides ?? {}) as Record<string, string>;
         const sorted = [...lastPhotos].sort((a, b) => b.score - a.score);
         const keepN = Math.max(1, Math.round(sorted.length * keepRatio));
         const reviewN = Math.max(1, Math.round(sorted.length * 0.15));
         const out: Record<string, { state: string; manual: boolean; reasons: { k: string; p?: Record<string, number> }[] }> = {};
         sorted.forEach((p, i) => {
-          const auto = i < keepN ? "keep" : i < keepN + reviewN ? "review" : "reject";
+          const good = p.score >= 0.7;
+          const auto = good && i < keepN ? "keep" : good || i < keepN + reviewN ? "review" : "reject";
           const manual = Object.prototype.hasOwnProperty.call(overrides, p.path);
           const state = manual ? overrides[p.path] : auto;
           out[p.path] = { state, manual, reasons: [{ k: state === "keep" ? "reason.keepSolo" : state === "review" ? "reason.nearBest" : "reason.belowLine", p: { score: Math.round(p.score * 100) } }] };
@@ -208,8 +230,9 @@ w.__TAURI_INTERNALS__ = {
       case "reveal": return null;
       case "large_preview": return (args.path as string);
       case "photo_info": return { format: "JPEG", bytes: 9_400_000, color_space: "sRGB", bit_depth: "8, 8, 8", camera: "FUJIFILM X-T5", lens: "XF35mmF1.4 R", focal: "35 mm", aperture: "f/2", shutter: "1/250 s", iso: "400", software: null, taken: "2026-04-17 18:22:31" };
-      case "packs_status": return (["standard", "high", "ultra", "search", "eyes"] as const).map((id) => ({ id, installed: packState[id], bytes: 0 }));
-      case "pack_size": return { standard: 266_000_000, high: 609_000_000, ultra: 870_000_000, search: 139_000_000, eyes: 7_000_000 }[String(args.id) as "standard"];
+      case "machine_info": return { memory_gb: 32, cores: 10 };
+      case "packs_status": return (["standard", "high", "ultra", "search", "eyes", "faces", "scenetext"] as const).map((id) => ({ id, installed: packState[id], bytes: 0 }));
+      case "pack_size": return { standard: 266_000_000, high: 609_000_000, ultra: 870_000_000, search: 139_000_000, eyes: 7_000_000, faces: 39_000_000, scenetext: 400_000_000 }[String(args.id) as "standard"];
       case "pack_download": {
         for (let i = 1; i <= 10; i++) { await sleep(150); emit("model-progress", { pack: args.id, file: "x", done: i * 60_900_000, total: 609_000_000 }); }
         packState[String(args.id) as "standard"] = true;
@@ -244,7 +267,7 @@ w.__TAURI_INTERNALS__ = {
         if (s) { s.info.refs = 24; s.info.refs_from = String(args.dir); s.info.active = true; }
         return prefsInfo();
       }
-      case "search_status": return { total: inDirs(args.dirs as string[]).length, ready: inDirs(args.dirs as string[]).length, available: true };
+      case "search_status": return { total: inDirs(args.dirs as string[]).length, ready: inDirs(args.dirs as string[]).length, available: packState.search && packState.standard };
       case "search_index": return 0;
       case "search_photos": {
         const words = String(args.query).toLowerCase();

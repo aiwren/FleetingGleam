@@ -26,6 +26,9 @@ const ICON = {
 export default function App() {
   const { t, i18n } = useTranslation();
   const [moduleId, setModuleId] = useState("culling");
+  /** Where the styles page was opened from, so its back button returns there and not always to settings. */
+  const [stylesFrom, setStylesFrom] = useState<"culling" | "settings">("settings");
+  const openStyles = (from: "culling" | "settings") => { setStylesFrom(from); setModuleId("styles"); };
   /** true = full sidebar, false = narrow icon rail. */
   const [sidebar, setSidebar] = useState(true);
   // The inspector has one rule: it is there when a photo is selected and gone when none is. The only choice left to the user is to
@@ -104,9 +107,9 @@ export default function App() {
           </nav>
         </div>
         <main className="content">
-          <Culling active={moduleId === "culling"} inspectorHidden={inspectorHidden} onToggleInspector={toggleInspector} onOpenStyles={() => setModuleId("styles")} />
-          <Styles active={moduleId === "styles"} onBack={() => setModuleId("settings")} />
-          <Settings active={moduleId === "settings"} onOpenStyles={() => setModuleId("styles")} />
+          <Culling active={moduleId === "culling"} inspectorHidden={inspectorHidden} onToggleInspector={toggleInspector} onOpenStyles={() => openStyles("culling")} />
+          <Styles active={moduleId === "styles"} from={stylesFrom} onBack={() => setModuleId(stylesFrom)} />
+          <Settings active={moduleId === "settings"} onOpenStyles={() => openStyles("settings")} />
           {current && !current.ready && (
             <div className="module soon">
               <div className="empty">

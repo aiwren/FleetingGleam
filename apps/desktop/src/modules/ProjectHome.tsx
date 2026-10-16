@@ -4,22 +4,28 @@ import { AnimatePresence, motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 import { SPRING } from "../motion";
 import Modal from "../components/Modal";
+import Select from "../components/Select";
 import SearchBox from "../components/SearchBox";
 import { Hit } from "../search";
-import { Project, TRASH_DAYS, emptyTrash, purgeProject, restoreProject, trashProject, updateProject } from "../projects";
+import { baseName, pickFolder } from "../projectActions";
+import { useStyles } from "../styles";
+import { Project, TRASH_DAYS, createProject, emptyTrash, purgeProject, restoreProject, trashProject, updateProject } from "../projects";
 
 const icon = (d: string) => <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><path d={d} /></svg>;
 
 /** The module's landing page: every project as a card, plus a recycle bin for the ones you delete. */
-export default function ProjectHome({ projects, onOpen, onNew, search, onPick }: {
+export default function ProjectHome({ projects, onOpen, onNew, search, onPick, onOpenStyles }: {
   projects: Project[];
   onOpen: (id: string) => void;
   onNew: () => void;
   /** Global search over every project (absent while the search model is missing). */
   search?: { query: string; setQuery: (v: string) => void; hits: Hit[] | null; progress: number | null; inputRef: React.RefObject<HTMLInputElement | null> };
   onPick: (projectId: string, path: string) => void;
+  /** Opens style management. Only passed when custom styles are turned on in Settings. */
+  onOpenStyles?: () => void;
 }) {
   const { t } = useTranslation();
+  const styles = useStyles();
   const live = projects.filter((p) => !p.trashed);
   const bin = projects.filter((p) => p.trashed && Date.now() - p.trashed < TRASH_DAYS * 86400_000);
   const [view, setView] = useState<"projects" | "bin">("projects");
@@ -27,6 +33,19 @@ export default function ProjectHome({ projects, onOpen, onNew, search, onPick }:
   const [renaming, setRenaming] = useState<string | null>(null);
   const [toast, setToast] = useState<{ id: string; name: string } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  // The detailed way to start a project: pick a folder, then confirm its name and (optionally) a style before creating it.
+  const [detailed, setDetailed] = useState<{ dir: string; name: string; style: string } | null>(null);
+  const openDetailed = async () => {
+    const dir = await pickFolder();
+    if (dir) setDetailed({ dir, name: baseName(dir), style: "" });
+  };
+  const confirmDetailed = () => {
+    if (!detailed) return;
+    const p = createProject(detailed.name.trim() || baseName(detailed.dir), [detailed.dir]);
+    if (detailed.style) updateProject(p.id, { style: detailed.style });
+    setDetailed(null);
+  };
 
   useEffect(() => {
     if (!armed) return;
@@ -70,6 +89,7 @@ export default function ProjectHome({ projects, onOpen, onNew, search, onPick }:
               {armed === "all" ? t("bin.emptyConfirm") : t("bin.emptyAll")}
             </button>
           )}
+          {view === "projects" && onOpenStyles && <button className="btn" onClick={onOpenStyles}>{t("nav.styles")}</button>}
         </div>
       </motion.div>
 
@@ -112,11 +132,14 @@ export default function ProjectHome({ projects, onOpen, onNew, search, onPick }:
             );
           })}
           {view === "projects" && (
-            <motion.button key="new" className="pcard pnew" layout="position" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-              transition={{ ...SPRING.soft, delay: 0.04 + list.length * 0.045 }} whileHover={{ y: -3, transition: SPRING.tap }} whileTap={{ scale: 0.985, transition: SPRING.tap }} onClick={onNew}>
-              <span className="pplus"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M9 3v12M3 9h12" /></svg></span>
-              <b>{t("home.new")}</b>
-            </motion.button>
+            <motion.div key="new" className="pcard pnew" layout="position" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+              transition={{ ...SPRING.soft, delay: 0.04 + list.length * 0.045 }} whileHover={{ y: -3, transition: SPRING.tap }} whileTap={{ scale: 0.985, transition: SPRING.tap }}>
+              <button className="pnew-quick" onClick={onNew}>
+                <span className="pplus"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M9 3v12M3 9h12" /></svg></span>
+                <b>{t("home.new")}</b>
+              </button>
+              <button className="pnew-detail" onClick={openDetailed}>{t("home.newDetailed")}</button>
+            </motion.div>
           )}
         </AnimatePresence>
       </div>
@@ -129,6 +152,36 @@ export default function ProjectHome({ projects, onOpen, onNew, search, onPick }:
             <button className="btn danger" autoFocus onClick={() => { if (ask) moveToBin(ask); setAsk(null); }}>{t("bin.toBin")}</button>
           </>}>
           <p>{t("bin.confirmBody", { name: ask?.name ?? "", days: TRASH_DAYS })}</p>
+        </Modal>
+        <Modal open={!!detailed} onClose={() => setDetailed(null)} title={t("home.new")}
+          footer={<>
+            <button className="btn" onClick={() => setDetailed(null)}>{t("organize.cancel")}</button>
+            <button className="btn primary" onClick={confirmDetailed}>{t("home.new")}</button>
+          </>}>
+          {detailed && (
+            <div className="pset">
+              <section>
+                <h4>{t("pset.name")}</h4>
+                <input className="title-input wide" autoFocus value={detailed.name} onChange={(e) => setDetailed({ ...detailed, name: e.target.value })} />
+              </section>
+              <section>
+                <h4>{t("pset.folders")}</h4>
+                <div className="fpath"><b>{baseName(detailed.dir)}</b><span className="mono ash">{detailed.dir}</span></div>
+                <div className="prow2"><button className="btn" onClick={openDetailed}>{t("styles.chooseFolder")}</button></div>
+              </section>
+              {styles.length > 1 && (
+                <section>
+                  <div className="pline">
+                    <div><b>{t("styles.project")}</b><p className="ash small">{t("styles.projectDesc")}</p></div>
+                    <Select value={detailed.style} onChange={(e) => setDetailed({ ...detailed, style: e.target.value })} aria-label={t("styles.project")}>
+                      <option value="">{t("styles.followDefault")}</option>
+                      {styles.map((st) => <option key={st.id} value={st.id}>{st.name || t("styles.defaultName")}</option>)}
+                    </Select>
+                  </div>
+                </section>
+              )}
+            </div>
+          )}
         </Modal>
         {toast && (
           <motion.div className="toast" initial={{ opacity: 0, y: 16, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 8 }} transition={SPRING.soft}>

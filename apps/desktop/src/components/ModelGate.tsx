@@ -19,6 +19,11 @@ export default function ModelGate() {
         </>
       )}>
       {g?.phase === "ask" && <p>{t(`models.body.${g.id}`, { size: mb(g.bytes) })}</p>}
+      {g?.phase === "ask" && g.ids && (
+        <ul className="mlist">
+          {g.ids.map((id, i) => <li key={id}><span>{t(`models.name.${id}`)}</span><span className="mono ash">{mb(g.sizes?.[i] ?? 0)}</span></li>)}
+        </ul>
+      )}
       {g?.phase === "downloading" && (
         <div className="mprog">
           <div className="mbar2"><i style={{ width: `${pct}%` }} /></div>

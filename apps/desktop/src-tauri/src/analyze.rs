@@ -7,6 +7,7 @@ use image::imageops::FilterType;
 use image::{DynamicImage, GrayImage};
 use serde::{Deserialize, Serialize};
 
+use crate::faces::FaceEmbedder;
 use crate::mediapipe::MediapipeEyes;
 use crate::scoring;
 use crate::scorer::AiScorer;
@@ -14,7 +15,6 @@ use crate::vision::Vision;
 
 const ANALYZE_SIZE: u32 = 1024;
 const THUMB_SIZE: u32 = 640;
-pub const IMAGE_EXTS: [&str; 5] = ["jpg", "jpeg", "png", "webp", "jpe"];
 
 /// Which signal `eyes_open` comes from. The geometric ratio is Apple Vision's own landmarks (macOS only, always
 /// available there); MediaPipe is a small downloaded pair of models that read the same crop with a classifier
@@ -33,7 +33,7 @@ impl EyeMethod {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Default)]
 pub struct Photo {
     pub path: String,
     pub name: String,
@@ -75,6 +75,28 @@ pub struct Photo {
     pub group: usize,
     pub scene: usize,
     pub group_best: bool,
+    /// Faces big enough to recognise, `[x, y, w, h]` top-left origin normalised to the photo (see faces.rs).
+    #[serde(default)]
+    pub face_boxes: Vec<[f32; 4]>,
+    /// Which recurring person each of `face_boxes` is (0 = the person in the most photos), -1 for nobody in particular.
+    /// Worked out across the whole project by `faces::assign_people`, so it is never cached.
+    #[serde(default, skip_deserializing)]
+    pub people: Vec<i32>,
+    /// True once the faces were looked at with the recognition model, so a photo analysed before it was downloaded
+    /// can be told apart from one that simply has no faces.
+    #[serde(default)]
+    pub faces_done: bool,
+    /// The photo carries an HDR gain map (or is HDR in some other way): shown in HDR in the full-size viewer (thumbnails are always standard range).
+    #[serde(default)]
+    pub hdr: bool,
+    /// A motion photo: a short video follows the picture in the same file.
+    #[serde(default)]
+    pub motion: bool,
+    /// True once `hdr` and `motion` were looked at (photos analysed before they existed are told apart from plain ones).
+    #[serde(default)]
+    pub media_done: bool,
+    #[serde(skip)]
+    pub face_embs: Vec<Vec<f32>>,
     #[serde(skip)]
     pub hash: u64,
     #[serde(skip)]
@@ -97,11 +119,21 @@ pub fn measure_eyes(path: &Path, cache_dir: &Path, vision: &Vision, method: EyeM
     }
 }
 
+/// Faces of a photo analysed before the recognition model was there: looked at again on its saved analysis copy.
+pub fn measure_faces(path: &Path, cache_dir: &Path, vision: &Vision, faces: &FaceEmbedder) -> Option<(Vec<[f32; 4]>, Vec<Vec<f32>>)> {
+    let copy = cache_name(path, ".a.jpg", cache_dir);
+    if !copy.exists() {
+        return None;
+    }
+    let marks = vision.analyze(&copy)?.face_marks;
+    let img = image::open(&copy).ok()?;
+    let found = faces.embed(&img, &marks);
+    Some((found.iter().map(|f| f.bbox).collect(), found.into_iter().map(|f| f.emb).collect()))
+}
+
+/// A photo this machine can open: JPEG / PNG / WebP everywhere; on macOS also HEIC, AVIF, JPEG XL, TIFF and camera RAW (see imageio.rs).
 pub fn is_image(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| IMAGE_EXTS.contains(&e.to_ascii_lowercase().as_str()))
-        .unwrap_or(false)
+    crate::imageio::is_supported(path)
 }
 
 pub fn analyze(
@@ -111,13 +143,16 @@ pub fn analyze(
     vision: Option<&Vision>,
     eye_method: EyeMethod,
     mp: Option<&MediapipeEyes>,
+    faces: Option<&FaceEmbedder>,
     on_stage: &dyn Fn(&str, u8, Option<(&str, u32, u32)>),
 ) -> Result<Photo, String> {
     on_stage("decode", 8, None);
-    let full = load_oriented(path)?;
-    let (width, height) = (full.width(), full.height());
-    let work = fast_resize(&full, ANALYZE_SIZE);
-    drop(full);
+    let (work, width, height) = {
+        // a very large photo is hundreds of megabytes while it is decoded: only a few at a time (a burst of them would otherwise take all the memory)
+        let _huge = huge_photo_permit(path);
+        let (full, width, height) = load_with_size(path, ANALYZE_SIZE)?;
+        (fast_resize(&full, ANALYZE_SIZE), width, height)
+    };
 
     // The thumbnail exists from here on, so the UI can show the photo while it is still being analysed.
     let thumb = save_thumb(&work, path, cache_dir)?;
@@ -149,6 +184,14 @@ pub fn analyze(
         (_, None) => None,
     };
     let eye_method_used = eyes_open.map(|_| eye_method.tag().to_string());
+    // Who is in the picture: only looked at when the recognition model is there and Vision could find the faces.
+    let (face_boxes, face_embs, faces_done) = match (faces, &sys) {
+        (Some(f), Some(s)) => {
+            let found = f.embed(&work, &s.face_marks);
+            (found.iter().map(|x| x.bbox).collect(), found.into_iter().map(|x| x.emb).collect(), true)
+        }
+        _ => (Vec::new(), Vec::new(), false),
+    };
 
     let ai_score = scoring::combine_aesthetic(clip_score, sys_score);
     let flags = scoring::flags(sharp_score, brightness, clipped_high, utility);
@@ -156,6 +199,7 @@ pub fn analyze(
     let score = scoring::final_score("", ai_score, sharp_score, expo_score, None, &flags);
 
     on_stage("thumb", 92, None);
+    let media = crate::media::probe(path, cache_dir);
     Ok(Photo {
         path: path.to_string_lossy().into_owned(),
         name: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
@@ -185,6 +229,13 @@ pub fn analyze(
         group: 0,
         scene: 0,
         group_best: false,
+        face_boxes,
+        people: Vec::new(),
+        faces_done,
+        hdr: media.hdr,
+        motion: media.motion,
+        media_done: true,
+        face_embs,
         hash,
         embedding,
     })
@@ -192,22 +243,77 @@ pub fn analyze(
 
 /// A quick preview thumbnail (used before analysis, so the confirmation screen never has to decode originals in the UI).
 pub fn quick_thumb(src: &Path, out: &Path) -> Result<(), String> {
-    let full = load_oriented(src)?;
+    let (full, _, _) = load_with_size(src, ANALYZE_SIZE)?;
     let work = fast_resize(&full, ANALYZE_SIZE);
     work.thumbnail(THUMB_SIZE, THUMB_SIZE).to_rgb8().save(out).map_err(|e| e.to_string())
 }
 
 /// A photo decoded upright and reduced to the working size: what the CLIP model is fed.
 pub fn load_for_embedding(src: &Path) -> Result<DynamicImage, String> {
-    Ok(fast_resize(&load_oriented(src)?, ANALYZE_SIZE))
+    Ok(fast_resize(&load_with_size(src, ANALYZE_SIZE)?.0, ANALYZE_SIZE))
 }
 
 /// A large (long edge 2560) upright JPEG for the full-size viewer: far cheaper for the webview to decode than a 20 MP original.
 pub fn large_preview(src: &Path, out: &Path) -> Result<(), String> {
+    // The system decoder first: it scales while decoding (several times faster than decoding in full) and keeps the photo's colour profile,
+    // so wide-gamut photos are not drained of colour. RAW and the like only go this way.
+    if crate::imageio::available() && crate::imageio::render(src, out, if crate::imageio::is_native(src) { 2560 } else { 30000 }, true).is_ok() {
+        return Ok(());
+    }
+    if !crate::imageio::is_native(src) {
+        return Err(format!("{}: cannot be read on this machine", src.display()));
+    }
     let full = load_oriented(src)?;
     let img = fast_resize(&full, 2560);
     let file = std::fs::File::create(out).map_err(|e| e.to_string())?;
     image::codecs::jpeg::JpegEncoder::new_with_quality(std::io::BufWriter::new(file), 88).encode_image(&img.to_rgb8()).map_err(|e| e.to_string())
+}
+
+/// How many photos of 100 MP or more may be decoded at once: each takes about 600 MB of pixels while it is.
+const HUGE_AT_ONCE: usize = 3;
+/// A file this large is such a photo (a 200 MP JPEG is 100 MB and more).
+const HUGE_FILE: u64 = 60 * 1024 * 1024;
+
+static HUGE_BUSY: (std::sync::Mutex<usize>, std::sync::Condvar) = (std::sync::Mutex::new(0), std::sync::Condvar::new());
+
+/// Held while a huge photo is decoded; `None` for an ordinary one.
+struct HugePermit(bool);
+
+impl Drop for HugePermit {
+    fn drop(&mut self) {
+        if self.0 {
+            *HUGE_BUSY.0.lock().unwrap_or_else(|e| e.into_inner()) -= 1;
+            HUGE_BUSY.1.notify_one();
+        }
+    }
+}
+
+fn huge_photo_permit(path: &Path) -> HugePermit {
+    if std::fs::metadata(path).map_or(0, |m| m.len()) < HUGE_FILE {
+        return HugePermit(false);
+    }
+    let mut busy = HUGE_BUSY.0.lock().unwrap_or_else(|e| e.into_inner());
+    while *busy >= HUGE_AT_ONCE {
+        busy = HUGE_BUSY.1.wait(busy).unwrap_or_else(|e| e.into_inner());
+    }
+    *busy += 1;
+    HugePermit(true)
+}
+
+/// The photo upright, no larger than about `max` on its long side where the decoder can do that cheaply, and its true displayed size.
+/// JPEG / PNG / WebP are decoded in full by the `image` crate; everything else (HEIC, RAW...) by the system decoder, at `max`.
+fn load_with_size(path: &Path, max: u32) -> Result<(DynamicImage, u32, u32), String> {
+    if crate::imageio::is_native(path) {
+        let full = load_oriented(path)?;
+        let (w, h) = (full.width(), full.height());
+        return Ok((full, w, h));
+    }
+    let info = crate::imageio::info(path, false).ok_or_else(|| format!("{}: cannot be read on this machine", path.display()))?;
+    let tmp = std::env::temp_dir().join(format!("fg-{:016x}.jpg", { let mut h = DefaultHasher::new(); path.hash(&mut h); std::thread::current().id().hash(&mut h); h.finish() }));
+    crate::imageio::render(path, &tmp, max, true)?;
+    let img = image::open(&tmp).map_err(|e| format!("{}: {e}", path.display()));
+    let _ = std::fs::remove_file(&tmp);
+    Ok((img?, info.w, info.h))
 }
 
 /// Decodes and applies the EXIF orientation, so portrait shots are upright and sizes are the displayed ones.
@@ -381,11 +487,61 @@ const DUP_COS: f32 = 0.94;
 const DUP_HASH_MIN_COS: f32 = 0.88;
 /// One "same moment" group never grows beyond this many frames.
 const DUP_MAX_SIZE: usize = 12;
-const SCENE_MAX_SIZE: usize = 60;
+const SCENE_MAX_SIZE: usize = 80;
 /// Shots this many seconds apart are never the "same moment", however alike they look.
 const DUP_MAX_GAP_SECS: i64 = 3 * 60;
-/// Looser similarity that defines a "scene", used to spread picks across the whole trip.
-const SCENE_COS: f32 = 0.86;
+/// A photo joins a scene when, on average, it looks like the scene's photos this much (CLIP cosine). Averaging (rather than
+/// demanding a match with every member) keeps one place together across poses and angles: the same lawn photographed from five
+/// spots is one scene, even though its first and last frames are quite unlike each other.
+const SCENE_COS: f32 = 0.82;
+/// A scene is one stretch of the shoot: a gap this long since its latest photo starts a new one.
+const SCENE_GAP_SECS: i64 = 30 * 60;
+/// Only the most recent scenes are candidates, which keeps this linear in the number of photos.
+const SCENE_LOOKBACK: usize = 64;
+
+/// Scenes: photos of one place and moment, in time order. See `SCENE_COS`.
+fn cluster_scenes(photos: &[Photo]) -> Vec<usize> {
+    let n = photos.len();
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by_key(|&i| (photos[i].taken_at.unwrap_or(i64::MAX), i));
+    struct Scene { size: usize, sum: Vec<f32>, last: Option<i64> }
+    let mut scenes: Vec<Scene> = Vec::new();
+    let mut of = vec![0usize; n];
+    for &i in &order {
+        let p = &photos[i];
+        let hit = if p.embedding.is_empty() {
+            None
+        } else {
+            let mut best: Option<(usize, f32)> = None;
+            for k in (0..scenes.len()).rev().take(SCENE_LOOKBACK) {
+                let s = &scenes[k];
+                if s.size >= SCENE_MAX_SIZE || s.sum.len() != p.embedding.len() { continue; }
+                if let (Some(a), Some(b)) = (p.taken_at, s.last) {
+                    if a - b > SCENE_GAP_SECS { continue; }
+                }
+                let sim = cosine(&p.embedding, &s.sum) / s.size as f32;
+                if sim >= SCENE_COS && best.map_or(true, |(_, b)| sim > b) { best = Some((k, sim)); }
+            }
+            best.map(|(k, _)| k)
+        };
+        match hit {
+            Some(k) => {
+                let s = &mut scenes[k];
+                s.size += 1;
+                s.sum.iter_mut().zip(&p.embedding).for_each(|(a, b)| *a += b);
+                if p.taken_at.is_some() { s.last = p.taken_at; }
+                of[i] = k;
+            }
+            None => {
+                of[i] = scenes.len();
+                scenes.push(Scene { size: 1, sum: p.embedding.clone(), last: p.taken_at });
+            }
+        }
+    }
+    // Number scenes by first appearance in the original order, as `cluster` does.
+    let mut ids = HashMap::new();
+    (0..n).map(|i| { let next = ids.len(); *ids.entry(of[i]).or_insert(next) }).collect()
+}
 
 /// -1 portrait, 0 square-ish, 1 landscape (as displayed, EXIF orientation applied).
 fn orientation(p: &Photo) -> i8 {
@@ -418,9 +574,7 @@ pub fn group_and_score(photos: &mut [Photo], prefs: Option<&crate::prefs::Prefs>
             None => dist <= DUP_HASH_DIST,
         }
     }, DUP_MAX_SIZE);
-    let scenes = cluster(photos, |a, b| {
-        !a.embedding.is_empty() && !b.embedding.is_empty() && cosine(&a.embedding, &b.embedding) >= SCENE_COS
-    }, SCENE_MAX_SIZE);
+    let scenes = cluster_scenes(photos);
 
     // Face quality is small in absolute terms but meaningful *between frames of the same moment*.
     let mut best_face: HashMap<usize, f32> = HashMap::new();
@@ -482,6 +636,7 @@ pub fn group_and_score(photos: &mut [Photo], prefs: Option<&crate::prefs::Prefs>
     for i in best.into_values() {
         photos[i].group_best = true;
     }
+    crate::faces::assign_people(photos);
 }
 
 #[cfg(test)]
@@ -505,7 +660,8 @@ mod tests {
         println!("kinds: {by:?}");
         println!("closed eyes flagged: {}", photos.iter().filter(|p| p.flags.iter().any(|f| f == "eyes")).count());
         let groups = photos.iter().map(|p| p.group).collect::<std::collections::HashSet<_>>().len();
-        println!("{} photos, {groups} groups, {} group bests", photos.len(), photos.iter().filter(|p| p.group_best).count());
+        let scenes = photos.iter().map(|p| p.scene).collect::<std::collections::HashSet<_>>().len();
+        println!("{} photos, {groups} groups, {scenes} scenes, {} group bests", photos.len(), photos.iter().filter(|p| p.group_best).count());
         for kind in ["portrait", "people", "landscape", "object"] {
             let mut v: Vec<&Photo> = photos.iter().filter(|p| p.kind == kind).collect();
             v.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
@@ -552,7 +708,7 @@ mod tests {
         println!("clip={} vision={}", scorer.is_some(), vision.is_some());
         let mut photos: Vec<Photo> = paths
             .iter()
-            .map(|p| analyze(p, &tmp, scorer.as_ref().map(|s| s as &dyn AiScorer), vision.as_ref(), EyeMethod::Vision, None, &|_, _, _| {}).unwrap())
+            .map(|p| analyze(p, &tmp, scorer.as_ref().map(|s| s as &dyn AiScorer), vision.as_ref(), EyeMethod::Vision, None, None, &|_, _, _| {}).unwrap())
             .collect();
         group_and_score(&mut photos, None, EyeMethod::Vision);
         for p in &photos {
@@ -582,8 +738,8 @@ mod tests {
         files.truncate(40);
         println!("{} photos", files.len());
         for f in &files {
-            let a = analyze(f, &tmp, None, Some(&vision), EyeMethod::Vision, None, &|_, _, _| {});
-            let b = analyze(f, &tmp, None, Some(&vision), EyeMethod::Mediapipe, Some(&mp), &|_, _, _| {});
+            let a = analyze(f, &tmp, None, Some(&vision), EyeMethod::Vision, None, None, &|_, _, _| {});
+            let b = analyze(f, &tmp, None, Some(&vision), EyeMethod::Mediapipe, Some(&mp), None, &|_, _, _| {});
             match (a, b) {
                 (Ok(a), Ok(b)) if a.face_count > 0 => {
                     println!("{:<28} faces={} vision={:>6.3} mediapipe={:>6.3}", a.name, a.face_count, a.eyes_open.unwrap_or(-1.0), b.eyes_open.unwrap_or(-1.0));
@@ -591,6 +747,116 @@ mod tests {
                 _ => {}
             }
         }
+    }
+
+    /// The CPU side of analysing one photo, step by step (no models): FG_PHOTO=<a jpeg>; run with --ignored --nocapture.
+    #[test]
+    #[ignore = "timing only: FG_PHOTO=<a photo>; run with --ignored --nocapture"]
+    fn where_one_photo_goes() {
+        use std::time::Instant;
+        let Ok(p) = std::env::var("FG_PHOTO") else { return };
+        let path = Path::new(&p);
+        let tmp = std::env::temp_dir().join("fg_onephoto");
+        std::fs::create_dir_all(&tmp).unwrap();
+        let rows = std::cell::RefCell::new(Vec::<(&str, f64)>::new());
+        let lap = |name: &'static str, t: Instant| rows.borrow_mut().push((name, t.elapsed().as_secs_f64() * 1000.0));
+        for pass in 0..2 {
+            rows.borrow_mut().clear();
+            let t = Instant::now();
+            let full = load_oriented(path).unwrap();
+            lap("decode (image crate)", t);
+            let t = Instant::now();
+            let work = fast_resize(&full, ANALYZE_SIZE);
+            lap("resize to 1024", t);
+            drop(full);
+            let t = Instant::now();
+            let _thumb = save_thumb(&work, path, &tmp).unwrap();
+            lap("thumbnail 640 (resize + jpeg + write)", t);
+            let t = Instant::now();
+            let gray = work.to_luma8();
+            lap("grayscale", t);
+            let t = Instant::now();
+            let _ = subject_sharpness(&gray);
+            lap("sharpness (blur + laplacian tiles)", t);
+            let t = Instant::now();
+            let _ = exposure_stats(&gray);
+            lap("exposure stats", t);
+            let t = Instant::now();
+            let _ = dhash(&work);
+            lap("dhash", t);
+            let t = Instant::now();
+            let _ = crate::scorer::preprocess(&work);
+            lap("CLIP preprocessing (resize 224, normalise)", t);
+            let t = Instant::now();
+            let _ = save_analysis_copy(&work, path, &tmp);
+            lap("analysis copy for Vision (jpeg + write)", t);
+            let t = Instant::now();
+            let _ = exif_time(path);
+            lap("exif time", t);
+            if pass == 1 {
+                let rows = rows.borrow();
+                let total: f64 = rows.iter().map(|r| r.1).sum();
+                println!("\n{} ({} MB):", path.file_name().unwrap().to_string_lossy(), std::fs::metadata(path).unwrap().len() / 1_000_000);
+                for (n, ms) in rows.iter() { println!("  {n:<42} {ms:>7.1} ms  {:>4.0}%", 100.0 * ms / total); }
+                println!("  {:<42} {total:>7.1} ms", "total");
+            }
+        }
+    }
+
+    /// Where the time of a scan goes, on real photos: one at a time (per stage), then all at once the way a scan runs them.
+    #[test]
+    #[ignore = "timing only: FG_LIBRARY=<folder of photos> [FG_N=24] [FG_QUALITY=fast|high|ultra] [FG_COPIES=n] [FG_VISION=workers], models/ and bin/fg-vision; run with --ignored --nocapture"]
+    fn where_the_scan_time_goes() {
+        use rayon::prelude::*;
+        use std::time::Instant;
+        let Ok(dir) = std::env::var("FG_LIBRARY") else { return };
+        let n: usize = std::env::var("FG_N").ok().and_then(|v| v.parse().ok()).unwrap_or(16);
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let model_dir = root.join("../models");
+        let quality = crate::scorer::Quality::parse(std::env::var("FG_QUALITY").ok().as_deref());
+        let copies = std::env::var("FG_COPIES").ok().and_then(|v| v.parse().ok());
+        let scorer = crate::scorer::ClipScorer::load_with(&model_dir, std::env::var("FG_ACCEL").map_or(true, |v| v != "0"), quality, copies).expect("models/");
+        println!("CLIP: {} via {}", scorer.model, scorer.backend);
+        let workers: usize = std::env::var("FG_VISION").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
+        let vision = Vision::start(&root.join("bin/fg-vision"), workers, false).expect("fg-vision (macOS only)");
+        let tmp = std::env::temp_dir().join("fg_timing_test");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| is_image(p)).collect();
+        files.sort();
+        files.truncate(n);
+        // warm up the models (the first call pays for loading and compiling them)
+        let _ = analyze(&files[0], &tmp, Some(&scorer), Some(&vision), EyeMethod::Vision, None, None, &|_, _, _| {});
+        // marks: [start, "decode" (the first call), "quality" (decode, resize and the thumbnail are done), "ai" (stats done), "system" (CLIP done), "thumb" (Vision, faces done)], then the end
+        let names = ["decode+resize+thumb", "quality stats", "CLIP", "Vision+faces", "tail (exif, media)"];
+        let timed = |f: &PathBuf| -> Option<[f64; 5]> {
+            let marks: std::sync::Mutex<Vec<Instant>> = std::sync::Mutex::new(vec![Instant::now()]);
+            let r = analyze(f, &tmp, Some(&scorer), Some(&vision), EyeMethod::Vision, None, None, &|_, _, _| marks.lock().unwrap().push(Instant::now()));
+            let end = Instant::now();
+            r.ok()?;
+            let m = marks.lock().unwrap();
+            let at = [m[1], m[2], m[3], m[4], m[5], end];
+            let mut out = [0f64; 5];
+            for i in 0..5 { out[i] = at[i + 1].duration_since(at[i]).as_secs_f64() * 1000.0; }
+            Some(out)
+        };
+        let report = |label: &str, wall: std::time::Duration, rows: &[[f64; 5]]| {
+            let n = rows.len() as f64;
+            let mut sum = [0f64; 5];
+            for r in rows { for i in 0..5 { sum[i] += r[i]; } }
+            println!("\n{label}: {} photos, {:?} wall ({:.0} ms per photo)", rows.len(), wall, wall.as_secs_f64() * 1000.0 / n);
+            for i in 0..5 { println!("  {:<22} {:>7.0} ms/photo", names[i], sum[i] / n); }
+        };
+        let one = Instant::now();
+        let rows: Vec<[f64; 5]> = files.iter().filter_map(|f| timed(f)).collect();
+        let seq = one.elapsed();
+        report("one at a time", seq, &rows);
+        let par = Instant::now();
+        let rows: Vec<[f64; 5]> = files.par_iter().filter_map(|f| timed(f)).collect();
+        let pt = par.elapsed();
+        report(&format!("all at once ({} threads)", rayon::current_num_threads()), pt, &rows);
+        println!("  -> {:.1}x faster than one at a time", seq.as_secs_f64() / pt.as_secs_f64());
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     /// Per-stage wall time on one full-size photo, and CLIP on CPU vs the CoreML provider.
@@ -661,7 +927,7 @@ mod tests {
                 let t = Instant::now();
                 let done: usize = paths
                     .par_iter()
-                    .map(|q| analyze(q, &tmp, Some(&scorer as &dyn AiScorer), vision.as_ref(), EyeMethod::Vision, None, &|_, _, _| {}).is_ok() as usize)
+                    .map(|q| analyze(q, &tmp, Some(&scorer as &dyn AiScorer), vision.as_ref(), EyeMethod::Vision, None, None, &|_, _, _| {}).is_ok() as usize)
                     .sum();
                 let secs = t.elapsed().as_secs_f64();
                 println!("vision={:<5} clip={:<12} {done} photos in {secs:>5.1}s  ({:.0} ms/photo)", with_vision, scorer.backend, secs * 1000.0 / done as f64);
@@ -702,5 +968,44 @@ mod tests {
             }
         }
     }
-}
 
+    /// Every format in a folder goes through the real analysis: HEIC, TIFF, BMP, PNG and an HDR JPEG here, camera RAW on a photographer's machine.
+    #[test]
+    #[ignore = "needs FG_FORMATS (a folder with one file of each format) and bin/fg-image (macOS)"]
+    fn every_format_is_analysed() {
+        let Ok(dir) = std::env::var("FG_FORMATS") else { return };
+        let tmp = std::env::temp_dir().join("fg_formats_test");
+        std::fs::create_dir_all(&tmp).unwrap();
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| is_image(p)).collect();
+        files.sort();
+        assert!(!files.is_empty());
+        for f in files {
+            let p = analyze(&f, &tmp, None, None, EyeMethod::Vision, None, None, &|_, _, _| {}).unwrap_or_else(|e| panic!("{}: {e}", f.display()));
+            assert!(p.width > 0 && p.height > 0 && Path::new(&p.thumb).exists(), "{}", f.display());
+            println!("{:<10} {}x{} hdr={} motion={} score={:.2}", f.file_name().unwrap().to_string_lossy(), p.width, p.height, p.hdr, p.motion, p.score);
+        }
+    }
+
+    /// How long grouping and scoring take on a very large project (it runs every time a project is opened): synthetic photos with random CLIP
+    /// vectors, shot in runs of look-alikes, and a clock that goes forward.
+    #[test]
+    #[ignore = "timing only; run with --ignored --nocapture"]
+    fn grouping_a_huge_project_is_fast_enough() {
+        let mut seed = 99u64;
+        let mut rnd = move || { seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407); ((seed >> 40) as f32) / ((1u64 << 24) as f32) - 0.5 };
+        for n in [5_000usize, 20_000] {
+            let mut photos: Vec<Photo> = Vec::with_capacity(n);
+            let mut base: Vec<f32> = Vec::new();
+            for i in 0..n {
+                if i % 6 == 0 { base = (0..768).map(|_| rnd()).collect(); }
+                let mut e: Vec<f32> = base.iter().map(|b| b + rnd() * 0.15).collect();
+                let norm = e.iter().map(|x| x * x).sum::<f32>().sqrt();
+                e.iter_mut().for_each(|x| *x /= norm);
+                photos.push(Photo { path: format!("p{i}"), width: 4000, height: 3000, embedding: e, hash: (i as u64 / 6).wrapping_mul(0x9e3779b97f4a7c15), taken_at: Some(1_700_000_000 + i as i64 * 20), score: 0.5 + (i % 50) as f32 / 100.0, ..Default::default() });
+            }
+            let t = std::time::Instant::now();
+            group_and_score(&mut photos, None, EyeMethod::Vision);
+            println!("{n} photos: grouping and scoring {:?}", t.elapsed());
+        }
+    }
+}

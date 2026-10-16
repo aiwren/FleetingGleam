@@ -6,10 +6,11 @@ import { listen } from "@tauri-apps/api/event";
  * Models are downloaded when they are first needed, one pack at a time. `ensurePack` is the single door: call it before anything that
  * needs a pack, and it either says "ready" straight away or asks the person (size shown), downloads with progress, and answers.
  */
-export type PackId = "standard" | "high" | "ultra" | "search" | "eyes";
+export type PackId = "standard" | "high" | "ultra" | "search" | "eyes" | "faces" | "scenetext";
 export type PackInfo = { id: PackId; installed: boolean };
 export type Answer = "ready" | "downloaded" | "cancelled";
-export type Gate = { id: PackId; phase: "ask" | "downloading" | "error"; bytes: number; done: number; total: number; error?: string; resolve: (a: Answer) => void };
+/** `id` names the dialog's text: a pack, or "bundle" when several are fetched under one question (`ids` says which, `sizes` how big each is). */
+export type Gate = { id: PackId | "bundle"; ids?: PackId[]; sizes?: number[]; phase: "ask" | "downloading" | "error"; bytes: number; done: number; total: number; error?: string; resolve: (a: Answer) => void };
 
 let packs: PackInfo[] = [];
 let gate: Gate | null = null;
@@ -26,6 +27,9 @@ export async function refreshPacks() {
 
 const setGate = (g: Gate | null) => { gate = g; notify(); };
 
+/** Whether a pack is on this machine (as of the last look). */
+export const packInstalled = (id: PackId) => !!packs.find((p) => p.id === id)?.installed;
+
 export async function ensurePack(id: PackId): Promise<Answer> {
   await refreshPacks();
   if (!packs.length || packs.find((p) => p.id === id)?.installed) return "ready";
@@ -36,17 +40,49 @@ export async function ensurePack(id: PackId): Promise<Answer> {
   return new Promise((resolve) => setGate({ id, phase: "ask", bytes, done: 0, total: bytes, resolve }));
 }
 
+/**
+ * Several packs under one question: the person is told the whole size once and agrees once. What is already here is left out; answers "ready"
+ * when nothing is missing.
+ */
+export async function ensurePacks(ids: PackId[]): Promise<Answer> {
+  await refreshPacks();
+  if (!packs.length) return "ready";
+  const missing = [...new Set(ids)].filter((id) => !packs.find((p) => p.id === id)?.installed);
+  if (!missing.length) return "ready";
+  if (missing.length === 1) return ensurePack(missing[0]);
+  const sizes: number[] = [];
+  for (const id of missing) {
+    try { sizes.push(await invoke<number>("pack_size", { id })); } catch (e) {
+      return new Promise((resolve) => setGate({ id: "bundle", ids: missing, phase: "error", bytes: 0, done: 0, total: 0, error: String(e), resolve }));
+    }
+  }
+  const bytes = sizes.reduce((a, b) => a + b, 0);
+  return new Promise((resolve) => setGate({ id: "bundle", ids: missing, sizes, phase: "ask", bytes, done: 0, total: bytes, resolve }));
+}
+
 export function startDownload() {
   const g = gate;
   if (!g) return;
   setGate({ ...g, phase: "downloading", done: 0, error: undefined });
-  invoke("pack_download", { id: g.id })
-    .then(async () => { await refreshPacks(); setGate(null); g.resolve("downloaded"); })
+  const ids = g.ids ?? [g.id as PackId];
+  // the packs one after the other; the progress of the one being fetched is added to the sizes of those already done
+  (async () => {
+    let before = 0;
+    for (let i = 0; i < ids.length; i++) {
+      base = before;
+      await invoke("pack_download", { id: ids[i] });
+      before += g.sizes?.[i] ?? 0;
+    }
+  })()
+    .then(async () => { base = 0; await refreshPacks(); setGate(null); g.resolve("downloaded"); })
     .catch((e) => {
+      base = 0;
       if (String(e).includes("cancelled")) { setGate(null); g.resolve("cancelled"); }
       else setGate({ ...g, phase: "error", error: String(e) });
     });
 }
+/** Bytes of the packs of a bundle that are already down, while the next one is fetched. */
+let base = 0;
 
 /** Closes the dialog (before or during a download) and answers "cancelled". */
 export function cancelGate() {
@@ -62,6 +98,6 @@ export async function removePack(id: PackId) {
 }
 
 void listen<{ pack: string; done: number; total: number }>("model-progress", (e) => {
-  if (gate && gate.phase === "downloading") setGate({ ...gate, done: e.payload.done, total: e.payload.total });
+  if (gate && gate.phase === "downloading") setGate({ ...gate, done: gate.ids ? Math.min(gate.bytes, base + e.payload.done) : e.payload.done, total: gate.ids ? gate.bytes : e.payload.total });
 }).catch(() => { /* not running inside the app */ });
 void refreshPacks();

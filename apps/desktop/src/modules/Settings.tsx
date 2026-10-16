@@ -1,6 +1,7 @@
 import { PrefsInfo, bumpPrefsRevision, learnFromFolder, refreshStyles } from "../styles";
 import { pickFolder, baseName } from "../projectActions";
 import { ensurePack, removePack, usePacks } from "../models";
+import { adopt, release } from "../strategy";
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
@@ -11,7 +12,7 @@ import Segmented from "../components/Segmented";
 import Select from "../components/Select";
 import { LANGS, Pref, setPref, storedPref } from "../i18n";
 import { SPRING } from "../motion";
-import { Compute, EyeMethod, Quality, Theme, setSettings, useScanInfo, useSettings } from "../settings";
+import { Theme, setSettings, useScanInfo, useSettings } from "../settings";
 
 
 function Group({ id, title, index, children }: { id: string; title: string; index: number; children: ReactNode }) {
@@ -51,8 +52,7 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
   const scrollRef = useRef<HTMLDivElement>(null);
   const sections = [
     { id: "sec-general", label: t("settings.general") },
-    { id: "sec-performance", label: t("settings.performance") },
-    { id: "sec-search", label: t("searchset.title") },
+    { id: "sec-performance", label: t("settings.analysis") },
     { id: "sec-personal", label: t("settings.personal") },
     { id: "sec-data", label: t("settings.data") },
     { id: "sec-about", label: t("settings.about") },
@@ -113,7 +113,7 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
     if (!ok) setRefFailed(true);
     else invoke<PrefsInfo>("prefs_info").then(setPrefs).catch(() => {});
   };
-  const clipLabel = !info ? "—" : info.clip === null ? t("settings.off") : info.clip.startsWith("coreml") ? t("settings.clipGpu") : t("settings.clipCpu");
+  const clipLabel = !info ? "—" : info.clip === null ? t("settings.off") : info.clip.startsWith("gpu") || info.clip.startsWith("coreml") ? t("settings.clipGpu") : t("settings.clipCpu");
   const learnStatus = !prefs || prefs.labels === 0 ? t("settings.learnNone")
     : `${t("settings.learnStatus", { n: prefs.labels, k: prefs.keeps })} · ${prefs.active ? t("settings.learnActive") : t("settings.learnWarm")}`;
 
@@ -149,21 +149,11 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
               </Row>
             </Group>
 
-            <Group id="sec-performance" title={t("settings.performance")} index={1}>
-              <Row label={t("settings.quality")} desc={t("settings.qualityShort")} info={<p className="ash">{t("settings.qualityDesc")}</p>}>
-                <Segmented<Quality> id="quality" value={s.quality}
-                  options={[{ value: "fast", label: t("settings.qualityFast") }, { value: "high", label: t("settings.qualityHigh") }, { value: "ultra", label: t("settings.qualityUltra") }]}
-                  onChange={async (v) => {
-                    // the models for a tier are fetched the first time it is chosen (the newest one also uses the quick model for grouping)
-                    if (v === "high" && (await ensurePack("high")) === "cancelled") return;
-                    if (v === "ultra" && ((await ensurePack("standard")) === "cancelled" || (await ensurePack("ultra")) === "cancelled")) return;
-                    setSettings(v === "fast" ? { quality: v } : { quality: v, compute: "auto" });
-                  }} />
-              </Row>
-              <Row label={t("settings.compute")} desc={s.quality !== "fast" ? t("settings.computeLocked") : t("settings.computeShort")}
+            <Group id="sec-performance" title={t("settings.analysis")} index={1}>
+              <Row label={t("settings.analysisAuto")} desc={t("settings.analysisAutoDesc")}
                 info={(
                   <>
-                    <p className="ash">{t("settings.computeDesc")}</p>
+                    <p className="ash">{t("settings.analysisHow")}</p>
                     <h4>{t("settings.lastRun")}</h4>
                     {info ? (
                       <dl className="kv">
@@ -173,34 +163,9 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
                         <div><dt>{t("settings.backendCores")}</dt><dd className="mono">{info.cores}</dd></div>
                       </dl>
                     ) : <p className="ash">{t("settings.lastRunNone")}</p>}
-                    <h4>{t("settings.gpuTitle")}</h4>
-                    <p className="ash">{t("settings.gpuHint")}</p>
                   </>
                 )}>
-                <Segmented<Compute> id="compute" value={s.compute}
-                  options={[{ value: "auto", label: t("settings.auto") }, { value: "cpu", label: t("settings.cpuOnly"), disabled: s.quality !== "fast", tip: t("settings.cpuNeedsStandard") }]}
-                  onChange={(v) => setSettings({ compute: v })} />
-              </Row>
-              <Row label={t("settings.eyeMethod")} desc={t("settings.eyeMethodShort")} info={<p className="ash">{t("settings.eyeMethodDesc")}</p>}>
-                <Segmented<EyeMethod> id="eyeMethod" value={s.eyeMethod}
-                  options={[{ value: "vision", label: t("settings.eyeMethodVision") }, { value: "mediapipe", label: t("settings.eyeMethodMediapipe") }]}
-                  onChange={async (v) => {
-                    // the MediaPipe models are fetched the first time this is chosen; re-evaluate picks the new reading up for photos already analysed
-                    if (v === "mediapipe" && (await ensurePack("eyes")) === "cancelled") return;
-                    setSettings({ eyeMethod: v });
-                  }} />
-              </Row>
-            </Group>
-
-            <Group id="sec-search" title={t("searchset.title")} index={2}>
-              <Row label={t("searchset.title")} desc={t("searchset.desc")} info={<p className="ash">{t("searchset.info")}</p>}>
-                <button className="switch" role="switch" aria-checked={s.search} aria-label={t("searchset.title")} onClick={async () => {
-                  if (!s.search) {
-                    // turning search on needs the search model and the standard one (the index is built with it)
-                    if ((await ensurePack("search")) === "cancelled" || (await ensurePack("standard")) === "cancelled") return;
-                  }
-                  setSettings({ search: !s.search });
-                }} />
+                <span className="mono ash">{s.tier ? t(s.tier === "ultra" ? "settings.qualityUltra" : s.tier === "high" ? "settings.qualityHigh" : "settings.qualityFast") : t("settings.auto")}</span>
               </Row>
             </Group>
 
@@ -213,14 +178,9 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
                 info={<p className="ash">{t("styles.fromFolderInfo")}</p>}>
                 <button className="btn" disabled={refBusy !== null} onClick={learnRefs}>{refBusy !== null ? t("styles.learning", { pct: Math.round(refBusy * 100) }) : t("styles.chooseFolder")}</button>
               </Row>
-              <Row label={t("settings.customStyles")} desc={t("settings.customStylesDesc")}>
-                <button className="switch" role="switch" aria-checked={s.customStyles} aria-label={t("settings.customStyles")} onClick={() => setSettings({ customStyles: !s.customStyles })} />
+              <Row label={t("styles.title")} desc={t("styles.desc")}>
+                <button className="btn" onClick={onOpenStyles}>{t("styles.open")}</button>
               </Row>
-              {s.customStyles && (
-                <Row label={t("styles.title")} desc={t("styles.desc")}>
-                  <button className="btn" onClick={onOpenStyles}>{t("styles.open")}</button>
-                </Row>
-              )}
               {prefs && (prefs.labels > 0 || prefs.refs > 0) && (
                 <Row label={t("settings.learnReset")} desc={t("settings.learned", { count: prefs.labels + prefs.refs, n: prefs.labels + prefs.refs })}>
                   <button className="btn" onClick={resetPrefs}>{prefsReset ? t("settings.learnResetDone") : t("settings.learnReset")}</button>
@@ -235,8 +195,8 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
               {packs.map((p) => (
                 <Row key={p.id} label={t(`models.name.${p.id}`)} desc={p.installed ? `${t("models.have")} · ${t(`models.desc.${p.id}`)}` : `${t("models.none")} · ${t(`models.desc.${p.id}`)}`}>
                   {p.installed
-                    ? <button className="btn" onClick={() => removePack(p.id)}>{t("models.remove")}</button>
-                    : <button className="btn" onClick={() => ensurePack(p.id)}>{t("models.get")}</button>}
+                    ? <button className="btn" onClick={async () => { await removePack(p.id); release(p.id); }}>{t("models.remove")}</button>
+                    : <button className="btn" onClick={async () => { if ((await ensurePack(p.id)) !== "cancelled") adopt(p.id); }}>{t("models.get")}</button>}
                 </Row>
               ))}
               <Row label={t("settings.cache")} desc={t("settings.cacheDesc")}>

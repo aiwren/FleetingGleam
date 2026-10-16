@@ -61,28 +61,42 @@ function NameField({ value, placeholder, onCommit }: { value: string; placeholde
   );
 }
 
-/** New style: a compact "+" that opens into a small form in place, instead of a permanent dashed card the size of a real style. */
-function NewStyle({ onCreate }: { onCreate: (name: string) => void }) {
+/** New style, as a proper dialog: a name, and whether to start teaching it from a folder of photos right away. */
+function NewStyleDialog({ open, onClose, onCreate }: { open: boolean; onClose: () => void; onCreate: (name: string, learnNow: boolean) => void }) {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
-  const ref = useRef<HTMLInputElement>(null);
-  useEffect(() => { if (open) ref.current?.focus(); }, [open]);
-  if (!open) {
-    return <button className="btn sm" onClick={() => setOpen(true)}>+ {t("styles.new")}</button>;
-  }
-  const submit = () => { if (name.trim()) { onCreate(name.trim()); setName(""); setOpen(false); } };
+  const [learnNow, setLearnNow] = useState(true);
+  useEffect(() => { if (open) { setName(""); setLearnNow(true); } }, [open]);
+  const submit = () => { const v = name.trim(); if (v) { onCreate(v, learnNow); onClose(); } };
   return (
-    <form className="style-new-inline" onSubmit={(e) => { e.preventDefault(); submit(); }}>
-      <input ref={ref} value={name} onChange={(e) => setName(e.target.value)} placeholder={t("styles.newPlaceholder")} aria-label={t("styles.new")}
-        onKeyDown={(e) => { if (e.key === "Escape") { setName(""); setOpen(false); } }} onBlur={() => { if (!name.trim()) setOpen(false); }} />
-      <button className="btn sm" type="submit" disabled={!name.trim()}>{t("styles.new")}</button>
-    </form>
+    <Modal open={open} onClose={onClose} title={t("styles.new")}
+      footer={(
+        <>
+          <button className="btn" onClick={onClose}>{t("organize.cancel")}</button>
+          <button className="btn primary" disabled={!name.trim()} onClick={submit}>{learnNow ? t("styles.createAndLearn") : t("styles.create")}</button>
+        </>
+      )}>
+      <form className="style-new" onSubmit={(e) => { e.preventDefault(); submit(); }}>
+        <label className="style-new-field">
+          <span>{t("styles.newName")}</span>
+          <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder={t("styles.newPlaceholder")} maxLength={40} />
+        </label>
+        <div className="style-new-tags">
+          {(t("styles.newExamples", { returnObjects: true }) as string[]).map((x) => (
+            <button type="button" key={x} className="style-tag" onClick={() => setName(x)}>{x}</button>
+          ))}
+        </div>
+        <div className="pline">
+          <div><b>{t("styles.newLearn")}</b><p className="ash small">{t("styles.newLearnDesc")}</p></div>
+          <button type="button" className="switch" role="switch" aria-checked={learnNow} aria-label={t("styles.newLearn")} onClick={() => setLearnNow((v) => !v)} />
+        </div>
+      </form>
+    </Modal>
   );
 }
 
 /** Full-page style management: several learned tastes, each with its own labels, reference photos and model. */
-export default function Styles({ active, onBack }: { active: boolean; onBack: () => void }) {
+export default function Styles({ active, from, onBack }: { active: boolean; from: "culling" | "settings"; onBack: () => void }) {
   const { t, i18n } = useTranslation();
   const styles = useStyles();
   const projects = useProjects().projects.filter((p) => !p.trashed);
@@ -91,6 +105,7 @@ export default function Styles({ active, onBack }: { active: boolean; onBack: ()
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<Sort>("name");
   const [confirming, setConfirming] = useState<StyleInfo | null>(null);
+  const [creating, setCreating] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { if (active) void refreshStyles(); }, [active]);
@@ -131,6 +146,11 @@ export default function Styles({ active, onBack }: { active: boolean; onBack: ()
     if (!ok) setFailed(s.id);
   };
 
+  const create = async (name: string, learnNow: boolean) => {
+    const id = await createStyle(name);
+    if (id && learnNow) { const made = { id } as StyleInfo; await learn(made); }
+  };
+
   const confirmDelete = () => {
     if (!confirming) return;
     deleteStyle(confirming.id);
@@ -142,9 +162,9 @@ export default function Styles({ active, onBack }: { active: boolean; onBack: ()
       <section className="workspace">
         <header className="toolbar" data-tauri-drag-region>
           <div className="toolbar-title" data-tauri-drag-region>
-            <button className="crumb" onClick={onBack} title={t("styles.backToSettings")}>
+            <button className="crumb" onClick={onBack} title={t(from === "settings" ? "styles.backToSettings" : "styles.backToProjects")}>
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M7.5 2.5L4 6l3.5 3.5" /></svg>
-              {t("styles.backToSettings")}
+              {t(from === "settings" ? "styles.backToSettings" : "styles.backToProjects")}
             </button>
             <b>{t("styles.title")}</b>
             <span className="mono ash">{t("styles.count", { count: styles.length })}</span>
@@ -152,7 +172,10 @@ export default function Styles({ active, onBack }: { active: boolean; onBack: ()
         </header>
         <div className="scroll">
           <div className="styles-page">
-            <p className="ash">{t("styles.pageDesc")}</p>
+            <div className="styles-head">
+              <p className="ash">{t("styles.pageDesc")}</p>
+              <button className="btn primary" onClick={() => setCreating(true)}>+ {t("styles.new")}</button>
+            </div>
 
             {styles.length > 1 && (
               <div className="styles-toolbar">
@@ -160,7 +183,6 @@ export default function Styles({ active, onBack }: { active: boolean; onBack: ()
                 <Segmented<Sort> id="style-sort" value={sort} label={t("styles.sortAria")}
                   options={[{ value: "name", label: t("styles.sortName") }, { value: "recent", label: t("styles.sortRecent") }, { value: "usage", label: t("styles.sortUsage") }]}
                   onChange={setSort} />
-                <div className="styles-toolbar-add"><NewStyle onCreate={createStyle} /></div>
               </div>
             )}
 
@@ -205,10 +227,11 @@ export default function Styles({ active, onBack }: { active: boolean; onBack: ()
                 })}
               </div>
             )}
-            {styles.length <= 1 && <div className="styles-toolbar-add single"><NewStyle onCreate={createStyle} /></div>}
           </div>
         </div>
       </section>
+
+      <NewStyleDialog open={creating} onClose={() => setCreating(false)} onCreate={create} />
 
       <Modal open={!!confirming} onClose={() => setConfirming(null)} title={confirming ? t("styles.confirmDeleteTitle", { name: confirming.name.trim() || t("styles.defaultName") }) : ""}
         footer={(

@@ -29,6 +29,15 @@ const size = (b: number) => (b >= 1e6 ? `${(b / 1e6).toFixed(1)} MB` : `${Math.m
 /** EXIF stores the date as "2026:06:13 14:31:17"; show it the way people write it, without the seconds. */
 const niceTime = (v: string) => v.replace(/^(\d{4}):(\d{2}):(\d{2})/, "$1-$2-$3").replace(/:\d{2}$/, "");
 
+/** EXIF can hold an exposure time as a long fraction ("1/813.2157314956827 s"): shown as people write it ("1/813 s"). */
+function niceShutter(v: string): string {
+  const frac = v.match(/^1\/(\d+(?:\.\d+)?)\s*s?$/);
+  if (frac) return `1/${Math.round(Number(frac[1]))} s`;
+  const sec = v.match(/^(\d+(?:\.\d+)?)\s*s?$/);
+  if (sec) return `${Number(Number(sec[1]).toFixed(2))} s`;
+  return v;
+}
+
 /** File facts as an aligned list: what the file is, what shot it, and the shooting parameters as small tags. */
 export default function FileFacts({ photo }: { photo: Photo }) {
   const { t } = useTranslation();
@@ -36,7 +45,7 @@ export default function FileFacts({ photo }: { photo: Photo }) {
   const mp = (photo.width * photo.height) / 1e6;
   const color = info?.color_space && info.color_space !== "Uncalibrated" ? info.color_space : null;
   const depth = info?.bit_depth ? `${info.bit_depth.split(",")[0].trim()} bit` : null;
-  const tags = [info?.focal, info?.aperture, info?.shutter, info?.iso ? `ISO ${info.iso}` : null].filter(Boolean) as string[];
+  const tags = [info?.focal, info?.aperture, info?.shutter ? niceShutter(info.shutter) : null, info?.iso ? `ISO ${info.iso}` : null].filter(Boolean) as string[];
   const rows: [string, ReactNode][] = [
     [t("file.format"), [info?.format, info ? size(info.bytes) : null].filter(Boolean).join(" · ")],
     [t("file.pixels"), `${photo.width} × ${photo.height} · ${mp.toFixed(1)} MP`],

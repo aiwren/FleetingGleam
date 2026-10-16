@@ -2,11 +2,16 @@ import { PointerEvent, useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { motion, MotionValue, useMotionValue, useSpring, useTransform } from "motion/react";
 import { useTranslation } from "react-i18next";
-import Reveal from "../components/Reveal";
+import ProjectPrefs from "../components/ProjectPrefs";
 import Ticker from "../components/Ticker";
 import { SPRING } from "../motion";
 import { baseName } from "../projectActions";
+import { Project, updateProject } from "../projects";
 import { ProbeFile } from "../types";
+
+/** A rough length of time in words: "about 40 seconds", "about 12 minutes", "about 3 hours". */
+const duration = (s: number, t: (k: string, o?: Record<string, unknown>) => string) =>
+  s < 90 ? t("cull.etaSeconds", { n: Math.max(5, Math.round(s / 5) * 5) }) : s < 5400 ? t("cull.etaMinutes", { n: Math.round(s / 60) }) : t("cull.etaHours", { n: Math.round(s / 360) / 10 });
 
 /** Where each print lands on the table (fractions of its width/height), and how big it is (% of table height). */
 const SLOTS: { x: number; y: number; h: number }[] = [
@@ -58,10 +63,14 @@ function Magnetic({ children, onClick, primary }: { children: React.ReactNode; o
  * The screen before analysis: the photos are tossed onto a light table. Parallax follows the cursor, a warm light follows it too,
  * and pressing Start sends the prints away one by one into the wall that is about to develop.
  */
-export default function ReadyStage({ name, count, sizeText, files, thumbs, onStart, onAddFolder }: {
-  name: string; count: number; sizeText: string; files: ProbeFile[]; thumbs: Record<string, string>; onStart: () => void; onAddFolder: () => void;
+export default function ReadyStage({ project, count, sizeText, etaSeconds, files, thumbs, onStart, onAddFolder, onRemoveFolder }: {
+  project: Project; count: number; sizeText: string; etaSeconds: number | null; files: ProbeFile[]; thumbs: Record<string, string>;
+  onStart: () => void; onAddFolder: () => void; onRemoveFolder: (dir: string) => void;
 }) {
   const { t } = useTranslation();
+  const [name, setName] = useState(project.name);
+  useEffect(() => setName(project.name), [project.id, project.name]);
+  const commitName = () => { const v = name.trim(); if (v && v !== project.name) updateProject(project.id, { name: v }); else setName(project.name); };
   const table = useRef<HTMLDivElement>(null);
   const rawX = useMotionValue(0), rawY = useMotionValue(0);
   const mx = useSpring(rawX, { stiffness: 90, damping: 20 }), my = useSpring(rawY, { stiffness: 90, damping: 20 });
@@ -81,16 +90,46 @@ export default function ReadyStage({ name, count, sizeText, files, thumbs, onSta
   return (
     <motion.div className="ready-stage" exit={{ opacity: 0, transition: { duration: 0.28, delay: 0.1 } }}>
       <div className="ready-left">
-        <Reveal as="h1" text={name} delay={0.05} />
-        <motion.div className="ready-count" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ ...SPRING.soft, delay: 0.25 }} exit={{ opacity: 0 }}>
-          <Ticker value={n} />
-          <span>{t("cull.readyUnit")}</span>
-        </motion.div>
-        <motion.p className="mono ash" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }} exit={{ opacity: 0 }}>{t("cull.readySize", { size: sizeText })}</motion.p>
-        <motion.p className="ash ready-body" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ ...SPRING.soft, delay: 0.55 }} exit={{ opacity: 0 }}>{t("cull.readyBody")}</motion.p>
-        <motion.div className="ready-actions" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ ...SPRING.soft, delay: 0.7 }} exit={{ opacity: 0 }}>
+        <div className="ready-scroll">
+          <motion.header className="ready-head" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ ...SPRING.soft, delay: 0.05 }} exit={{ opacity: 0 }}>
+            <input className="ready-name" value={name} onChange={(e) => setName(e.target.value)} onBlur={commitName} aria-label={t("pset.name")}
+              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
+            <div className="ready-count">
+              <Ticker value={n} />
+              <span>{t("cull.readyUnit")}</span>
+              <span className="mono ash ready-size">{t("cull.readySize", { size: sizeText })}</span>
+              {etaSeconds !== null && <span className="mono ash ready-size">{t("cull.readyEta", { time: duration(etaSeconds, t) })}</span>}
+            </div>
+          </motion.header>
+
+          <motion.section className="ready-card" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ ...SPRING.soft, delay: 0.18 }} exit={{ opacity: 0 }}>
+            <h4>{t("pset.folders")}</h4>
+            <ul className="pfolders">
+              {project.folders.map((f) => (
+                <li key={f}>
+                  <div className="fpath"><b>{baseName(f)}</b><span className="mono ash">{f}</span></div>
+                  {project.folders.length > 1 && <button className="fx" onClick={() => onRemoveFolder(f)} title={t("cull.removeFolder")} aria-label={t("cull.removeFolder")}>×</button>}
+                </li>
+              ))}
+            </ul>
+            <button className="btn sm" onClick={onAddFolder}>{t("cull.addFolder")}</button>
+          </motion.section>
+
+          <motion.section className="ready-card" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ ...SPRING.soft, delay: 0.26 }} exit={{ opacity: 0 }}>
+            <h4>{t("pset.prefs")}</h4>
+            <ProjectPrefs project={project} />
+          </motion.section>
+
+          <motion.section className="ready-card" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ ...SPRING.soft, delay: 0.34 }} exit={{ opacity: 0 }}>
+            <h4>{t("pset.note")}</h4>
+            <textarea className="ready-note" rows={3} value={project.note ?? ""} placeholder={t("pset.notePh")}
+              onChange={(e) => updateProject(project.id, { note: e.target.value })} />
+          </motion.section>
+        </div>
+
+        <motion.div className="ready-bar" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ ...SPRING.soft, delay: 0.4 }} exit={{ opacity: 0 }}>
+          <p className="ash small">{t("cull.readyBody")}</p>
           <Magnetic primary onClick={onStart}>{t("cull.start")}</Magnetic>
-          <Magnetic onClick={onAddFolder}>{t("cull.addFolder")}</Magnetic>
         </motion.div>
       </div>
 

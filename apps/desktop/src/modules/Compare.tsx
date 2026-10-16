@@ -1,11 +1,12 @@
 import { PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
 import { motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 import { Star } from "../components/Tile";
+import PhotoTags from "../components/PhotoTags";
+import { FaceAvatar } from "../components/FilterPanel";
 import { useLarge } from "../largeSrc";
 import { SPRING } from "../motion";
-import { Decision, Photo, State, pct } from "../types";
+import { Decision, Photo, State, pct, thumbSrc } from "../types";
 
 const GAP = 12;
 /** The shared view: zoom factor and pan, the pan as a fraction of a frame's own size so every frame shows the same spot. */
@@ -14,8 +15,9 @@ const FIT: View = { s: 1, x: 0, y: 0 };
 
 type Metric = { key: string; label: string; get: (p: Photo) => number | null };
 
-function Cell({ p, index, st, view, dragging, metrics, set, count, onDecide, onOpen, onHover, zoomAt, pan, endPan, resetOrZoom }: {
+function Cell({ p, index, st, view, dragging, metrics, set, count, personFilter, onPerson, onDecide, onOpen, onHover, zoomAt, pan, endPan, resetOrZoom }: {
   p: Photo; index: number; st: State; view: View; dragging: boolean; metrics: Metric[]; set: Photo[]; count: number;
+  personFilter: number | null; onPerson: (id: number | null) => void;
   onDecide: (s: State | null) => void; onOpen: () => void; onHover: (path: string | null) => void;
   zoomAt: (e: { clientX: number; clientY: number; currentTarget: HTMLElement }, factor: number) => void;
   pan: (e: PointerEvent<HTMLElement>, phase: "down" | "move") => void; endPan: () => void;
@@ -39,11 +41,12 @@ function Cell({ p, index, st, view, dragging, metrics, set, count, onDecide, onO
         onPointerDown={(e) => pan(e, "down")} onPointerMove={(e) => pan(e, "move")} onPointerUp={() => endPan()} onPointerEnter={() => onHover(p.path)} onPointerLeave={() => onHover(null)}
         onDoubleClick={(e) => resetOrZoom(e)}>
         <div className={`cmp2-img ${dragging ? "" : "smooth"}`} style={img}>
-          <img src={convertFileSrc(p.thumb)} alt="" draggable={false} />
+          <img src={thumbSrc(p)} alt="" draggable={false} />
           {large && <img className={`hi ${sharp ? "in" : ""}`} src={large} alt="" draggable={false} onLoad={() => setSharp(true)} />}
         </div>
 
         <div className="cmp2-tags">
+          <PhotoTags photo={p} />
           {p.group_best && count > 1 && <span className="cmp2-tag best"><Star filled size={11} />{t("cmp.best")}</span>}
           {st === "keep" && <span className="cmp2-tag kept"><Star filled size={11} />{t("cmp.kept")}</span>}
           {st === "reject" && <span className="cmp2-tag out">{t("cmp.rejected")}</span>}
@@ -57,7 +60,27 @@ function Cell({ p, index, st, view, dragging, metrics, set, count, onDecide, onO
 
         <div className="cmp2-foot" onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
           <div className="cmp2-info">
-            <div className="cmp2-head"><span className="cmp2-key mono">{index + 1}</span><span className="cmp2-name mono">{p.name}</span></div>
+            <div className="cmp2-head">
+              <span className="cmp2-key mono">{index + 1}</span><span className="cmp2-name mono">{p.name}</span>
+              {(() => {
+                // Only when the picture has two or more recognised people: with one there is nothing to tell apart.
+                const ids = [...new Set(p.people.filter((id) => id >= 0))];
+                if (ids.length < 2) return null;
+                return (
+                  <span className="cmp2-who">
+                    {ids.slice(0, 4).map((id) => {
+                      const box = p.face_boxes[p.people.indexOf(id)];
+                      return box && (
+                        <button key={id} className={personFilter === id ? "on" : ""} aria-label={t("cull.people")} data-tip={t("cmp.onlyThem")}
+                          onPointerDown={(e) => e.stopPropagation()} onClick={() => onPerson(personFilter === id ? null : id)}>
+                          <FaceAvatar photo={p} box={box} size={22} />
+                        </button>
+                      );
+                    })}
+                  </span>
+                );
+              })()}
+            </div>
             <div className="cmp2-chips">
               {metrics.map((m) => {
                 const v = m.get(p);
@@ -85,24 +108,31 @@ function Cell({ p, index, st, view, dragging, metrics, set, count, onDecide, onO
  * pan all of them together, so the same detail (an eye, a hand) can be checked in every frame. The numbers sit on each photo.
  * Left / right step through groups of similar shots, the keys 1-4 choose a photo, P / X decide.
  */
-export default function Compare({ photos, all, selected, decisions, onSelect, onDecide, onOpen }: {
-  photos: Photo[]; all: Photo[]; selected: string | null; decisions: Map<string, Decision>;
+export default function Compare({ photos, all, scope: scopeProp, personFilter, onPerson, selected, decisions, onSelect, onDecide, onOpen }: {
+  photos: Photo[]; all: Photo[];
+  /** What counts as "the same shot": a burst of look-alikes, or (when a scene is picked in the filter) the whole scene. */
+  scope: "group" | "scene";
+  personFilter: number | null; onPerson: (id: number | null) => void; selected: string | null; decisions: Map<string, Decision>;
   onSelect: (path: string) => void; onDecide: (path: string, s: State | null) => void; onOpen: (path: string) => void;
 }) {
   const { t } = useTranslation();
   const cur = photos.find((p) => p.path === selected) ?? photos[0];
+  // The scope follows the scene filter, and can also be switched here: "scene" steps through whole scenes instead of bursts.
+  const [scope, setScope] = useState(scopeProp);
+  useEffect(() => setScope(scopeProp), [scopeProp]);
+  const key = useCallback((p: Photo) => (scope === "scene" ? p.scene : p.group), [scope]);
 
   const members = useMemo(() => {
     const m = new Map<number, Photo[]>();
-    for (const p of all) { const g = m.get(p.group); if (g) g.push(p); else m.set(p.group, [p]); }
+    for (const p of all) { const k = key(p); const g = m.get(k); if (g) g.push(p); else m.set(k, [p]); }
     return m;
-  }, [all]);
+  }, [all, key]);
   const groups = useMemo(() => {
     const ids: number[] = [];
-    for (const p of photos) if ((members.get(p.group)?.length ?? 0) > 1 && !ids.includes(p.group)) ids.push(p.group);
+    for (const p of photos) { const k = key(p); if ((members.get(k)?.length ?? 0) > 1 && !ids.includes(k)) ids.push(k); }
     return ids;
-  }, [photos, members]);
-  const gi = cur ? groups.indexOf(cur.group) : -1;
+  }, [photos, members, key]);
+  const gi = cur ? groups.indexOf(key(cur)) : -1;
   const ranked = useCallback((id: number) => [...(members.get(id) ?? [])].sort((a, b) => b.score - a.score), [members]);
   // Base photo (the selected one) plus challengers from the same group, best first. Two side by side is the default because it gives each
   // photo the most room; 3 and 4 are one click away.
@@ -110,7 +140,7 @@ export default function Compare({ photos, all, selected, decisions, onSelect, on
   const pickCount = (n: number) => { setCount(n); try { localStorage.setItem("fg.cmpn", String(n)); } catch { /* storage unavailable */ } };
   // The photos on screen live in fixed slots and nothing about them changes when you touch one. Only the last slot (the challenger)
   // is ever replaced, by the rail or by the up/down keys. There is no notion of a selected photo here: each photo has its own buttons.
-  const groupPhotos = useMemo(() => (gi >= 0 && cur ? ranked(cur.group) : []), [gi, cur?.group, ranked]); // eslint-disable-line react-hooks/exhaustive-deps
+  const groupPhotos = useMemo(() => (gi >= 0 && cur ? ranked(key(cur)) : []), [gi, cur?.group, cur?.scene, ranked, key]); // eslint-disable-line react-hooks/exhaustive-deps
   const shownN = Math.min(count, groupPhotos.length);
   const [slots, setSlots] = useState<string[]>([]);
   useEffect(() => {
@@ -121,7 +151,7 @@ export default function Compare({ photos, all, selected, decisions, onSelect, on
       if (cur && ids.includes(cur.path) && !next.includes(cur.path)) next[next.length - 1] = cur.path;
       return next.length === prev.length && next.every((x, i) => x === prev[i]) ? prev : next;
     });
-  }, [cur?.path, cur?.group, shownN, groupPhotos]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [cur?.path, cur?.group, cur?.scene, shownN, groupPhotos]); // eslint-disable-line react-hooks/exhaustive-deps
   const set = useMemo(() => {
     const byPath = new Map(groupPhotos.map((p) => [p.path, p]));
     const list = slots.map((id) => byPath.get(id)).filter((p): p is Photo => !!p);
@@ -166,7 +196,7 @@ export default function Compare({ photos, all, selected, decisions, onSelect, on
     viewRef.current = n;
     setView(n);
   }, []);
-  useEffect(() => { apply(FIT); }, [cur?.group, apply]);
+  useEffect(() => { apply(FIT); }, [cur?.group, cur?.scene, apply]);
 
   const zoomAt = useCallback((e: { clientX: number; clientY: number; currentTarget: HTMLElement }, factor: number, absolute?: number) => {
     const r = e.currentTarget.getBoundingClientRect();
@@ -247,13 +277,21 @@ export default function Compare({ photos, all, selected, decisions, onSelect, on
   }, [set, box]);
 
   if (!cur) return null;
+  const scopeToggle = (
+    <div className="cmp2-count wide" role="group" aria-label={t("cmp.scope")}>
+      <button aria-pressed={scope === "group"} onClick={() => setScope("group")}>{t("cmp.byGroup")}</button>
+      <button aria-pressed={scope === "scene"} onClick={() => setScope("scene")}>{t("cmp.byScene")}</button>
+    </div>
+  );
+
   if (!groups.length || gi < 0) {
     return (
       <div className="cmp-empty">
-        <img src={convertFileSrc(cur.thumb)} alt="" draggable={false} />
+        <img src={thumbSrc(cur)} alt="" draggable={false} />
         <h3>{t("cmp.emptyTitle")}</h3>
         <p className="ash">{t("cmp.emptyBody")}</p>
         {groups.length > 0 && <button className="btn primary" onClick={() => jump(1)}>{t("cmp.jump")}</button>}
+        {scopeToggle}
       </div>
     );
   }
@@ -273,7 +311,7 @@ export default function Compare({ photos, all, selected, decisions, onSelect, on
       </button>
       <div className="cmp2-stage" ref={stage} style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${Math.ceil(set.length / cols)}, minmax(0, 1fr))` }}>
         {set.map((p, i) => (
-          <Cell key={p.path} p={p} index={i} st={decisions.get(p.path)?.state ?? "review"} view={view} dragging={dragging || !glide} metrics={metrics} set={set} count={set.length}
+          <Cell key={p.path} p={p} index={i} st={decisions.get(p.path)?.state ?? "review"} view={view} dragging={dragging || !glide} metrics={metrics} set={set} count={set.length} personFilter={personFilter} onPerson={onPerson}
             onDecide={(s) => onDecide(p.path, s)} onOpen={() => onOpen(p.path)} onHover={(path) => { hover.current = path; }}
             zoomAt={zoomAt} pan={pan} endPan={endPan} resetOrZoom={resetOrZoom} />
         ))}
@@ -282,7 +320,8 @@ export default function Compare({ photos, all, selected, decisions, onSelect, on
         <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M6 3l5 5-5 5" /></svg>
       </button>
       <div className="cmp2-bottom">
-        <span className="mono">{t("cmp.groupOf", { i: gi + 1, n: groups.length })}</span>
+        {scopeToggle}
+        <span className="mono">{scope === "scene" ? t("cmp.sceneOf", { n: groupPhotos.length }) : t("cmp.groupOf", { i: gi + 1, n: groups.length })}</span>
         {groupPhotos.length > 2 && (
           <div className="cmp2-count" role="group" aria-label={t("cmp.count")}>
             {[2, 3, 4].filter((n) => n <= groupPhotos.length).map((n) => (
@@ -294,7 +333,7 @@ export default function Compare({ photos, all, selected, decisions, onSelect, on
           <div className="cmp2-rail" aria-label={t("cmp.rail")}>
             {candidates.map((p) => (
               <button key={p.path} onClick={() => challenge(p.path)} data-tip={`${p.name} · ${pct(p.score)}`}>
-                <img src={convertFileSrc(p.thumb)} alt="" draggable={false} />
+                <img src={thumbSrc(p)} alt="" draggable={false} />
               </button>
             ))}
           </div>

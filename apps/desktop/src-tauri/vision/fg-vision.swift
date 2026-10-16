@@ -47,6 +47,28 @@ func analyze(_ url: URL) throws -> [String: Any] {
         let b = obs.boundingBox
         eyeBoxes.append([Double(b.origin.x), Double(1 - b.origin.y - b.height), Double(b.width), Double(b.height)])
     }
+    // Every face with a full set of landmarks, for identity matching: its box plus five points (left eye, right eye,
+    // nose, left mouth corner, right mouth corner, "left" meaning left *in the picture*), all top-left-origin and
+    // normalised to the image. 14 numbers per face: x, y, w, h, then the five (x, y) pairs.
+    func centre(_ pts: [CGPoint]) -> CGPoint {
+        CGPoint(x: pts.map { $0.x }.reduce(0, +) / CGFloat(pts.count), y: pts.map { $0.y }.reduce(0, +) / CGFloat(pts.count))
+    }
+    var faceMarks: [[Double]] = []
+    for obs in marks.results ?? [] {
+        guard let lm = obs.landmarks, let le = lm.leftEye, let re = lm.rightEye, let nose = lm.nose, let lips = lm.outerLips,
+              le.pointCount > 0, re.pointCount > 0, nose.pointCount > 0, lips.pointCount > 1 else { continue }
+        let leP = le.pointsInImage(imageSize: size), reP = re.pointsInImage(imageSize: size)
+        let a = centre(leP), b = centre(reP)
+        let (eyeL, eyeR) = a.x <= b.x ? (a, b) : (b, a)
+        let n = centre(nose.pointsInImage(imageSize: size))
+        let lp = lips.pointsInImage(imageSize: size)
+        guard let mL = lp.min(by: { $0.x < $1.x }), let mR = lp.max(by: { $0.x < $1.x }) else { continue }
+        func p(_ c: CGPoint) -> [Double] { [Double(c.x / size.width), Double(1 - c.y / size.height)] }
+        let bb = obs.boundingBox
+        var row: [Double] = [Double(bb.origin.x), Double(1 - bb.origin.y - bb.height), Double(bb.width), Double(bb.height)]
+        for c in [eyeL, eyeR, n, mL, mR] { row.append(contentsOf: p(c)) }
+        faceMarks.append(row)
+    }
     return [
         "ok": true,
         "aesthetic": Double(a?.overallScore ?? 0),
@@ -54,6 +76,7 @@ func analyze(_ url: URL) throws -> [String: Any] {
         "faces": (face.results ?? []).compactMap { $0.faceCaptureQuality }.map { Double($0) },
         "eyes": eyes,
         "eyeBoxes": eyeBoxes,
+        "faceMarks": faceMarks,
     ]
 }
 

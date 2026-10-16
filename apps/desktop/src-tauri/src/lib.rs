@@ -1,5 +1,15 @@
 mod analyze;
 mod cache;
+mod clipgpu;
+mod decide;
+mod hdrview;
+mod imageio;
+mod media;
+mod scratch;
+mod scene_vocab;
+mod florence;
+mod translate;
+mod faces;
 mod prefs;
 pub mod seal;
 mod scorer;
@@ -12,7 +22,7 @@ mod scoring;
 mod vision;
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use analyze::Photo;
@@ -72,6 +82,18 @@ struct AppState {
     prefs: Mutex<prefs::Styles>,
     /// Loaded once, on first use: the eye-openness models are a few MB each, not worth reopening per scan.
     mediapipe_eyes: Mutex<Option<std::sync::Arc<mediapipe::MediapipeEyes>>>,
+    /// Loaded once, on first use: the face-recognition network is tens of MB.
+    face_embedder: Mutex<Option<std::sync::Arc<faces::FaceEmbedder>>>,
+    /// The last project's photos, kept so `decide_photos` can re-run keep/review/reject on a plain override change
+    /// without the whole (possibly large) list crossing the IPC boundary again.
+    last_photos: Mutex<Vec<Photo>>,
+    /// Loaded once, on first use: the scene-description model (a few hundred MB) and the English-to-Chinese one.
+    captioner: Mutex<Option<std::sync::Arc<florence::Captioner>>>,
+    translator: Mutex<Option<std::sync::Arc<translate::Translator>>>,
+    /// The English sentence for each photo already described (keyed by its thumbnail), kept in memory and on disk.
+    scene_sentences: Mutex<Option<std::collections::HashMap<String, String>>>,
+    /// Bumped by every request to describe scenes, so an older one stops as soon as a newer one arrives.
+    scene_job: AtomicU64,
 }
 
 fn data_dir(app: &AppHandle) -> PathBuf {
@@ -93,6 +115,19 @@ fn mediapipe_eyes(app: &AppHandle, model_dir: &Path) -> Option<std::sync::Arc<me
         match mediapipe::MediapipeEyes::load(model_dir) {
             Ok(m) => *guard = Some(std::sync::Arc::new(m)),
             Err(e) => eprintln!("MediaPipe eyes disabled: {e}"),
+        }
+    }
+    guard.clone()
+}
+
+/// The face-recognition network, loaded once and kept: `None` when it has not been downloaded or failed to load.
+fn face_embedder(app: &AppHandle, model_dir: &Path) -> Option<std::sync::Arc<faces::FaceEmbedder>> {
+    let st = app.state::<AppState>();
+    let mut guard = st.face_embedder.lock().unwrap();
+    if guard.is_none() && faces::available(model_dir) {
+        match faces::FaceEmbedder::load(model_dir) {
+            Ok(m) => *guard = Some(std::sync::Arc::new(m)),
+            Err(e) => eprintln!("face recognition disabled: {e}"),
         }
     }
     guard.clone()
@@ -146,6 +181,17 @@ fn models_dir(app: &AppHandle) -> PathBuf {
     downloaded_models_dir(app)
 }
 
+fn image_bin(app: &AppHandle) -> PathBuf {
+    let bundled = app.path().resource_dir().map(|d| d.join("bin/fg-image")).unwrap_or_default();
+    #[cfg(debug_assertions)]
+    {
+        if !bundled.exists() {
+            return PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("bin/fg-image");
+        }
+    }
+    bundled
+}
+
 fn vision_bin(app: &AppHandle) -> PathBuf {
     let bundled = app.path().resource_dir().map(|d| d.join("bin/fg-vision")).unwrap_or_default();
     #[cfg(debug_assertions)]
@@ -159,6 +205,9 @@ fn vision_bin(app: &AppHandle) -> PathBuf {
 
 fn oriented_dims(p: &Path) -> Option<(u32, u32)> {
     use image::metadata::Orientation as O;
+    if !imageio::is_native(p) {
+        return imageio::info(p, false).map(|i| (i.w, i.h));
+    }
     use image::ImageDecoder;
     let reader = image::ImageReader::open(p).ok()?.with_guessed_format().ok()?;
     let mut dec = reader.into_decoder().ok()?;
@@ -179,7 +228,7 @@ async fn probe_folder(app: AppHandle, dirs: Vec<String>, compute: Option<String>
         let cached: Vec<bool> = with_cache(&app, |c| {
             files
                 .iter()
-                .map(|p| cache::file_key(p).map_or(false, |(sz, mt)| c.get(&p.to_string_lossy(), sz, mt, &tag).is_some()))
+                .map(|p| cache::file_key(p).map_or(false, |(sz, mt)| c.has(&p.to_string_lossy(), sz, mt, &tag)))
                 .collect()
         });
         let out: Vec<ProbeFile> = files
@@ -214,6 +263,7 @@ async fn scan_project(app: AppHandle, dirs: Vec<String>, compute: Option<String>
     let vision_bin = vision_bin(&app);
     let tag = scorer::analysis_tag(scorer::resolve(&model_dir, !cpu_only, want));
     let mp = if eye_method == analyze::EyeMethod::Mediapipe { mediapipe_eyes(&app, &model_dir) } else { None };
+    let fe = face_embedder(&app, &model_dir);
 
     tauri::async_runtime::spawn_blocking(move || {
         let files = list_all(&dirs);
@@ -236,8 +286,9 @@ async fn scan_project(app: AppHandle, dirs: Vec<String>, compute: Option<String>
         let done = AtomicUsize::new(hits.len());
         if !quiet {
             let _ = app.emit("scan-progress", Progress { done: hits.len(), total });
-            for p in &hits {
-                let _ = app.emit("scan-photo", p);
+            // the photos that are already known go over in batches: one event each would flood the page on a big project
+            for chunk in hits.chunks(250) {
+                let _ = app.emit("scan-photos", chunk);
             }
         }
 
@@ -260,6 +311,19 @@ async fn scan_project(app: AppHandle, dirs: Vec<String>, compute: Option<String>
                     },
                 );
             }
+            // What has been analysed is saved to the cache as it goes (in batches), not only at the end: a big project takes a long time, and
+            // closing the app part-way used to lose all of it.
+            let pending: Mutex<(Vec<Photo>, std::time::Instant)> = Mutex::new((Vec::new(), std::time::Instant::now()));
+            let save_batch = |batch: &[Photo]| {
+                with_cache(&app, |c| {
+                    for p in batch {
+                        if let Some((sz, mt)) = cache::file_key(Path::new(&p.path)) {
+                            c.put(sz, mt, &tag, p);
+                        }
+                    }
+                    c.save();
+                });
+            };
             fresh = jobs
                 .par_iter()
                 .filter_map(|(p, _, _)| {
@@ -273,7 +337,7 @@ async fn scan_project(app: AppHandle, dirs: Vec<String>, compute: Option<String>
                             Stage { path: &key, stage, pct, thumb: thumb.map(|t| t.0), width: thumb.map(|t| t.1), height: thumb.map(|t| t.2) },
                         );
                     };
-                    let r = analyze::analyze(p, &cache_dir, scorer.as_ref().map(|s| s as &dyn scorer::AiScorer), vision.as_ref(), eye_method, mp.as_deref(), &on_stage);
+                    let r = analyze::analyze(p, &cache_dir, scorer.as_ref().map(|s| s as &dyn scorer::AiScorer), vision.as_ref(), eye_method, mp.as_deref(), fe.as_deref(), &on_stage);
                     let d = done.fetch_add(1, Ordering::Relaxed) + 1;
                     if !quiet {
                         if let Ok(photo) = &r {
@@ -281,17 +345,27 @@ async fn scan_project(app: AppHandle, dirs: Vec<String>, compute: Option<String>
                         }
                         let _ = app.emit("scan-progress", Progress { done: d, total });
                     }
+                    if let Ok(photo) = &r {
+                        // a batch is written once there are 100 and at least half a minute has passed (writing the file takes longer the bigger the project)
+                        let batch = {
+                            let mut g = pending.lock().unwrap_or_else(|e| e.into_inner());
+                            g.0.push(photo.clone());
+                            if g.0.len() >= 100 && g.1.elapsed() >= std::time::Duration::from_secs(30) {
+                                g.1 = std::time::Instant::now();
+                                Some(std::mem::take(&mut g.0))
+                            } else {
+                                None
+                            }
+                        };
+                        if let Some(batch) = batch {
+                            save_batch(&batch);
+                        }
+                    }
                     r.map_err(|e| eprintln!("skip: {e}")).ok()
                 })
                 .collect();
-            with_cache(&app, |c| {
-                for p in &fresh {
-                    if let Some((sz, mt)) = cache::file_key(Path::new(&p.path)) {
-                        c.put(sz, mt, &tag, p);
-                    }
-                }
-                c.save();
-            });
+            let rest = std::mem::take(&mut pending.lock().unwrap_or_else(|e| e.into_inner()).0);
+            save_batch(&rest);
         }
 
         // A photo missing eyes_open (analysed before that signal existed), or whose cached value came from the other
@@ -323,15 +397,97 @@ async fn scan_project(app: AppHandle, dirs: Vec<String>, compute: Option<String>
                 }
             }
         }
+        // Photos analysed before the recognition model was there get their faces looked at now, from the saved analysis copy.
+        // This is a minute of Vision calls for a big project, so it gets a pool of its own (one thread per Vision process):
+        // on the shared pool it would starve everything else that needs a worker, such as reading a folder.
+        if let (Some(f), Ok(pool)) = (fe.as_deref(), rayon::ThreadPoolBuilder::new().num_threads(2).build()) {
+            let total = hits.iter().filter(|p| !p.faces_done).count();
+            if total > 0 {
+                if let Some(v) = vision::Vision::start(&vision_bin, 2, cpu_only) {
+                    let counter = AtomicUsize::new(0);
+                    let found: Vec<(usize, Vec<[f32; 4]>, Vec<Vec<f32>>)> = pool.install(|| {
+                        hits.par_iter()
+                            .enumerate()
+                            .filter(|(_, p)| !p.faces_done)
+                            .filter_map(|(i, p)| {
+                                let r = analyze::measure_faces(Path::new(&p.path), &cache_dir, &v, f).map(|(b, e)| (i, b, e));
+                                let _ = app.emit("people-progress", Progress { done: counter.fetch_add(1, Ordering::Relaxed) + 1, total });
+                                r
+                            })
+                            .collect()
+                    });
+                    if !found.is_empty() {
+                        let changed: Vec<usize> = found.iter().map(|(i, _, _)| *i).collect();
+                        for (i, boxes, embs) in found {
+                            hits[i].face_boxes = boxes;
+                            hits[i].face_embs = embs;
+                            hits[i].faces_done = true;
+                        }
+                        with_cache(&app, |c| {
+                            for i in &changed {
+                                if let Some((sz, mt)) = cache::file_key(Path::new(&hits[*i].path)) {
+                                    c.put(sz, mt, &tag, &hits[*i]);
+                                }
+                            }
+                            c.save();
+                        });
+                    }
+                }
+            }
+        }
+        // Photos analysed before HDR and motion were looked at: their HDR thumbnail and motion clip are made now (the helper runs one
+        // process per photo, so this gets a pool of its own, like the faces above).
+        if let Ok(pool) = rayon::ThreadPoolBuilder::new().num_threads(4).build() {
+            let total = hits.iter().filter(|p| !p.media_done).count();
+            if total > 0 {
+                let counter = AtomicUsize::new(0);
+                let found: Vec<(usize, media::Media)> = pool.install(|| {
+                    hits.par_iter()
+                        .enumerate()
+                        .filter(|(_, p)| !p.media_done)
+                        .map(|(i, p)| {
+                            let m = media::probe(Path::new(&p.path), &cache_dir);
+                            let _ = app.emit("media-progress", Progress { done: counter.fetch_add(1, Ordering::Relaxed) + 1, total });
+                            (i, m)
+                        })
+                        .collect()
+                });
+                let changed: Vec<usize> = found.iter().map(|(i, _)| *i).collect();
+                for (i, m) in found {
+                    hits[i].hdr = m.hdr;
+                    hits[i].motion = m.motion;
+                    hits[i].media_done = true;
+                }
+                with_cache(&app, |c| {
+                    for i in &changed {
+                        if let Some((sz, mt)) = cache::file_key(Path::new(&hits[*i].path)) {
+                            c.put(sz, mt, &tag, &hits[*i]);
+                        }
+                    }
+                    c.save();
+                });
+            }
+        }
         let mut photos = hits;
         photos.extend(fresh);
         photos.sort_by(|a, b| a.path.cmp(&b.path));
         let prefs = if learn { Some(app.state::<AppState>().prefs.lock().unwrap().get(style.as_deref()).prefs.clone()) } else { None };
         analyze::group_and_score(&mut photos, prefs.as_ref().filter(|p| p.active()), eye_method);
+        *app.state::<AppState>().last_photos.lock().unwrap() = photos.clone();
         Ok(photos)
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Keep / review / reject for the project last returned by `scan_project`, re-run on the backend so the ranking
+/// logic never ships as readable front-end JS. Only the small bits that can change between calls (the keep ratio,
+/// and any photos the user overrode by hand) cross the IPC boundary; the photos themselves stay cached in `AppState`.
+#[tauri::command]
+fn decide_photos(app: AppHandle, keep_ratio: f32, pick_mode: Option<String>, one_per_group: Option<bool>, overrides: std::collections::HashMap<String, String>) -> std::collections::HashMap<String, decide::Decision> {
+    let st = app.state::<AppState>();
+    let photos = st.last_photos.lock().unwrap();
+    decide::decide(&photos, keep_ratio, decide::PickMode::parse(pick_mode.as_deref()), one_per_group.unwrap_or(false), &overrides)
 }
 
 #[derive(Serialize)]
@@ -419,11 +575,17 @@ async fn trash_photos(paths: Vec<String>) -> Result<TrashResult, String> {
 
 /// Path of a large cached preview for the viewer (created on first request).
 #[tauri::command]
-async fn large_preview(app: AppHandle, path: String) -> Result<String, String> {
+async fn large_preview(app: AppHandle, path: String, full: Option<bool>) -> Result<String, String> {
     let dir = thumbs_dir(&app)?.join("large");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
         let src = Path::new(&path);
+        // The original file itself whenever the web view can show it: that is the only way to see what the camera recorded (HDR, wide
+        // colour, every pixel). Only formats it cannot show (camera RAW) or enormous files get a rendered preview.
+        // Only the full-size viewer gets it (decoding a 15-30 MB original is too heavy for the several previews on screen in compare or single).
+        if full.unwrap_or(false) && imageio::web_can_show(src) && std::fs::metadata(src).map_or(false, |m| m.len() < 120 * 1024 * 1024) {
+            return Ok(path);
+        }
         let out = analyze::cache_name(src, ".l.jpg", &dir);
         if !out.exists() {
             let tmp = out.with_extension("tmp");
@@ -432,6 +594,48 @@ async fn large_preview(app: AppHandle, path: String) -> Result<String, String> {
         }
         Ok(out.to_string_lossy().into_owned())
     }).await.map_err(|e| e.to_string())?
+}
+
+/// The sharp part of a photo for the full-size viewer when it is zoomed: the region (fractions of the photo, top-left origin) at up to `out_w`
+/// pixels, as a JPEG next to the thumbnails. Keyed by region, so going back to a place already seen is instant.
+#[tauri::command]
+async fn photo_detail(app: AppHandle, path: String, x: f64, y: f64, w: f64, h: f64, out_w: u32) -> Result<String, String> {
+    let dir = thumbs_dir(&app)?.join("detail");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let src = Path::new(&path);
+        let tag = format!(".d{:.3}-{:.3}-{:.3}-{:.3}-{}.jpg", x, y, w, h, out_w);
+        let out = analyze::cache_name(src, &tag, &dir);
+        if !out.exists() {
+            imageio::crop(src, &out, [x, y, w, h], out_w)?;
+            // every new crop is another ~2 MB: look at the folder's size now and then
+            static CROPS: AtomicU64 = AtomicU64::new(0);
+            if CROPS.fetch_add(1, Ordering::Relaxed) % 24 == 23 {
+                if let Some(thumbs) = dir.parent() {
+                    scratch::prune_detail(thumbs);
+                }
+            }
+        }
+        Ok(out.to_string_lossy().into_owned())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// The video of a motion photo, written next to the thumbnails (once) so the viewer can play it.
+#[tauri::command]
+async fn motion_clip(app: AppHandle, path: String) -> Result<String, String> {
+    let dir = thumbs_dir(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let src = Path::new(&path);
+        let out = analyze::cache_name(src, ".m.mp4", &dir);
+        if !out.exists() {
+            media::extract_motion(src, &out)?;
+        }
+        Ok(out.to_string_lossy().into_owned())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[derive(Serialize, Default)]
@@ -609,12 +813,155 @@ async fn search_photos(app: AppHandle, dirs: Vec<String>, query: String) -> Resu
     .map_err(|e| e.to_string())?
 }
 
+#[derive(serde::Deserialize)]
+struct SceneReq {
+    id: usize,
+    /// The scene's photos, best first.
+    paths: Vec<String>,
+}
+#[derive(Serialize, Clone)]
+struct SceneText {
+    id: usize,
+    text: String,
+}
+#[derive(Serialize, Clone)]
+struct SceneProgress {
+    done: usize,
+    total: usize,
+}
+
+/// Names each scene of a finished project. Two steps: first a large vocabulary of everyday and travel places (see scene_vocab.rs),
+/// matched against a few of the scene's photos, which is quick and needs no download; then, for the scenes it could not name and only
+/// if `caption` is set, a sentence written by the captioning model about the place (the people painted out first), in Chinese when
+/// `zh`. Results arrive one by one as `scene-text` events; a newer call cancels an older one. Written sentences are remembered on disk.
+#[tauri::command]
+async fn scene_text(app: AppHandle, scenes: Vec<SceneReq>, zh: bool, caption: bool) -> Result<(), String> {
+    let job = app.state::<AppState>().scene_job.fetch_add(1, Ordering::SeqCst) + 1;
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = models_dir(&app);
+        let st = app.state::<AppState>();
+        let current = || st.scene_job.load(Ordering::SeqCst) == job;
+
+        // 1. the vocabulary: the mean ViT-B/32 embedding of up to six photos of each scene
+        const PER_SCENE: usize = 6;
+        let known: Vec<Vec<Option<Vec<f32>>>> = with_cache(&app, |c| scenes.iter().map(|s| s.paths.iter().take(PER_SCENE).map(|k| c.semantic(k)).collect()).collect());
+        let thumbs: Vec<Vec<Option<String>>> = with_cache(&app, |c| {
+            scenes.iter().zip(&known).map(|(s, kn)| s.paths.iter().take(PER_SCENE).zip(kn).map(|(k, v)| if v.is_some() { None } else { c.photo(k).map(|p| p.thumb.clone()) }).collect()).collect()
+        });
+        let scorer = if thumbs.iter().flatten().any(|t| t.is_some()) { scorer::ClipScorer::load(&dir, true, scorer::Quality::Fast).ok() } else { None };
+        let mut unnamed: Vec<&SceneReq> = Vec::new();
+        let mut names: Vec<SceneText> = Vec::new();
+        for (n, scene) in scenes.iter().enumerate() {
+            if !current() { return Ok(()); }
+            let mut mean = vec![0f32; scene_vocab::DIM];
+            let mut count = 0;
+            for (v, t) in known[n].iter().zip(&thumbs[n]) {
+                let vec = match (v, t, scorer.as_ref()) {
+                    (Some(v), _, _) => Some(v.clone()),
+                    (None, Some(t), Some(s)) => image::open(t).ok().and_then(|img| <scorer::ClipScorer as scorer::AiScorer>::analyze(s, &img).ok()).map(|o| o.embedding),
+                    _ => None,
+                };
+                if let Some(v) = vec.filter(|v| v.len() == scene_vocab::DIM) {
+                    mean.iter_mut().zip(&v).for_each(|(a, b)| *a += b);
+                    count += 1;
+                }
+            }
+            let named = (count > 0).then(|| {
+                let norm = mean.iter().map(|x| x * x).sum::<f32>().sqrt().max(1e-9);
+                mean.iter_mut().for_each(|x| *x /= norm);
+                scene_vocab::name(&mean)
+            }).flatten();
+            match named {
+                Some(name) => names.push(SceneText { id: scene.id, text: if zh { name.zh.to_string() } else { name.en } }),
+                None => unnamed.push(scene),
+            }
+        }
+        // one event for all of them: a project can have a thousand scenes
+        if !names.is_empty() && current() { let _ = app.emit("scene-texts", &names); }
+        let total = unnamed.len();
+        let _ = app.emit("scene-text-progress", SceneProgress { done: 0, total });
+        if !caption || total == 0 { return Ok(()); }
+
+        // 2. the scenes the vocabulary could not name: a sentence from the captioning model
+        let captioner = {
+            let mut g = st.captioner.lock().unwrap();
+            if g.is_none() {
+                if !florence::Captioner::available(&dir) { return Ok(()); }
+                *g = Some(std::sync::Arc::new(florence::Captioner::load(&dir)?));
+            }
+            g.clone().unwrap()
+        };
+        let translator = if zh {
+            let mut g = st.translator.lock().unwrap();
+            if g.is_none() && translate::Translator::available(&dir) {
+                *g = translate::Translator::load(&dir).ok().map(std::sync::Arc::new);
+            }
+            g.clone()
+        } else {
+            None
+        };
+        let store = data_dir(&app).join("scene-sentences.json");
+        {
+            let mut g = st.scene_sentences.lock().unwrap();
+            if g.is_none() {
+                *g = Some(std::fs::read(&store).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default());
+            }
+        }
+        let save = || { if let Some(m) = st.scene_sentences.lock().unwrap().as_ref() { let _ = std::fs::write(&store, serde_json::to_vec(m).unwrap_or_default()); } };
+        let mut fresh = 0;
+        for (n, scene) in unnamed.iter().enumerate() {
+            if !current() { break; }
+            // the photo with the fewest faces among the best few: the one with the most place in it
+            let pick = with_cache(&app, |c| scene.paths.iter().take(4).filter_map(|p| c.photo(p)).min_by_key(|p| p.face_count).map(|p| p.thumb.clone()));
+            if let Some(thumb) = pick {
+                let known = st.scene_sentences.lock().unwrap().as_ref().and_then(|m| m.get(&thumb).cloned());
+                let sentence = match known {
+                    Some(s) => Some(s),
+                    None => match image::open(&thumb).map_err(|e| e.to_string()).and_then(|img| captioner.scene(&img)) {
+                        Ok(s) if !s.is_empty() => {
+                            st.scene_sentences.lock().unwrap().as_mut().unwrap().insert(thumb.clone(), s.clone());
+                            fresh += 1;
+                            Some(s)
+                        }
+                        _ => None,
+                    },
+                };
+                if let Some(s) = sentence {
+                    let s = florence::short(&s);
+                    if florence::place_like(&s) {
+                        let text = match &translator { Some(t) => t.zh(&s).unwrap_or(s), None => s };
+                        let _ = app.emit("scene-text", SceneText { id: scene.id, text });
+                    }
+                }
+            }
+            let _ = app.emit("scene-text-progress", SceneProgress { done: n + 1, total });
+            if fresh > 0 && fresh % 8 == 0 { save(); }
+        }
+        save();
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 // ---------------------------------------------------------------- model packs (downloaded on demand)
 
 #[derive(Default)]
 struct Downloads {
     cancel: std::sync::atomic::AtomicBool,
     busy: Mutex<Option<String>>,
+}
+
+/// What the machine is, so that the app can pick the analysis that suits it without asking.
+#[derive(Serialize)]
+struct Machine {
+    memory_gb: u64,
+    cores: usize,
+}
+
+#[tauri::command]
+fn machine_info() -> Machine {
+    Machine { memory_gb: scorer::physical_memory() >> 30, cores: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1) }
 }
 
 #[tauri::command]
@@ -927,16 +1274,21 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let dir = data_dir(app.handle());
+            imageio::init(image_bin(app.handle()));
             app.manage(Downloads::default());
-            app.manage(AppState { text: Mutex::new(None), cache: Mutex::new(None), prefs: Mutex::new(prefs::Styles::load(&dir)), mediapipe_eyes: Mutex::new(None) });
+            app.manage(AppState { text: Mutex::new(None), cache: Mutex::new(None), prefs: Mutex::new(prefs::Styles::load(&dir)), mediapipe_eyes: Mutex::new(None), face_embedder: Mutex::new(None), last_photos: Mutex::new(Vec::new()), captioner: Mutex::new(None), translator: Mutex::new(None), scene_sentences: Mutex::new(None), scene_job: AtomicU64::new(0) });
             let menu = build_menu(app.handle(), "en")?;
             app.set_menu(menu)?;
+            // scratch files (larger previews, zoom crops, motion clips) are kept within bounds; done in the background
+            if let Ok(thumbs) = thumbs_dir(app.handle()) {
+                std::thread::spawn(move || scratch::prune(&thumbs));
+            }
             Ok(())
         })
         .on_menu_event(|app, event| {
             let _ = app.emit("menu", event.id().0.clone());
         })
-        .invoke_handler(tauri::generate_handler![probe_folder, scan_project, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, trash_photos, reveal, preview_thumbs, photo_info, large_preview, search_status, search_index, search_photos, packs_status, pack_size, pack_download, pack_cancel, pack_remove])
+        .invoke_handler(tauri::generate_handler![probe_folder, scan_project, decide_photos, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, trash_photos, reveal, preview_thumbs, photo_info, large_preview, motion_clip, hdrview::hdr_overlay_supported, hdrview::hdr_overlay_show, hdrview::hdr_overlay_move, hdrview::hdr_overlay_hide, hdrview::hdr_overlay_detail, hdrview::hdr_overlay_detail_hide, photo_detail, machine_info, search_status, search_index, search_photos, scene_text, packs_status, pack_size, pack_download, pack_cancel, pack_remove])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

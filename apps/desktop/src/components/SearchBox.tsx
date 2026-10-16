@@ -7,9 +7,11 @@ import { SPRING } from "../motion";
  * A search field that stays a small button until it is needed, then opens into an input (⌘F). While the search index is still being
  * built a thin ring fills around the icon, so nobody wonders why a search finds only part of a project.
  */
-export default function SearchBox({ value, onChange, inputRef, placeholder, progress, count, wide = false }: {
+export default function SearchBox({ value, onChange, inputRef, placeholder, progress, count, wide = false, onActivate }: {
   value: string; onChange: (v: string) => void; inputRef: RefObject<HTMLInputElement | null>;
   placeholder: string; progress: number | null; count?: number | null; wide?: boolean;
+  /** Called when the field is entered: the search models are fetched then, if they are not here yet. */
+  onActivate?: () => void;
 }) {
   const { t } = useTranslation();
   const open = value.length > 0;
@@ -27,7 +29,7 @@ export default function SearchBox({ value, onChange, inputRef, placeholder, prog
           </svg>
         )}
       </span>
-      <input ref={inputRef} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} aria-label={t("search.label")} spellCheck={false} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
+      <input ref={inputRef} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} aria-label={t("search.label")} spellCheck={false} onFocus={() => { setFocused(true); onActivate?.(); }} onBlur={() => setFocused(false)}
         onKeyDown={(e) => { if (e.key === "Escape") { onChange(""); (e.target as HTMLInputElement).blur(); } e.stopPropagation(); }} />
       <AnimatePresence>
         {open && (

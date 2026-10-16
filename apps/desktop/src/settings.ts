@@ -5,7 +5,13 @@ export type Compute = "auto" | "cpu";
 export type Theme = "system" | "light" | "dark";
 export type Quality = "fast" | "high" | "ultra";
 export type EyeMethod = "vision" | "mediapipe";
-export type Settings = { compute: Compute; theme: Theme; learn: boolean; quality: Quality; search: boolean; customStyles: boolean; eyeMethod: EyeMethod };
+/**
+ * `compute`, `quality`, `search`, `customStyles` and `eyeMethod` used to be choices on the settings page. The app decides those itself now
+ * (strategy.ts); they stay here only so that what an earlier version stored keeps its meaning. `tier` is the analysis the app settled on:
+ * one for the whole app (the learned taste, search and grouping all compare embeddings, which only agree when one model made them), null until
+ * the first analysis.
+ */
+export type Settings = { compute: Compute; theme: Theme; learn: boolean; quality: Quality; search: boolean; customStyles: boolean; eyeMethod: EyeMethod; tier: Quality | null; /** counts the times a better model was chosen on purpose (the project in view is looked at again then) */ tierRev: number };
 /** What the last analysis actually ran on, reported by the backend. */
 export type ScanInfo = { cpu_only: boolean; clip: string | null; model: string | null; vision: boolean; cores: number };
 
@@ -20,9 +26,16 @@ function read<T>(key: string, fallback: T): T {
 }
 function write(key: string, v: unknown) { try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* storage may be unavailable */ } }
 
-let state: Settings = read<Settings>(KEY, { compute: "auto", theme: "system", learn: true, quality: "fast", search: false, customStyles: false, eyeMethod: "vision" });
-// High quality needs acceleration, so an old combination of High + CPU-only is brought in line.
-if (state.quality !== "fast" && state.compute === "cpu") state = { ...state, compute: "auto" };
+let state: Settings = read<Settings>(KEY, { compute: "auto", theme: "system", learn: true, quality: "fast", search: false, customStyles: false, eyeMethod: "vision", tier: null, tierRev: 0 });
+// Someone who has analysed photos before keeps the model their results were made with (changing it would redo everything).
+(() => {
+  try {
+    if ("tier" in JSON.parse(localStorage.getItem(KEY) ?? "{}")) return;
+    const projects = (JSON.parse(localStorage.getItem("fg.projects") ?? "{}") as { projects?: { cover?: string[] }[] }).projects ?? [];
+    state = { ...state, tier: projects.some((p) => (p.cover?.length ?? 0) > 0) ? state.quality : null };
+    write(KEY, state);
+  } catch { /* storage may be unavailable */ }
+})();
 let info: ScanInfo | null = (() => { try { const raw = localStorage.getItem(INFO_KEY); return raw ? (JSON.parse(raw) as ScanInfo) : null; } catch { return null; } })();
 
 /** Forces light/dark on the page and on the native window (so the translucent sidebar follows too). */

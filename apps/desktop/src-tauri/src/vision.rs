@@ -19,6 +19,8 @@ pub struct VisionOut {
     /// Same faces, same order as `eyes`: `[x, y, w, h]`, top-left origin, normalised to the image handed to `analyze`.
     /// The crop a learned model (`mediapipe.rs`) looks at, when one is asked to look instead of the geometric ratio.
     pub eye_boxes: Vec<[f32; 4]>,
+    /// Every face with a full set of landmarks, for telling people apart (see `faces.rs`).
+    pub face_marks: Vec<crate::faces::FaceMark>,
 }
 
 #[derive(Deserialize)]
@@ -30,6 +32,8 @@ struct Reply {
     eyes: Option<Vec<f32>>,
     #[serde(rename = "eyeBoxes")]
     eye_boxes: Option<Vec<[f32; 4]>>,
+    #[serde(rename = "faceMarks")]
+    face_marks: Option<Vec<[f32; 14]>>,
 }
 
 struct Proc {
@@ -56,6 +60,7 @@ impl Proc {
             faces: r.faces.unwrap_or_default(),
             eyes: r.eyes.unwrap_or_default(),
             eye_boxes: r.eye_boxes.unwrap_or_default(),
+            face_marks: r.face_marks.unwrap_or_default().iter().map(crate::faces::FaceMark::from_row).collect(),
         })
     }
 }

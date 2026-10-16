@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { getSettings } from "./settings";
+import { currentTier } from "./strategy";
 
 /** One learned taste ("style"): its own labels, reference photos and model. Everything a project learns goes into the default one. */
 export type PrefsInfo = { labels: number; keeps: number; refs: number; refs_from: string; active: boolean };
@@ -23,7 +23,14 @@ const set = (list: unknown) => { if (Array.isArray(list)) { styles = list as Sty
 export async function refreshStyles() {
   try { set(await invoke<StyleInfo[]>("styles_list")); } catch { /* not running inside the app */ }
 }
-export const createStyle = async (name: string) => { try { set(await invoke("style_create", { name })); } catch { /* ignore */ } };
+/** Creates a style and returns its id (the one that was not in the list before), or null if it could not be made. */
+export const createStyle = async (name: string): Promise<string | null> => {
+  try {
+    const before = new Set(styles.map((s) => s.id));
+    set(await invoke("style_create", { name }));
+    return styles.find((s) => !before.has(s.id))?.id ?? null;
+  } catch { return null; }
+};
 export const renameStyle = async (id: string, name: string) => { try { set(await invoke("style_rename", { id, name })); } catch { /* ignore */ } };
 export const deleteStyle = async (id: string) => { try { set(await invoke("style_delete", { id })); bumpPrefsRevision(); } catch { /* ignore */ } };
 export const setDefaultStyle = async (id: string) => { try { set(await invoke("style_set_default", { id })); bumpPrefsRevision(); } catch { /* ignore */ } };
@@ -32,8 +39,7 @@ export const setDefaultStyle = async (id: string) => { try { set(await invoke("s
 export async function learnFromFolder(dir: string, style: string | undefined, onProgress: (p: number) => void): Promise<boolean> {
   const un = await listen<{ done: number; total: number }>("reference-progress", (e) => onProgress(e.payload.total ? e.payload.done / e.payload.total : 1)).catch(() => undefined);
   try {
-    const s = getSettings();
-    await invoke("learn_from_folder", { dir, style, compute: s.compute, quality: s.quality });
+    await invoke("learn_from_folder", { dir, style, compute: "auto", quality: currentTier() });
     await refreshStyles();
     bumpPrefsRevision();
     return true;

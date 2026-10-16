@@ -39,6 +39,9 @@ sha2 = "0.10"
 # Debug builds of image decoding and pixel loops are 10-50x slower; optimise them even in `tauri dev`.
 [profile.dev]
 opt-level = 2
+# Incremental builds at opt-level 2 keep ending in "_anon.*.llvm symbol(s) not found" link errors whenever a rebuild is interrupted by the
+# next file save; a full rebuild of this crate is only a little slower and never breaks.
+incremental = false
 
 [profile.dev.package."*"]
 opt-level = 3

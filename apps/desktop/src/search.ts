@@ -11,8 +11,8 @@ export const searchPhotos = (dirs: string[], query: string) => invoke<Hit[]>("se
  * Keeps the search index of some folders complete. Photos need a small vector each before they can be found; it is made in the
  * background from the thumbnails (fast, local) as soon as the folders are known, so by the time someone searches it is ready.
  */
-export function useSearchIndex(dirs: string[]) {
-  const key = dirs.join("\n");
+export function useSearchIndex(dirs: string[], rev = 0) {
+  const key = `${dirs.join("\n")}|${rev}`;
   const [status, setStatus] = useState<Status | null>(null);
   const [progress, setProgress] = useState<number | null>(null);
   const running = useRef("");

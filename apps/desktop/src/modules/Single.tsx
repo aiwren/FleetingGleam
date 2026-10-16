@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import { Star } from "../components/Tile";
 import { EASE_OUT, SPRING } from "../motion";
 import { useLarge } from "../largeSrc";
-import { Decision, Photo } from "../types";
+import { Decision, Photo, thumbSrc } from "../types";
 
 const ITEM = 68; // thumbnail width + gap
 
@@ -83,7 +83,7 @@ export default function Single({ photos, selected, decisions, onSelect, onStep, 
             <motion.div key={photo.path} className="simg" custom={dir} variants={slide} initial="enter" animate="center" exit="exit">
               <div className="sfit" style={{ ["--r" as string]: photo.width / photo.height }} onDoubleClick={() => onOpen(photo.path)} title={t("inspector.zoomHint")}>
                 <motion.div className="sinner" custom={dir} variants={inner}>
-                  <img src={convertFileSrc(photo.thumb)} alt="" draggable={false} />
+                  <img src={thumbSrc(photo)} alt="" draggable={false} />
                   {large && <img className={`hi ${full === photo.path ? "in" : ""}`} src={large} alt="" draggable={false} onLoad={() => setFull(photo.path)} />}
                 </motion.div>
                 <button className="szoom" aria-label={t("inspector.zoomLabel")} onClick={() => onOpen(photo.path)} onDoubleClick={(e) => e.stopPropagation()}>
@@ -114,7 +114,7 @@ export default function Single({ photos, selected, decisions, onSelect, onStep, 
                 const st = decisions.get(p.path)?.state;
                 return (
                   <button key={p.path} className={`sthumb ${i === idx ? "cur" : ""} ${st ?? ""}`} style={{ left: i * ITEM }} onClick={() => onSelect(p.path)}>
-                    <img src={convertFileSrc(p.thumb)} alt="" decoding="async" draggable={false} />
+                    <img src={thumbSrc(p)} alt="" decoding="async" draggable={false} />
                     {st === "keep" && <i className="sdot"><Star filled size={9} /></i>}
                   </button>
                 );

@@ -2,8 +2,7 @@ import { ReactNode } from "react";
 import { motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 import { SPRING } from "../motion";
-import { Decision, Photo, Reason, State, pct } from "../types";
-import Ticker from "./Ticker";
+import { Decision, Photo, Reason, State, pct, stars } from "../types";
 import { Star } from "./Tile";
 
 const STATES: State[] = ["keep", "review", "reject"];
@@ -31,7 +30,12 @@ export default function PhotoVerdict({ photo, decision, onDecide, reasonText, sc
   return (
     <>
       <h3 className="mono vname">{photo.name}{photo.kind && <span className="ktag">{t(`kind.${photo.kind}`)}</span>}</h3>
-      <div className="sscore mono"><Ticker value={pct(photo.score)} /><small>{t("inspector.overall")}</small>{scoreTip}</div>
+      <div className="sscore" title={`${t("inspector.overall")} ${pct(photo.score)}`}>
+        <span className="sstars" role="img" aria-label={`${t("inspector.overall")}: ${stars(photo.score)}/5`}>
+          {[0, 1, 2, 3, 4].map((i) => <Star key={i} filled={i < stars(photo.score)} size={20} />)}
+        </span>
+        {scoreTip}
+      </div>
       <div className="strio">
         {STATES.map((st, i) => (
           <button key={st} className={`sbtn ${st} ${state === st ? "on" : ""}`} onClick={() => onDecide(st)} data-tip={`${t(`state.${st}`)} · ${["P", "R", "X"][i]}`}>

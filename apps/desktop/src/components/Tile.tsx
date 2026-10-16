@@ -1,9 +1,10 @@
-import { KeyboardEvent, PointerEvent, useEffect, useRef, useState } from "react";
+import { KeyboardEvent, PointerEvent, memo, useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 import { DUR, SPRING } from "../motion";
-import { Photo, State, pct } from "../types";
+import { Photo, State, pct, thumbSrc } from "../types";
+import PhotoTags from "./PhotoTags";
 import FocusImg, { markSeen } from "./FocusImg";
 
 export type StageInfo = { stage: string; pct: number; thumb?: string; width?: number; height?: number };
@@ -18,7 +19,6 @@ type Props = {
   /** True right after an analysis: the picks are revealed one after another. */
   reveal: boolean;
   dim: boolean;
-  selected: boolean;
   /** Position and size in the wall, computed by the windowed layout. */
   box: { left: number; top: number; width: number; height: number };
   /** True when the current mark was set by the user (clicking it again clears it). */
@@ -28,9 +28,10 @@ type Props = {
   showScore: boolean;
   index: number;
   interactive: boolean;
-  onSelect: () => void;
-  onOpen: () => void;
-  onDecide: (s: State | null) => void;
+  /** Stable functions that take the photo's path, so a tile only re-renders when something about *it* changed. */
+  onSelect: (path: string) => void;
+  onOpen: (path: string) => void;
+  onDecide: (path: string, s: State | null) => void;
 };
 
 /** The app's own mark: the four-point gleam from the logo. Filled = keep, outline = maybe. */
@@ -53,7 +54,7 @@ const Cross = () => <svg width="12" height="12" viewBox="0 0 12 12" fill="none" 
  * Marks are made of light rather than badges: a kept photo is *lit* (gold gleam, warm halo), a maybe is a hollow
  * gleam, a reject simply lets the light fall away. A glass dock under the cursor marks a photo in one click.
  */
-export default function Tile({ path, ratio, photo, stage, state, reveal, dim, box, manual, groupEnd, showScore, index, interactive, onSelect, onOpen, onDecide }: Props) {
+function Tile({ path, ratio, photo, stage, state, reveal, dim, box, manual, groupEnd, showScore, index, interactive, onSelect, onOpen, onDecide }: Props) {
   const { t } = useTranslation();
   const ref = useRef<HTMLDivElement>(null);
   const prev = useRef<State | "">(state);
@@ -68,8 +69,7 @@ export default function Tile({ path, ratio, photo, stage, state, reveal, dim, bo
   // Only the first screenful animates in, once. Tiles mounted by scrolling appear at once: waiting for an entrance feels like waiting for the image.
   const firstTime = useRef(!entered.has(path) && index < 36).current;
   useEffect(() => { entered.add(path); }, [path]);
-  const thumbPath = photo?.thumb ?? stage?.thumb;
-  const src = thumbPath ? convertFileSrc(thumbPath) : undefined;
+  const src = photo ? thumbSrc(photo) : stage?.thumb ? convertFileSrc(stage.thumb) : undefined;
   const stagger = Math.min(index, 16) * 0.012;
   const play = (s: State) => (changed?.to === s ? changed.n : 0) > 0 || reveal;
   const delay = reveal && !changed ? `${300 + Math.min(index, 40) * 55}ms` : "0ms";
@@ -84,7 +84,7 @@ export default function Tile({ path, ratio, photo, stage, state, reveal, dim, bo
     el.style.setProperty("--px", `${(x * 100).toFixed(1)}%`);
     el.style.setProperty("--py", `${(y * 100).toFixed(1)}%`);
   };
-  const onKey = (e: KeyboardEvent<HTMLDivElement>) => { if (interactive && (e.key === "Enter")) onSelect(); };
+  const onKey = (e: KeyboardEvent<HTMLDivElement>) => { if (interactive && (e.key === "Enter")) onSelect(path); };
   const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
   return (
@@ -99,8 +99,8 @@ export default function Tile({ path, ratio, photo, stage, state, reveal, dim, bo
       whileTap={interactive ? { scale: 0.985, transition: SPRING.tap } : undefined}
       transition={{ layout: SPRING.glide, opacity: { duration: DUR.slow, delay: stagger }, scale: { ...SPRING.soft, delay: stagger } }}
       onPointerMove={onMove} onKeyDown={onKey}
-      onClick={() => interactive && onSelect()}
-      onDoubleClick={() => { if (interactive) { onSelect(); onOpen(); } }}
+      onClick={() => interactive && onSelect(path)}
+      onDoubleClick={() => { if (interactive) { onSelect(path); onOpen(path); } }}
       aria-label={photo?.name ?? path.split("/").pop()}>
       <span className="tile-in">
         {photo && src && <FocusImg src={src} quick={interactive && !reveal} />}
@@ -147,25 +147,26 @@ export default function Tile({ path, ratio, photo, stage, state, reveal, dim, bo
         {/* reject: no icon at all. The light falls away: an aperture closes for a moment, then the photo recedes */}
         {photo && state === "reject" && changed?.to === "reject" && <i key={`i${changed.n}`} className="iris" aria-hidden />}
 
+        {photo && <PhotoTags photo={photo} className="ontile" />}
         {photo && <span className="chip mono" data-tip={t("inspector.scoreChip", { score: pct(photo.score) })}>{pct(photo.score)}</span>}
 
         {interactive && (
           <span className="dock" onClick={stop} onDoubleClick={stop} onPointerMove={stop}>
             <button className={`dk keep ${state === "keep" ? "on" : ""}`} aria-label={t("mark.keepAct")} aria-pressed={state === "keep"}
               data-tip={`${state === "keep" && manual ? t("mark.clear") : t("mark.keepAct")} · P`}
-              onClick={() => onDecide(state === "keep" && manual ? null : "keep")}>
+              onClick={() => onDecide(path, state === "keep" && manual ? null : "keep")}>
               <Star filled size={18} />
             </button>
             <button className={`dk reject ${state === "reject" ? "on" : ""}`} aria-label={t("mark.rejectAct")} aria-pressed={state === "reject"}
               data-tip={`${state === "reject" && manual ? t("mark.clear") : t("mark.rejectAct")} · X`}
-              onClick={() => onDecide(state === "reject" && manual ? null : "reject")}>
+              onClick={() => onDecide(path, state === "reject" && manual ? null : "reject")}>
               <Cross />
             </button>
           </span>
         )}
         {interactive && (
           <button className="tzoom" aria-label={t("inspector.zoomLabel")} data-tip={`${t("inspector.zoomLabel")} · ${t("inspector.space")}`}
-            onClick={(e) => { stop(e); onSelect(); onOpen(); }} onDoubleClick={stop} onPointerMove={stop}>
+            onClick={(e) => { stop(e); onSelect(path); onOpen(path); }} onDoubleClick={stop} onPointerMove={stop}>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5L9 7M2.5 13.5L7 9" /></svg>
           </button>
         )}
@@ -175,3 +176,6 @@ export default function Tile({ path, ratio, photo, stage, state, reveal, dim, bo
     </motion.div>
   );
 }
+
+/** Memoised: with hundreds of tiles mounted, everything that changes elsewhere (a selection, a progress event) must not redraw all of them. */
+export default memo(Tile);

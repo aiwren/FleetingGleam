@@ -59,19 +59,47 @@ const Wall = forwardRef<WallHandle, {
   layout?: WallLayout;
   /** Key of the selected item: a single focus frame glides to it, instead of each tile drawing its own. */
   selected?: string | null;
-}>(function Wall({ items, scrollRef, render, layout: kind = "justified", selected }, ref) {
+  /**
+   * While a side panel slides open (negative) or shut (positive) the wall is laid out at the width it will end up with, right away,
+   * instead of following the shrinking container frame by frame: the photos glide once to their final places while the panel expands.
+   */
+  widthDelta?: number | null;
+}>(function Wall({ items, scrollRef, render, layout: kind = "justified", selected, widthDelta = null }, ref) {
   const wrap = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const [view, setView] = useState({ top: 0, height: 900 });
 
+  const latest = useRef(0);
+  const frozen = useRef<number | null>(null);
+  const put = useCallback((w: number) => { latest.current = w; setWidth(w); }, []);
+  const measure = useCallback(() => Math.floor((wrap.current?.getBoundingClientRect().width) ?? 0), []);
+
   useLayoutEffect(() => {
     const el = wrap.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => setWidth(Math.floor(el.getBoundingClientRect().width)));
+    // Otherwise, while a panel or the sidebar slides open the width changes every frame; re-justifying the rows each time makes the photos
+    // hop between rows. So the layout waits until the width has stopped changing (and if it ends where it began, nothing moves at all).
+    let timer = 0;
+    const ro = new ResizeObserver(() => {
+      if (frozen.current !== null) return;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => put(measure()), 120);
+    });
     ro.observe(el);
-    setWidth(Math.floor(el.getBoundingClientRect().width));
-    return () => ro.disconnect();
-  }, []);
+    put(measure());
+    return () => { ro.disconnect(); window.clearTimeout(timer); };
+  }, [put, measure]);
+
+  // A panel starts to open or close: lay the wall out at its final width now, and ignore the container until the panel has settled.
+  useLayoutEffect(() => {
+    if (widthDelta) {
+      frozen.current = Math.max(100, latest.current + widthDelta);
+      put(frozen.current);
+    } else if (frozen.current !== null) {
+      frozen.current = null;
+      put(measure());
+    }
+  }, [widthDelta, put, measure]);
 
   const offset = useCallback(() => {
     const s = scrollRef.current, w = wrap.current;
