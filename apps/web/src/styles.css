@@ -124,3 +124,35 @@ body {
 @media (min-width: 1024px) { .wall-tile { flex-basis: calc(var(--a) * 162px); height: 162px; } }
 @media (min-width: 1280px) { .wall-tile { flex-basis: calc(var(--a) * 176px); height: 176px; } }
 @media (prefers-reduced-transparency: reduce) { .wall-out { background: var(--canvas); backdrop-filter: none; } }
+
+/* ---- The first screen's scene ----------------------------------------------------------------------------------------
+   The frames lean a few degrees toward the pointer (two variables the scene writes), with a soft spring back. The kept frame
+   wears the camera's focus brackets, and once, on being kept and again on hover, a band of warm light crosses it: the app's
+   gleam sweep. Nothing here loops on its own.                                                                           */
+.hero-tilt {
+  transform: rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg));
+  transform-style: preserve-3d;
+  transition: transform .7s var(--ease-out-expo);
+}
+.hero-bracket {
+  position: absolute; width: 16px; height: 16px; pointer-events: none;
+  border: 2px solid var(--gleam);
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--gleam) 60%, transparent));
+}
+.hero-bracket.lt { left: 8px; top: 8px; border-right: 0; border-bottom: 0; border-top-left-radius: 3px; }
+.hero-bracket.rt { right: 8px; top: 8px; border-left: 0; border-bottom: 0; border-top-right-radius: 3px; }
+.hero-bracket.lb { left: 8px; bottom: 8px; border-right: 0; border-top: 0; border-bottom-left-radius: 3px; }
+.hero-bracket.rb { right: 8px; bottom: 8px; border-left: 0; border-top: 0; border-bottom-right-radius: 3px; }
+@keyframes hero-glint { from { transform: translateX(-130%) skewX(-18deg); } to { transform: translateX(230%) skewX(-18deg); } }
+.hero-glint {
+  position: absolute; inset: -20% auto -20% 0; width: 42%; pointer-events: none;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--gleam) 42%, white 20%) 50%, transparent);
+  mix-blend-mode: screen; opacity: .7;
+  animation: hero-glint 1.1s var(--ease-out-expo) .15s both;
+}
+@media (prefers-reduced-motion: reduce) { .hero-tilt { transition: none; } .hero-glint { display: none; } }
+
+/* Behind the words the sea is a little thinner, so the headline is read before the nebula is looked at. */
+@media (min-width: 768px) {
+  .hero-sea { -webkit-mask-image: linear-gradient(90deg, rgba(0,0,0,.55), rgba(0,0,0,.55) 26%, #000 46%); mask-image: linear-gradient(90deg, rgba(0,0,0,.55), rgba(0,0,0,.55) 26%, #000 46%); }
+}
