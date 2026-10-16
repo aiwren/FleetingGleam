@@ -90,4 +90,4 @@ FG_SEAL_KEY=<密钥> FG_MODEL_BASE=<模型地址> sh scripts/release.sh
 
 - **只有 macOS**，需要 macOS 15 及以上（原生部分的编译目标是 macOS 15）。
 - Intel 版本在 `macos-15-intel` 上构建。GitHub 以后如果调整这个运行器，需要改 `release.yml` 里的 `matrix`。
-- 工作流里用到的第三方 Action 目前都是按主版本号引用的（例如 `actions/checkout@v4`）。如果你想要更强的供应链安全，可以把它们改成固定到提交 SHA，Dependabot 会帮你更新。
+- 工作流里用到的第三方 Action 都是按主版本号引用的（例如 `actions/checkout@v4`），需要升级时请手动改。如果你想要更强的供应链安全，可以把它们固定到提交 SHA。
