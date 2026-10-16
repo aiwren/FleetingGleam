@@ -20,19 +20,19 @@ const isKept = (i: number) => (KEPT as readonly number[]).includes(i);
  */
 type Geo = {
   W: number; H: number; FW: number; FH: number; grid: readonly (readonly [number, number])[];
-  final: Record<number, readonly [number, number, number]>; cardTop: number; cardW: number; cols: number; rows: number; field: number; max: number; travel: string;
+  final: Record<number, readonly [number, number, number]>; cardTop: number; cardW: number; cols: number; rows: number; field: number; haze: number; max: number; travel: string;
 };
 const DESK: Geo = {
   W: 780, H: 560, FW: 168, FH: 112,
   grid: [[24, 92], [212, 92], [400, 92], [588, 92], [24, 224], [212, 224], [400, 224], [588, 224]],
   final: { 1: [306, 96, 1.55], 5: [48, 236, 1], 6: [564, 236, 1] },
-  cardTop: 372, cardW: 324, cols: 34, rows: 23, field: 1600, max: 1.2, travel: "320vh",
+  cardTop: 372, cardW: 324, cols: 34, rows: 23, field: 2000, haze: 260, max: 1.2, travel: "320vh",
 };
 const PHONE: Geo = {
   W: 360, H: 330, FW: 78, FH: 52,
   grid: [[12, 14], [98, 14], [184, 14], [270, 14], [12, 74], [98, 74], [184, 74], [270, 74]],
   final: { 1: [141, 70, 1.6], 5: [12, 8, 0.95], 6: [270, 8, 0.95] },
-  cardTop: 156, cardW: 300, cols: 18, rows: 12, field: 420, max: 1.15, travel: "280vh",
+  cardTop: 156, cardW: 300, cols: 18, rows: 12, field: 520, haze: 120, max: 1.15, travel: "280vh",
 };
 
 /** How far the story has come: 0 the sea, 1 the photographs, 2 a few kept, 3 one best, 4 the reasons. */
@@ -100,7 +100,7 @@ export default function HeroScene({ lang, children }: { lang: Lang; children: (p
     const { cols, rows } = g;
     let m = motes.current;
     if (!m) {
-      m = new Motes(canvas.current, paletteFromTheme(), { field: g.field });
+      m = new Motes(canvas.current, paletteFromTheme(), { field: g.field, haze: g.haze });
       motes.current = m;
       if (import.meta.env.DEV) (window as unknown as { __fgMotes?: Motes }).__fgMotes = m; // 开发时便于在控制台查看
     }

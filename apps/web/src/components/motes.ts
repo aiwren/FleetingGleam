@@ -15,7 +15,13 @@ export type Rect = { x: number; y: number; w: number; h: number };
 /** A frame the motes form: its rectangle, the grid of pixel colours (rgb 0..1, row-major) the motes take on arrival, its place
  * in the order the frames appear, and whether it is turned down later (its motes then come loose and leave). */
 export type FrameSpec = { rect: Rect; cols: number; rows: number; colors: Float32Array | null; order: number; out: boolean };
-export type Palette = { mote: [number, number, number]; gleam: [number, number, number]; additive: boolean };
+export type Palette = {
+  mote: [number, number, number]; gleam: [number, number, number]; additive: boolean;
+  /** The nebula's gas: large, faint, soft discs along the arms. */
+  haze: [number, number, number]; hazeAlpha: number;
+  /** Lifts every mote's alpha; the light theme needs more of it to read at all. */
+  lift: number;
+};
 
 /** Where in the scroll (0 to 1 over the pinned stretch) each part of the story happens. The DOM side keys to the same numbers. */
 export const ST = {
@@ -77,7 +83,9 @@ export class Motes {
   private s: Store = store(0);
   private frames: FrameSpec[] = [];
   private fieldCount: number;
+  private hazeCount: number;
   private burstCount = 64;
+  private maxPoint = 64; // the largest point this GPU draws, in device pixels
   private burstNext = 0;
   private w = 1; private h = 1; private dpr = 1;
   private raf = 0;
@@ -94,9 +102,10 @@ export class Motes {
   /** Called once per frame with the smoothed progress, for the DOM side to follow. */
   onTick: ((p: number) => void) | null = null;
 
-  constructor(private canvas: HTMLCanvasElement, palette: Palette, opts: { field: number }) {
+  constructor(private canvas: HTMLCanvasElement, palette: Palette, opts: { field: number; haze: number }) {
     this.palette = palette;
     this.fieldCount = opts.field;
+    this.hazeCount = opts.haze;
     const gl = canvas.getContext("webgl", { alpha: true, antialias: false, premultipliedAlpha: true, depth: false, stencil: false, powerPreference: "low-power" });
     if (!gl) return;
     const sh = (type: number, src: string) => { const s = gl.createShader(type); if (!s) return null; gl.shaderSource(s, src); gl.compileShader(s); return s; };
@@ -105,6 +114,8 @@ export class Motes {
     gl.attachShader(p, v); gl.attachShader(p, f); gl.linkProgram(p);
     if (!gl.getProgramParameter(p, gl.LINK_STATUS)) return;
     this.gl = gl; this.prog = p; this.buf = gl.createBuffer();
+    const range = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE) as Float32Array | null;
+    if (range && range[1] > 0) this.maxPoint = range[1];
     this.loc = { pos: gl.getAttribLocation(p, "a_pos"), col: gl.getAttribLocation(p, "a_col"), size: gl.getAttribLocation(p, "a_size"), res: gl.getUniformLocation(p, "u_res"), dpr: gl.getUniformLocation(p, "u_dpr") };
     canvas.addEventListener("webglcontextlost", (e) => { e.preventDefault(); this.lost = true; this.stop(); });
   }
@@ -135,11 +146,12 @@ export class Motes {
   setFrames(frames: FrameSpec[]) {
     this.frames = frames;
     const cells = frames.reduce((a, f) => a + f.cols * f.rows, 0);
-    const n = cells + this.fieldCount + this.burstCount;
+    const n = this.hazeCount + cells + this.fieldCount + this.burstCount;
     if (this.s.n !== n) {
       this.s = store(n);
       this.data = new Float32Array(n * 7);
-      this.seedSea(cells);
+      this.seedHaze();
+      this.seedSea(this.hazeCount + cells);
       this.seedFrames();
     } else {
       this.retarget();
@@ -160,10 +172,16 @@ export class Motes {
       return;
     }
     const reach = this.R * Math.min(this.w, this.h) * 1.15;
-    // radius: dense heart, long thin reach; angle: one of three arms, each a loose twist, wider toward the edge
-    const r = Math.min(1.6, Math.abs(this.gauss()) * 0.55 + Math.pow(Math.random(), 2.2) * 0.5);
+    if (Math.random() < 0.22) {
+      // the heart: dense, round, bright
+      s.rad[i] = Math.abs(this.gauss()) * 0.16 * reach; s.ang[i] = Math.random() * Math.PI * 2;
+      this.placeFromPolar(i);
+      return;
+    }
+    // the arms: three, each a tight twist that loosens a little toward the edge
+    const r = Math.min(1.5, 0.12 + Math.abs(this.gauss()) * 0.5 + Math.pow(Math.random(), 2.4) * 0.45);
     const arm = Math.floor(Math.random() * 3) * ((Math.PI * 2) / 3);
-    const a = arm + r * 2.1 + this.gauss() * (0.22 + 0.3 * r);
+    const a = arm + r * 2.7 + this.gauss() * (0.09 + 0.14 * r);
     s.rad[i] = r * reach; s.ang[i] = a;
     this.placeFromPolar(i);
   }
@@ -175,6 +193,22 @@ export class Motes {
     s.fy[i] = this.cy * this.h + Math.sin(s.ang[i]) * s.rad[i] * 0.78;
   }
 
+  /** The gas of the nebula: a few hundred large, very faint discs laid along the arms and the heart, turning with them. */
+  private seedHaze() {
+    const s = this.s;
+    const cap = this.maxPoint / this.dpr - 1;
+    for (let i = 0; i < this.hazeCount; i++) {
+      s.kind[i] = 3;
+      this.seaPoint(i);
+      if (s.rad[i] < 0) { s.rad[i] = Math.random() * 0.6 * this.R * Math.min(this.w, this.h); s.ang[i] = Math.random() * Math.PI * 2; this.placeFromPolar(i); }
+      s.x[i] = s.fx[i]; s.y[i] = s.fy[i];
+      s.z[i] = 0.2 + Math.random() * 0.5;
+      s.size[i] = Math.min(cap, 60 + Math.random() * 70);
+      s.seed[i] = Math.random() * 1000;
+      s.amber[i] = Math.random() < 0.7 ? 1 : 0;
+    }
+  }
+
   private seedSea(from: number) {
     const s = this.s;
     for (let i = from; i < s.n - this.burstCount; i++) {
@@ -183,7 +217,7 @@ export class Motes {
       s.x[i] = s.fx[i]; s.y[i] = s.fy[i];
       const a = Math.random() * Math.PI * 2, v = 2 + Math.random() * 5;
       s.vx[i] = Math.cos(a) * v; s.vy[i] = Math.sin(a) * v;
-      s.size[i] = (1.3 + Math.random() * 2.0) * (0.55 + 0.9 * s.z[i]);
+      s.size[i] = (1.2 + Math.random() * 2.2) * (0.45 + 1.15 * s.z[i]);
       s.seed[i] = Math.random() * 1000;
       // the heart of the nebula is warmer
       const heart = s.rad[i] >= 0 ? Math.max(0, 1 - s.rad[i] / (this.R * Math.min(this.w, this.h) * 0.5)) : 0;
@@ -194,7 +228,7 @@ export class Motes {
 
   private seedFrames() {
     const s = this.s;
-    let i = 0;
+    let i = this.hazeCount;
     this.frames.forEach((f, fi) => {
       for (let r = 0; r < f.rows; r++) for (let c = 0; c < f.cols; c++, i++) {
         s.kind[i] = 1; s.frame[i] = fi;
@@ -218,7 +252,7 @@ export class Motes {
   /** Updates only where the frame motes are going and what colour they take, for a relayout or once pixels are known. */
   private retarget() {
     const s = this.s;
-    let i = 0;
+    let i = this.hazeCount;
     for (const f of this.frames) {
       for (let r = 0; r < f.rows; r++) for (let c = 0; c < f.cols; c++, i++) {
         s.tx[i] = f.rect.x + ((c + 0.5) / f.cols) * f.rect.w;
@@ -378,6 +412,15 @@ export class Motes {
           size = s.size[i] * (1.2 - 0.5 * e);
         }
         s.x[i] = x; s.y[i] = y;
+      } else if (kind === 3) {
+        // the gas: turns with the arms, breathes very slowly, steps well back once the photographs are there
+        if (s.rad[i] >= 0) { s.ang[i] += (0.028 + 0.05 * (1 - Math.min(1, s.rad[i] / reach))) * dt; this.placeFromPolar(i); }
+        x = s.fx[i] + this.parX * (z - 0.4) * 0.6; y = s.fy[i] + this.parY * (z - 0.4) * 0.6;
+        s.x[i] = x; s.y[i] = y;
+        const breathe = 0.75 + 0.25 * Math.sin(t * (0.15 + this.rand(s.seed[i] + 7) * 0.2) + s.seed[i]);
+        const [hr, hg, hb] = p.haze;
+        r = amber ? hr : mr; g = amber ? hg : mg; b = amber ? hb : mb;
+        a = seaIn * (1 - 0.7 * smooth(ST.gather + 0.12, ST.developEnd, P)) * p.hazeAlpha * breathe;
       } else {
         // burst motes live for a moment after `burst()`
         if (s.t0[i] < 0) { a = 0; }
@@ -391,7 +434,7 @@ export class Motes {
           }
         }
       }
-      d[j++] = x; d[j++] = y; d[j++] = r; d[j++] = g; d[j++] = b; d[j++] = a; d[j++] = size;
+      d[j++] = x; d[j++] = y; d[j++] = r; d[j++] = g; d[j++] = b; d[j++] = Math.min(1, a * (kind === 3 ? 1 : p.lift)); d[j++] = size;
     }
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
@@ -440,5 +483,7 @@ export function paletteFromTheme(): Palette {
     return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
   };
   const gleam = hex(css.getPropertyValue("--gleam"), light ? [0.71, 0.46, 0.11] : [0.91, 0.71, 0.36]);
-  return light ? { mote: [0.22, 0.23, 0.27], gleam, additive: false } : { mote: [0.93, 0.93, 0.96], gleam, additive: true };
+  return light
+    ? { mote: [0.16, 0.17, 0.22], gleam, additive: false, haze: [0.78, 0.6, 0.36], hazeAlpha: 0.075, lift: 1.35 }
+    : { mote: [0.93, 0.93, 0.96], gleam, additive: true, haze: [0.95, 0.72, 0.4], hazeAlpha: 0.05, lift: 1 };
 }
