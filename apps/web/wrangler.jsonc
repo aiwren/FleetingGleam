@@ -1,0 +1,6 @@
+{
+  // 落地页是纯静态站点：构建产物直接由 Cloudflare 托管，没有 Worker 脚本
+  "name": "fleetinggleam",
+  "compatibility_date": "2026-10-01",
+  "assets": { "directory": "./dist/client" }
+}

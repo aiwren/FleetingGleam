@@ -87,6 +87,20 @@ sh scripts/release.sh
 
 它会构建辅助程序、构建应用，并检查安装包里没有混进模型文件。
 
+## 部署落地页
+
+落地页（`apps/web`）构建时会预渲染成静态 HTML，由 Cloudflare 以“静态资源”的方式托管，没有服务端代码。配置在 [`apps/web/wrangler.jsonc`](../apps/web/wrangler.jsonc)。静态资源的请求在 Cloudflare 上免费且不限量。
+
+部署（或更新）一次，需要先用 `wrangler login` 登录自己的 Cloudflare 账号：
+
+```bash
+pnpm build:web
+cd apps/web
+pnpm dlx wrangler@4.146.0 deploy     # 首次部署前先 pnpm dlx wrangler@4.146.0 login
+```
+
+默认地址是 `https://fleetinggleam.<你的子域>.workers.dev`。要用自己的域名，在 Cloudflare 控制台的这个 Worker 里添加自定义域。`workers.dev` 这个域名在部分网络环境（包括中国大陆）下可能访问不稳定，面向国内用户建议绑定自己的域名。
+
 ## 当前的限制
 
 - **只有 macOS**，需要 macOS 15 及以上（原生部分的编译目标是 macOS 15）。
