@@ -40,7 +40,7 @@ export const copy = {
     },
     honest: { title: "A score is a hint, not a verdict.", body: "It can tell you which frame is technically stronger. A good photograph is sometimes imperfect, like a sleeping child with closed eyes, so the decision stays yours." },
     final: { title: "Be first to try it.", body: "The macOS version is being polished and the download will appear here. Windows follows.", label: "macOS version coming soon" },
-    footer: { rights: "© 2026 FleetingGleam. All rights reserved.", note: "Sample photos in screenshots are from Lorem Picsum, under the Unsplash license." },
+    footer: { rights: "© 2026 FleetingGleam contributors. Free software under the AGPL-3.0-or-later licence.", note: "Sample photos in screenshots are from Lorem Picsum, under the Unsplash license." },
   },
   zh: {
     home: "/zh", other: { label: "EN", to: "/" },
@@ -80,6 +80,6 @@ export const copy = {
     },
     honest: { title: "评分是参考，不是裁判。", body: "它能告诉你哪一张技术上更好。好照片有时并不完美，比如闭着眼睛睡着的孩子，所以决定始终在你手里。" },
     final: { title: "第一时间试用。", body: "macOS 版正在打磨，发布后下载链接会放在这里，Windows 版随后推出。", label: "macOS 版即将发布" },
-    footer: { rights: "© 2026 惊鸿 FleetingGleam. 保留所有权利。", note: "截图中的示例照片来自 Lorem Picsum，遵循 Unsplash 授权。" },
+    footer: { rights: "© 2026 惊鸿 FleetingGleam 贡献者。以 AGPL-3.0-or-later 许可证开源。", note: "截图中的示例照片来自 Lorem Picsum，遵循 Unsplash 授权。" },
   },
 } as const;
