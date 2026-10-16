@@ -1,102 +1,104 @@
-# FleetingGleam（惊鸿）
+**English** | [简体中文](README.zh-CN.md)
 
-**一款在你自己电脑上运行的照片筛选软件。** 把几千张照片里同一瞬间的连拍分好组，挑出每组最好的一张，并告诉你为什么。照片不会离开你的电脑。
+# FleetingGleam
 
 **A local-first photo culling app for macOS.** It groups the bursts in thousands of photos, picks the best frame in each group and shows you why. Your photos never leave your computer.
 
 <p align="center">
-  <img src="apps/web/public/shots/wall-dark-1200.webp" alt="FleetingGleam 的照片墙：同一瞬间的连拍排在一起，最好的一张带金色星标" width="880">
+  <img src="apps/web/public/shots/wall-dark-1200.webp" alt="The FleetingGleam photo wall: frames of one moment sit together and the best one carries a gold star" width="880">
 </p>
 
-## 它能做什么
+## What it does
 
-- **连拍自动分组**：同一瞬间的几张照片排在一起，人脸、方向、拍摄间隔都会参与判断。
-- **挑出最好的一张**：给每张照片打分，同组里最好的一张会被标上金色星标；分数怎么来的，右侧检查器里逐项列出（清晰度、曝光、AI 观感、人脸……）。
-- **对比和决定**：把同组的几张放大对比，用键盘 `P` 保留、`R` 待定、`X` 淘汰，`⌘Z` 撤销。
-- **按场景加权**：人像看人脸，运动看对焦，夜景不会因为暗而被扣分。
-- **用文字找照片**：输入“海边的小船”“两个人”，中英文都可以。
-- **学习你的口味**：指向一个你过去挑好的文件夹，它会学着你的偏好，还可以为婚礼、街拍分别建立不同的风格。
-- **整理**：把保留的照片移到新文件夹，其余的放进废纸篓（可恢复）。
+- **Groups your bursts.** Frames of the same moment sit together. Faces, orientation and the time gap between shots all count.
+- **Picks the best frame.** Every photo gets a score and the best of each group is marked with a gold star. The inspector on the right lists where the score came from: sharpness, exposure, AI impression, faces and more.
+- **Compare and decide.** Zoom into the frames of one group side by side, then press `P` to keep, `R` to review, `X` to reject, and `⌘Z` to undo.
+- **Scores by kind of scene.** Portraits are judged by faces, sport by focus, and a night shot is not marked down for being dark.
+- **Find photos by describing them.** Type "a small boat by the sea" or "two people". English and Chinese both work.
+- **Learns your taste.** Point it at a folder of photos you picked in the past and it learns your preferences. Keep one style for weddings and another for street.
+- **Organise.** Keepers move to a new folder and the rest go to the Trash, where they can be recovered.
 
-> **评分只是参考，不是裁决。** 目前的评分常数是手工调的，还没有用真实的人工标注校准，它能告诉你哪一张在技术上更强，但一张好照片有时恰恰不完美。最终的取舍始终由你决定。
+> **A score is a hint, not a verdict.** The scoring constants are tuned by hand and have not yet been calibrated against real human labels. The app can tell you which frame is technically stronger, but a good photograph is sometimes imperfect. The final call is always yours.
 
-## 隐私
+## Privacy
 
-- 照片只在本机处理，**不会上传**，也没有账号。
-- 应用唯一会联网做的事，是**按需下载分析用的模型文件**（第一次用到某项功能时才下载，之后完全离线）。
-- 模型文件很大，不放在本仓库里，也不随安装包分发；它们直接从 Hugging Face 等公开上游下载，每个文件的来源和校验值见 [docs/MODELS.md](docs/MODELS.md)，使用方式见 [新手上手指南](docs/GETTING_STARTED.md#第一次使用先下载模型)。
+- Photos are processed on your computer and **never uploaded**. There is no account.
+- The only thing the app does on the network is **download the model files it needs**, the first time a feature uses them. After that it works fully offline.
+- The models are large, so they are neither in this repository nor in the installer. They are downloaded straight from public sources such as Hugging Face, and every file is checked against a SHA-256 built into the app. Where each file comes from is listed in [docs/MODELS.md](docs/MODELS.md); how it looks to a user is in the [getting started guide](docs/GETTING_STARTED.md#第一次使用先下载模型) (Chinese).
 
-## 快速开始
+## Quick start
 
-### 使用
+### Using the app
 
-在 [Releases](../../releases) 下载 `.dmg`，Apple Silicon（M 系列）选 `aarch64`，Intel 选 `x64`，需要 **macOS 15 及以上**。详细步骤见 [新手上手指南](docs/GETTING_STARTED.md)。
+Download the `.dmg` from [Releases](../../releases): pick `aarch64` for Apple Silicon (M-series) or `x64` for Intel. It needs **macOS 15 or later**. Step by step instructions are in the [getting started guide](docs/GETTING_STARTED.md) (Chinese).
 
-Windows 版本在计划中，目前还没有。
+A Windows version is planned and does not exist yet.
 
-### 开发
+### Developing
 
-需要：macOS 15+、Xcode 命令行工具（提供 `swiftc`）、[Rust](https://rustup.rs) stable、Node.js 22、pnpm 11（版本由根目录 `package.json` 的 `packageManager` 指定）。
+You need: macOS 15+, the Xcode command line tools (for `swiftc`), [Rust](https://rustup.rs) stable, Node.js 22 and pnpm 11 (the exact version is pinned by `packageManager` in the root `package.json`).
 
 ```bash
 pnpm install
 
-pnpm dev:web        # 落地页，http://localhost:3150（英文在 /，中文在 /zh）
-pnpm dev:desktop    # 桌面应用（tauri dev），会编译 Rust 和 Swift，第一次比较慢
+pnpm dev:web        # landing page, http://localhost:3150 (English at /, Chinese at /zh)
+pnpm dev:desktop    # desktop app (tauri dev); compiles Rust and Swift, slow the first time
 ```
 
-只想改界面、不想编译 Rust 或下载模型？桌面应用有一个浏览器预览模式，用绘制出来的示例照片和模拟的分析过程：
+Only want to work on the interface, without compiling Rust or downloading models? The desktop app has a browser preview mode that uses drawn sample photos and a simulated analysis:
 
 ```bash
-pnpm desktop dev    # 然后打开 http://localhost:1420/?mock
+pnpm desktop dev    # then open http://localhost:1420/?mock
 ```
 
-macOS 上的 Apple Vision 辅助程序（可选，没有它应用也能运行）需要先构建一次：
+The Apple Vision helper for macOS (optional; the app runs without it) has to be built once:
 
 ```bash
 sh apps/desktop/scripts/build-vision.sh
 ```
 
-更多开发说明、提交前要跑的检查，见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+More about developing and the checks to run before you commit: [CONTRIBUTING.md](CONTRIBUTING.md) (Chinese).
 
-## 仓库结构
+## Repository layout
 
 ```
 apps/
-  desktop/        Tauri 2 + React + Rust 桌面应用（macOS 优先）
-    src/          前端界面（TypeScript / React）
-    src-tauri/    Rust 后端；native/ 与 vision/ 是 Swift 写的 macOS 原生部分
-  web/            落地页（TanStack Start + Tailwind v4 + Motion），中英双语
-packages/         以后放前后端共用的类型
-docs/             文档，见下表
-branding/         Logo 与图标源文件
-DESIGN.md         设计系统：配色、字体、动效规范
+  desktop/        Tauri 2 + React + Rust desktop app (macOS first)
+    src/          the interface (TypeScript / React)
+    src-tauri/    the Rust backend; native/ and vision/ hold the macOS parts written in Swift
+  web/            landing page (TanStack Start + Tailwind v4 + Motion), in English and Chinese
+packages/         shared types, later
+docs/             documentation, see the table below
+branding/         logo and icon sources
+DESIGN.md         the design system: colour, type and motion rules
 ```
 
-## 文档
+## Documentation
 
-| 文档 | 内容 |
+Most of the documentation is written in Chinese for now. Issues and pull requests in English are welcome.
+
+| Document | What is in it |
 |---|---|
-| [新手上手指南](docs/GETTING_STARTED.md) | 安装、第一次下载模型、从导入到整理的完整流程 |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | 参与开发：环境、检查、约定 |
-| [docs/RELEASING.md](docs/RELEASING.md) | 如何发布一个版本、GitHub Actions 怎么用 |
-| [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md) | 用到的第三方模型和库及其许可 |
-| [docs/MODELS.md](docs/MODELS.md) | 每个模型文件从哪里下载、多大、什么许可，怎么校验 |
-| [docs/RESEARCH.md](docs/RESEARCH.md) | 选片方法与模型的调研笔记 |
-| [DESIGN.md](DESIGN.md) | 设计系统（英文） |
-| [CHANGELOG.md](CHANGELOG.md) | 版本更新记录 |
-| [SECURITY.md](SECURITY.md) | 如何报告安全问题 |
+| [Getting started](docs/GETTING_STARTED.md) (Chinese) | Install, the first model download, and the whole flow from import to organising |
+| [CONTRIBUTING.md](CONTRIBUTING.md) (Chinese) | Contributing: environment, checks, conventions |
+| [docs/RELEASING.md](docs/RELEASING.md) (Chinese) | How to publish a version and how the GitHub Actions work |
+| [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md) (Chinese) | The third-party models and libraries we use, and their licenses |
+| [docs/MODELS.md](docs/MODELS.md) (Chinese) | Where every model file is downloaded from, its size and license, and how it is verified |
+| [docs/RESEARCH.md](docs/RESEARCH.md) (Chinese) | Research notes on culling methods and models |
+| [DESIGN.md](DESIGN.md) | The design system |
+| [CHANGELOG.md](CHANGELOG.md) (Chinese) | Release notes |
+| [SECURITY.md](SECURITY.md) (Chinese) | How to report a security problem |
 
-## 许可证
+## License
 
-本项目的源代码以 **[GNU Affero 通用公共许可证 第 3 版或更高版本（AGPL-3.0-or-later）](LICENSE)** 发布。
+The source code of this project is released under the **[GNU Affero General Public License, version 3 or later (AGPL-3.0-or-later)](LICENSE)**.
 
-- 你可以自由使用、研究、修改和分享它；如果你修改后分发，或者把它作为网络服务提供给别人，需要按同一许可证公开对应的源代码。
-- **不在这个许可证范围内的内容**：
-  - “FleetingGleam”“惊鸿”这个名称和 `branding/` 里的 Logo、图标，请不要用它们来暗示你的衍生版本是官方版本。
-  - 落地页截图和示例里的照片来自 [Lorem Picsum](https://picsum.photos)，遵循 Unsplash 授权，不属于本项目。
-  - 应用使用的模型各有各的许可，见 [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md)。
+- You are free to use, study, modify and share it. If you distribute a modified version, or offer it to others as a network service, you must make the corresponding source code available under the same license.
+- **Not covered by this license:**
+  - The names "FleetingGleam" and "惊鸿", and the logo and icons in `branding/`. Please do not use them to suggest that your derivative is the official one.
+  - The sample photos in the landing page screenshots come from [Lorem Picsum](https://picsum.photos) under the Unsplash license and are not part of this project.
+  - The models the app uses each have their own license, see [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md).
 
-## 参与
+## Contributing
 
-欢迎提 Issue 和 Pull Request，中文或英文都可以。动手之前请先看 [CONTRIBUTING.md](CONTRIBUTING.md) 和 [行为准则](CODE_OF_CONDUCT.md)。
+Issues and pull requests are welcome, in English or Chinese. Please read [CONTRIBUTING.md](CONTRIBUTING.md) and the [code of conduct](CODE_OF_CONDUCT.md) first.
