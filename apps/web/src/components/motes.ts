@@ -3,22 +3,24 @@
  * around a bright heart, with depth (the near ones larger and brighter, and they shift more as the pointer moves) and a turn so
  * slow it is felt rather than seen, the inside faster than the edge, so the arms keep slowly changing shape.
  *
- * The frames live *on* the arms. Each one is a point on an arm (which arm, how far out) and rides the turn with it; a thread of
- * light runs along the arm from the heart out to it. As the reader scrolls, most of the motes flow into the frames, each taking the
- * colour of the pixel it lands on, and the real photographs develop underneath. Then the choice: a few frames are kept, and the
- * motes of the rest come loose and drift back out into the sea. The story is driven by scroll progress (`ST`), so the reader sets
- * its pace and can run it backwards; the turn, the shimmer, the pointer and the bursts run on the clock.
+ * The frames hover *over* the arms. Each one is anchored to a point on an arm (which arm, how far out), rides the turn with it,
+ * and floats a little above it on a vertical stem; the nearer ones (lower on the screen) are larger. As the reader scrolls, most of
+ * the motes flow into the frames, each taking the colour of the pixel it lands on, and the real photographs develop underneath.
+ * Then the choice: a few frames are kept, and the motes of the rest come loose and drift back out into the sea. The story is driven
+ * by scroll progress (`ST`), so the reader sets its pace and can run it backwards; the turn, the shimmer, the pointer and the
+ * bursts run on the clock.
  *
  * WebGL points, positions stepped on the CPU. Everything here is in CSS pixels of the canvas; the React side says where the heart
- * is, which arm each frame sits on, and reads back where the frames are each tick so the photographs can follow.
+ * is and which arm each frame sits on, and reads back each tick where the anchors are so the photographs and stems can follow.
  */
 
 export type Rect = { x: number; y: number; w: number; h: number };
-/** A frame on the nebula: its arm and radius (px from the heart), its size, the grid of pixel colours (rgb 0..1, row-major) the
- * motes take on arrival, its place in the order the frames form, and whether it is turned down later. */
-export type FrameSpec = { arm: number; r: number; w: number; h: number; cols: number; rows: number; colors: Float32Array | null; order: number; out: boolean };
-/** Where a frame is right now: its centre (px) and the lean of the arm there (radians). */
-export type Pose = { x: number; y: number; rot: number };
+/** A frame over the nebula: its arm and radius (px from the heart), its size and how far above its anchor it floats (px, at scale
+ * 1), the grid of pixel colours (rgb 0..1, row-major) the motes take on arrival, its place in the order the frames form, and whether
+ * it is turned down later. */
+export type FrameSpec = { arm: number; r: number; w: number; h: number; lift: number; cols: number; rows: number; colors: Float32Array | null; order: number; out: boolean };
+/** Where a frame's anchor on the arm is right now (px) and how large the frame is there (nearer is larger). */
+export type Pose = { x: number; y: number; scale: number };
 export type Palette = {
   mote: [number, number, number]; gleam: [number, number, number]; additive: boolean;
   /** Lifts every mote's alpha; the light theme needs more of it to read at all. */
@@ -26,7 +28,7 @@ export type Palette = {
 };
 
 /** The shape of the nebula's arms: how much they twist over the reach, and how the whole is pressed into an ellipse. */
-export const SPIRAL = { twist: 2.7, ex: 1.25, ey: 0.78 } as const;
+export const SPIRAL = { twist: 2.7, ex: 1.25, ey: 0.5 } as const;
 /** A point on arm `arm` (0..2) at radius `r` around the heart (cx, cy), with the nebula turned by `spin` seconds. */
 export function armPoint(cx: number, cy: number, arm: number, r: number, reach: number, spin = 0): [number, number] {
   const a = armAngle(arm, r, reach, spin);
@@ -70,15 +72,13 @@ const expo = (t: number) => (t >= 1 ? 1 : 1 - Math.pow(2, -10 * t));
 const clamp01 = (t: number) => (t < 0 ? 0 : t > 1 ? 1 : t);
 const smooth = (a: number, b: number, t: number) => { const x = clamp01((t - a) / (b - a)); return x * x * (3 - 2 * x); };
 
-const THREAD = 64; // motes in the thread from the heart to a frame
-
-// Per-mote data, struct-of-arrays. `kind` 0 = sea, 1 = frame cell, 2 = burst, 3 = thread.
+// Per-mote data, struct-of-arrays. `kind` 0 = sea, 1 = frame cell, 2 = burst.
 type Store = {
   n: number; kind: Uint8Array; frame: Uint8Array;
   x: Float32Array; y: Float32Array; // where it is
   fx: Float32Array; fy: Float32Array; // its place in the sea (a frame mote starts there and, if turned down, goes back there)
   tx: Float32Array; ty: Float32Array; // its cell in a frame
-  vx: Float32Array; vy: Float32Array; // sea drift / burst velocity / thread jitter
+  vx: Float32Array; vy: Float32Array; // sea drift / burst velocity
   r: Float32Array; g: Float32Array; b: Float32Array; // the pixel it takes on
   t0: Float32Array; dur: Float32Array; // its own leg of the gather (in progress units), or birth time for a burst
   size: Float32Array; seed: Float32Array; amber: Uint8Array;
@@ -158,25 +158,30 @@ export class Motes {
     }
   }
 
-  /** Lays the motes out: the frames' cells first, then the sea, then the threads. Called when the frames are placed or move. */
+  /** Lays the motes out: the frames' cells first, then the sea. Called when the frames are placed or move. */
   setFrames(frames: FrameSpec[]) {
     this.frames = frames;
     const cells = frames.reduce((a, f) => a + f.cols * f.rows, 0);
-    const n = cells + this.fieldCount + frames.length * THREAD + this.burstCount;
+    const n = cells + this.fieldCount + this.burstCount;
     if (this.s.n !== n || this.cells !== cells) {
       this.cells = cells;
       this.s = store(n);
       this.data = new Float32Array(n * 7);
       this.seedSea(cells, cells + this.fieldCount);
       this.seedFrames();
-      this.seedThreads();
     }
-    this.poseList = frames.map(() => ({ x: 0, y: 0, rot: 0 }));
+    this.poseList = frames.map(() => ({ x: 0, y: 0, scale: 1 }));
     this.retarget();
   }
 
-  /** Where every frame is right now (px), in the order they were given. */
+  /** Where every frame's anchor is right now (px), in the order they were given. */
   poses(): Pose[] { return this.poseList; }
+
+  /** Nearer is larger: the disc is seen obliquely, so the lower on the screen an anchor is, the closer it is to the reader. */
+  scaleAt(y: number) {
+    const span = this.reach * SPIRAL.ey * 1.3, top = this.cy * this.h - span;
+    return 0.78 + 0.44 * clamp01((y - top) / (2 * span));
+  }
 
   private rand(seed: number) { const x = Math.sin(seed * 12.9898 + 78.233) * 43758.5453; return x - Math.floor(x); }
   private gauss() { let u = 0, v = 0; while (u === 0) u = Math.random(); while (v === 0) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
@@ -251,39 +256,20 @@ export class Motes {
     });
   }
 
-  /** The thread from the heart out to each frame: a line of small motes along its arm. */
-  private seedThreads() {
-    const s = this.s;
-    let i = this.cells + this.fieldCount;
-    this.frames.forEach((_, fi) => {
-      for (let k = 0; k < THREAD; k++, i++) {
-        s.kind[i] = 3; s.frame[i] = fi;
-        s.rad[i] = k / (THREAD - 1); // how far along the thread, 0 heart .. 1 frame
-        s.vx[i] = (Math.random() - 0.5) * 3.2; // a little to one side, so it is a thread and not a ruled line
-        s.size[i] = 1.3 + Math.random() * 0.6 + s.rad[i] * 0.9;
-        s.seed[i] = Math.random() * 1000;
-        s.amber[i] = Math.random() < 0.55 ? 1 : 0;
-      }
-    });
-  }
-
-  /** Where each frame is now, from its arm and the turn so far; and the cells of its motes, turned with it. */
+  /** Where each frame's anchor is now, from its arm and the turn so far; and the cells of its motes, floating above it. */
   private retarget() {
     const s = this.s, reach = this.reach, hx = this.cx * this.w, hy = this.cy * this.h;
     let i = 0;
     this.frames.forEach((f, fi) => {
-      const [mx, my] = armPoint(hx, hy, f.arm, f.r, reach, this.spin);
-      const [nx, ny] = armPoint(hx, hy, f.arm, f.r + 1, reach, this.spin);
-      let rot = Math.atan2(ny - my, nx - mx);
-      if (rot > Math.PI / 2) rot -= Math.PI; else if (rot < -Math.PI / 2) rot += Math.PI;
-      rot = Math.max(-0.25, Math.min(0.25, rot));
+      const [ax, ay] = armPoint(hx, hy, f.arm, f.r, reach, this.spin);
+      const sc = this.scaleAt(ay);
       const pose = this.poseList[fi];
-      if (pose) { pose.x = mx; pose.y = my; pose.rot = rot; }
-      const cos = Math.cos(rot), sin = Math.sin(rot);
+      if (pose) { pose.x = ax; pose.y = ay; pose.scale = sc; }
+      // the frame's centre: straight up from the anchor by the stem and half the frame, all at this depth's scale
+      const mx = ax, my = ay - (f.lift + f.h / 2) * sc;
       for (let r = 0; r < f.rows; r++) for (let c = 0; c < f.cols; c++, i++) {
-        const ox = ((c + 0.5) / f.cols - 0.5) * f.w, oy = ((r + 0.5) / f.rows - 0.5) * f.h;
-        s.tx[i] = mx + ox * cos - oy * sin;
-        s.ty[i] = my + ox * sin + oy * cos;
+        s.tx[i] = mx + ((c + 0.5) / f.cols - 0.5) * f.w * sc;
+        s.ty[i] = my + ((r + 0.5) / f.rows - 0.5) * f.h * sc;
         const k = (r * f.cols + c) * 3;
         if (f.colors) { s.r[i] = f.colors[k]; s.g[i] = f.colors[k + 1]; s.b[i] = f.colors[k + 2]; }
         else { s.r[i] = s.g[i] = s.b[i] = -1; }
@@ -361,8 +347,7 @@ export class Motes {
     const pnx = hasPointer ? (px / W - 0.5) * 2 : 0, pny = hasPointer ? (py / H - 0.5) * 2 : 0;
     this.parX += ((hasPointer ? -pnx * 26 : 0) - this.parX) * Math.min(1, 3 * dt);
     this.parY += ((hasPointer ? -pny * 18 : 0) - this.parY) * Math.min(1, 3 * dt);
-    const reach = this.reach, hx0 = this.cx * W, hy0 = this.cy * H;
-    const span = ST.gatherEnd - ST.gather;
+    const reach = this.reach;
     let j = 0;
     for (let i = 0; i < s.n; i++) {
       const kind = s.kind[i];
@@ -444,27 +429,6 @@ export class Motes {
           size = s.size[i] * (1.2 - 0.5 * e);
         }
         s.x[i] = x; s.y[i] = y;
-      } else if (kind === 3) {
-        // the thread from the heart to a frame, along its arm; lit as the frame begins to form, gone when the frame is turned down
-        // or when the kept frames leave the arms
-        const fr = this.frames[s.frame[i]];
-        if (!fr) { a = 0; }
-        else {
-          const along = s.rad[i];
-          const rr = fr.r * (0.05 + 0.95 * along);
-          const ang = armAngle(fr.arm, rr, reach, this.spin);
-          x = hx0 + Math.cos(ang) * rr * SPIRAL.ex - Math.sin(ang) * s.vx[i];
-          y = hy0 + Math.sin(ang) * rr * SPIRAL.ey + Math.cos(ang) * s.vx[i];
-          s.x[i] = x; s.y[i] = y;
-          const begins = ST.gather + span * fr.order * 0.075;
-          // it is drawn out from the heart toward the frame
-          const drawn = smooth(begins - 0.02, begins + 0.1, P);
-          const reached = along <= drawn ? 1 : 0;
-          const end = fr.out ? smooth(ST.decide + fr.order * 0.01, ST.decide + fr.order * 0.01 + 0.08, P) : smooth(ST.best - 0.03, ST.best + 0.05, P);
-          const flicker = 0.85 + 0.15 * Math.sin(t * 2.2 + s.seed[i]);
-          a = seaIn * reached * (0.28 + 0.62 * along) * flicker * (1 - end);
-          if (amber) { r = ar; g = ag; b = ab; } else { r = mr; g = mg; b = mb; }
-        }
       } else {
         // burst motes live for a moment after `burst()`
         if (s.t0[i] < 0) { a = 0; }

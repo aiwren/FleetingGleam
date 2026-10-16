@@ -8,8 +8,6 @@ const EASE = [0.16, 1, 0.3, 1] as const;
 const POP = [0.34, 1.56, 0.64, 1] as const;
 /** The canvas runs past the pinned screen on every side, so the tilted nebula still covers it to the corners. */
 const OVER = 0.2;
-/** How far the nebula's plane leans back, until the best is chosen and the camera comes round to face it. */
-const LEAN = 16;
 
 /** The eight frames the sea condenses into, in the order they form. Three are kept; of those, one is best. */
 const SHOTS = ["/wall/01.webp", "/wall/16.webp", "/wall/07.webp", "/wall/04.webp", "/wall/12.webp", "/wall/09.webp", "/wall/13.webp", "/wall/15.webp"] as const;
@@ -24,31 +22,36 @@ const isKept = (i: number) => (KEPT as readonly number[]).includes(i);
  */
 type Spec = {
   W: number; H: number; FW: number; FH: number; reach: number;
+  /** how far above its anchor a frame floats (stage units, before depth scaling) */
+  lift: number;
   spots: readonly (readonly [number, number])[];
   final: Record<number, readonly [number, number, number]>; cardTop: number; cardW: number; cols: number; rows: number; field: number; max: number; travel: string;
 };
 type Geo = Spec & { grid: readonly (readonly [number, number])[] };
-/** The frames' resting places (left, top) with the nebula unturned: the layout the photographs are measured and animated from. */
+/** The frames' resting places (left, top): above their anchors with the nebula unturned, the layout the photographs are measured
+ * and animated from. */
 function lay(sp: Spec): Geo {
-  const grid = sp.spots.map(([arm, r]) => { const [x, y] = armPoint(sp.W / 2, sp.H / 2, arm, r, sp.reach); return [x - sp.FW / 2, y - sp.FH / 2] as const; });
+  const grid = sp.spots.map(([arm, r]) => { const [x, y] = armPoint(sp.W / 2, sp.H / 2, arm, r, sp.reach); return [x - sp.FW / 2, y - sp.lift - sp.FH] as const; });
   return { ...sp, grid };
 }
 const DESK: Geo = lay({
-  W: 780, H: 560, FW: 140, FH: 94, reach: 340,
-  spots: [[0, 110], [1, 110], [2, 120], [1, 210], [0, 240], [2, 250], [0, 320], [1, 320]],
-  final: { 1: [320, 100, 1.6], 5: [48, 236, 1.05], 6: [592, 236, 1.05] },
-  cardTop: 372, cardW: 324, cols: 30, rows: 20, field: 2000, max: 1.2, travel: "320vh",
+  W: 780, H: 560, FW: 132, FH: 88, reach: 340, lift: 54,
+  spots: [[2, 130], [0, 140], [1, 160], [2, 240], [0, 250], [1, 280], [0, 310], [1, 350]],
+  final: { 1: [324, 100, 1.65], 5: [48, 236, 1.1], 6: [600, 236, 1.1] },
+  cardTop: 372, cardW: 324, cols: 24, rows: 16, field: 4600, max: 1.2, travel: "320vh",
 });
 const PHONE: Geo = lay({
-  W: 360, H: 330, FW: 72, FH: 48, reach: 165,
-  spots: [[0, 44], [1, 52], [2, 52], [0, 100], [2, 100], [1, 108], [0, 148], [1, 148]],
-  final: { 1: [144, 70, 1.7], 5: [10, 8, 1], 6: [278, 8, 1] },
-  cardTop: 156, cardW: 300, cols: 18, rows: 12, field: 520, max: 1.15, travel: "280vh",
+  W: 360, H: 340, FW: 62, FH: 42, reach: 170, lift: 22,
+  spots: [[1, 36], [2, 60], [0, 63], [1, 93], [2, 93], [1, 141], [0, 144], [1, 186]],
+  final: { 1: [149, 72, 1.9], 5: [10, 8, 1.05], 6: [288, 8, 1.05] },
+  cardTop: 160, cardW: 300, cols: 16, rows: 11, field: 1300, max: 1.15, travel: "280vh",
 });
 
 /** How far the story has come: 0 the sea, 1 the photographs, 2 a few kept, 3 one best, 4 the reasons. */
 export type Phase = 0 | 1 | 2 | 3 | 4;
 const phaseAt = (p: number): Phase => (p >= ST.explain ? 4 : p >= ST.best ? 3 : p >= ST.decide ? 2 : p >= ST.developEnd - 0.03 ? 1 : 0);
+
+const smooth01 = (a: number, b: number, t: number) => { const x = Math.min(1, Math.max(0, (t - a) / (b - a))); return x * x * (3 - 2 * x); };
 
 /** Layout position of `el` inside `root`, from the offset chain: what CSS laid out, untouched by any transform. */
 function offsetIn(el: HTMLElement, root: HTMLElement): [number, number] {
@@ -75,6 +78,7 @@ export default function HeroScene({ lang, children }: { lang: Lang; children: (p
   const canvas = useRef<HTMLCanvasElement>(null);
   const imgs = useRef<(HTMLImageElement | null)[]>([]);
   const rides = useRef<(HTMLDivElement | null)[]>([]); // the element that carries each frame round with the nebula
+  const stems = useRef<(HTMLElement | null)[]>([]); // the vertical stem under each frame, down to its anchor on the arm
   const motes = useRef<Motes | null>(null);
   const geom = useRef({ u: 1, sx: 0, sy: 0, pw: 1, ph: 1 }); // stage scale and its place in canvas pixels, for the ride
   const orbit = useRef(1); // how much of the ride is applied: 1 on the arms, eased to 0 once the frames leave them
@@ -116,19 +120,32 @@ export default function HeroScene({ lang, children }: { lang: Lang; children: (p
   };
   useMotionValueEvent(scrollYProgress, "change", (p) => { if (motes.current?.ok) motes.current.setProgress(p); else if (!reduce) follow(p); });
 
-  /** Puts each photograph where the nebula has carried its frame to, as a plain transform, every tick; no React render. */
-  const ride = (poses: Pose[]) => {
+  /** Puts each photograph above where the nebula has carried its anchor to, as a plain transform, every tick; no React render.
+   * The stem under it is shown once the frame begins to form and goes with the frame when it is turned down. */
+  const ride = (p: number, poses: Pose[]) => {
     posesRef.current = poses;
     const { u, sx, sy } = geom.current;
     const target = phaseRef.current >= 3 ? 0 : 1;
     orbit.current += (target - orbit.current) * 0.08;
     const w = orbit.current < 0.002 ? 0 : orbit.current;
+    const span = ST.gatherEnd - ST.gather;
     poses.forEach((pose, i) => {
       const el = rides.current[i];
       if (!el) return;
       const [gx, gy] = g.grid[i];
-      const left = (pose.x - sx) / u - g.FW / 2, top = (pose.y - sy) / u - g.FH / 2;
-      el.style.transform = w === 0 ? "" : `translate(${(left - gx) * w}px, ${(top - gy) * w}px) rotate(${pose.rot * w}rad)`;
+      const k = 1 + (pose.scale - 1) * w;
+      // the frame's centre sits straight above the anchor by the stem and half the frame, at this depth's scale
+      const cx = (pose.x - sx) / u, cy = (pose.y - sy) / u - (g.lift + g.FH / 2) * k;
+      const left = cx - g.FW / 2, top = cy - g.FH / 2;
+      el.style.transform = w === 0 ? "" : `translate(${(left - gx) * w}px, ${(top - gy) * w}px) scale(${k})`;
+      el.style.zIndex = String(10 + Math.round(pose.y / 4));
+      const stem = stems.current[i];
+      if (stem) {
+        const begins = ST.gather + span * i * 0.075;
+        const outAt = ST.decide + i * 0.01;
+        const vis = smooth01(begins - 0.02, begins + 0.12, p) * (isKept(i) ? 1 : 1 - smooth01(outAt, outAt + 0.08, p));
+        stem.style.opacity = String(vis * w);
+      }
     });
   };
 
@@ -160,12 +177,12 @@ export default function HeroScene({ lang, children }: { lang: Lang; children: (p
       const img = imgs.current[i];
       const colors = img && img.complete && img.naturalWidth ? sampleImage(img, cols, rows) : null;
       const [arm, r] = g.spots[i];
-      return { arm, r: r * u, w: g.FW * u, h: g.FH * u, cols, rows, colors, order: i, out: !isKept(i) };
+      return { arm, r: r * u, w: g.FW * u, h: g.FH * u, lift: g.lift * u, cols, rows, colors, order: i, out: !isKept(i) };
     });
     measure();
     mm.setFrames(frames());
     mm.setProgress(scrollYProgress.get());
-    mm.onTick = (p, poses) => { follow(p); ride(poses); };
+    mm.onTick = (p, poses) => { follow(p); ride(p, poses); };
     mm.start();
     // the pixels arrive when the photographs have loaded; until then the motes carry their own light
     Promise.all(SHOTS.map((_, i) => imgs.current[i]?.decode?.().catch(() => undefined))).then(() => { if (motes.current === mm) mm.setFrames(frames()); });
@@ -193,11 +210,11 @@ export default function HeroScene({ lang, children }: { lang: Lang; children: (p
     if (!m || reduce) return;
     const { u, sx, sy } = geom.current;
     const fin = g.final[i], pose = posesRef.current[i];
-    let cx: number, cy: number;
+    let cx: number, cy: number, k = scale;
     if (phaseRef.current >= 3 && fin) { cx = sx + (fin[0] + g.FW / 2) * u; cy = sy + (fin[1] + g.FH / 2) * u; }
-    else if (pose) { cx = pose.x; cy = pose.y; }
+    else if (pose) { cx = pose.x; cy = pose.y - (g.lift + g.FH / 2) * pose.scale * u; k = pose.scale; }
     else return;
-    m.burst(cx + (g.FW / 2 - 14) * scale * u, cy - (g.FH / 2 - 14) * scale * u, 18);
+    m.burst(cx + (g.FW / 2 - 14) * k * u, cy - (g.FH / 2 - 14) * k * u, 18);
   };
   const chosen = phase >= 2, bested = phase >= 3;
   useEffect(() => {
@@ -231,7 +248,7 @@ export default function HeroScene({ lang, children }: { lang: Lang; children: (p
 
   const stageStyle: CSSProperties = { width: g.W, height: g.H, transform: `scale(${u || 1})`, transformOrigin: "0 0", opacity: u ? 1 : 0 };
   const developed = reduce ? 1 : dev;
-  const pinStyle = { "--lean": reduce || bested ? "0deg" : `${LEAN}deg`, perspective: 1400 } as CSSProperties;
+  const pinStyle = { perspective: 1400 } as CSSProperties;
 
   return (
     <section ref={track} className="relative" style={{ height: reduce ? "auto" : g.travel }}>
@@ -256,6 +273,8 @@ export default function HeroScene({ lang, children }: { lang: Lang; children: (p
                   const out = chosen && !kept;
                   return (
                     <div key={src} ref={(el) => { rides.current[i] = el; }} className="absolute will-change-transform" style={{ left: gx, top: gy, width: g.FW, height: g.FH, zIndex: best ? 3 : kept ? 2 : 1, pointerEvents: out ? "none" : "auto" }}>
+                      {/* the stem down to the anchor on the arm, with a point of light where it meets the disc */}
+                      <i ref={(el) => { stems.current[i] = el; }} aria-hidden className="hero-stem" style={{ height: g.lift, opacity: 0 }} />
                       <motion.div className="relative h-full w-full" initial={false}
                         animate={{ ...to, opacity: out ? 0 : 1, z: bested ? (best ? 80 : kept ? 20 : 0) : 0 }}
                         transition={{ duration: out ? 0.45 : 1.1, ease: EASE, delay: bested && kept && !best ? 0.08 : 0 }}>

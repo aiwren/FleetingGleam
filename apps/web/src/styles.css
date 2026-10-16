@@ -130,7 +130,7 @@ body {
    wears the camera's focus brackets, and once, on being kept and again on hover, a band of warm light crosses it: the app's
    gleam sweep. Nothing here loops on its own.                                                                           */
 .hero-tilt {
-  transform: rotateX(calc(var(--lean, 0deg) + var(--rx, 0deg))) rotateY(var(--ry, 0deg));
+  transform: rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg));
   transform-style: preserve-3d;
   transition: transform .9s var(--ease-out-expo);
 }
@@ -155,4 +155,17 @@ body {
 /* Behind the words the sea is a little thinner, so the headline is read before the nebula is looked at. */
 @media (min-width: 768px) {
   .hero-sea { -webkit-mask-image: linear-gradient(90deg, rgba(0,0,0,.55), rgba(0,0,0,.55) 32%, #000 48%); mask-image: linear-gradient(90deg, rgba(0,0,0,.55), rgba(0,0,0,.55) 32%, #000 48%); }
+}
+
+/* The stem that holds a photograph above its anchor on the arm: a hairline of warm light, brightest where it meets the disc,
+   and a small point of light there. It scales with the frame, so the near ones read as nearer. */
+.hero-stem {
+  position: absolute; left: 50%; top: 100%; width: 1.5px; margin-left: -0.75px; pointer-events: none;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--gleam) 10%, transparent), color-mix(in srgb, var(--gleam) 75%, transparent));
+  transition: opacity .3s;
+}
+.hero-stem::after {
+  content: ""; position: absolute; left: 50%; bottom: -3px; width: 6px; height: 6px; margin-left: -3px; border-radius: 50%;
+  background: var(--gleam);
+  box-shadow: 0 0 10px 2px color-mix(in srgb, var(--gleam) 70%, transparent), 0 0 22px 6px color-mix(in srgb, var(--gleam) 25%, transparent);
 }
