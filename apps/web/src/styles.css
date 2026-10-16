@@ -130,9 +130,9 @@ body {
    wears the camera's focus brackets, and once, on being kept and again on hover, a band of warm light crosses it: the app's
    gleam sweep. Nothing here loops on its own.                                                                           */
 .hero-tilt {
-  transform: rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg));
+  transform: rotateX(calc(var(--lean, 0deg) + var(--rx, 0deg))) rotateY(var(--ry, 0deg));
   transform-style: preserve-3d;
-  transition: transform .7s var(--ease-out-expo);
+  transition: transform .9s var(--ease-out-expo);
 }
 .hero-bracket {
   position: absolute; width: 16px; height: 16px; pointer-events: none;
@@ -154,5 +154,5 @@ body {
 
 /* Behind the words the sea is a little thinner, so the headline is read before the nebula is looked at. */
 @media (min-width: 768px) {
-  .hero-sea { -webkit-mask-image: linear-gradient(90deg, rgba(0,0,0,.55), rgba(0,0,0,.55) 26%, #000 46%); mask-image: linear-gradient(90deg, rgba(0,0,0,.55), rgba(0,0,0,.55) 26%, #000 46%); }
+  .hero-sea { -webkit-mask-image: linear-gradient(90deg, rgba(0,0,0,.55), rgba(0,0,0,.55) 32%, #000 48%); mask-image: linear-gradient(90deg, rgba(0,0,0,.55), rgba(0,0,0,.55) 32%, #000 48%); }
 }
