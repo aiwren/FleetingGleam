@@ -24,7 +24,7 @@
 
 - 照片只在本机处理，**不会上传**，也没有账号。
 - 应用唯一会联网做的事，是**按需下载分析用的模型文件**（第一次用到某项功能时才下载，之后完全离线）。
-- 模型文件很大，不放在本仓库里，也不随安装包分发，见 [新手上手指南](docs/GETTING_STARTED.md#第一次使用先下载模型)。
+- 模型文件很大，不放在本仓库里，也不随安装包分发；它们直接从 Hugging Face 等公开上游下载，每个文件的来源和校验值见 [docs/MODELS.md](docs/MODELS.md)，使用方式见 [新手上手指南](docs/GETTING_STARTED.md#第一次使用先下载模型)。
 
 ## 快速开始
 
@@ -81,7 +81,7 @@ DESIGN.md         设计系统：配色、字体、动效规范
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 参与开发：环境、检查、约定 |
 | [docs/RELEASING.md](docs/RELEASING.md) | 如何发布一个版本、GitHub Actions 怎么用 |
 | [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md) | 用到的第三方模型和库及其许可 |
-| [docs/PROTECTION.md](docs/PROTECTION.md) | 模型下载的封装与完整性校验（英文） |
+| [docs/MODELS.md](docs/MODELS.md) | 每个模型文件从哪里下载、多大、什么许可，怎么校验 |
 | [docs/RESEARCH.md](docs/RESEARCH.md) | 选片方法与模型的调研笔记 |
 | [DESIGN.md](DESIGN.md) | 设计系统（英文） |
 | [CHANGELOG.md](CHANGELOG.md) | 版本更新记录 |

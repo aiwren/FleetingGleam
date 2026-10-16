@@ -10,10 +10,8 @@ target
 *.local
 *.log
 
-# models, sealed models and keys never go into the repo
+# models never go into the repo (see docs/MODELS.md); the few small converted files that ship with the app are in src-tauri/model-data/
 apps/desktop/models/
-apps/desktop/dist-models/
-*.fgm
 *.onnx
 .env
 .env.*

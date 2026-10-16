@@ -55,12 +55,9 @@ jobs:
       - name: 设置 RUSTFLAGS
         run: echo "RUSTFLAGS=--remap-path-prefix=$HOME=/build --remap-path-prefix=$GITHUB_WORKSPACE=/src" >> "$GITHUB_ENV"
 
-      # 下面三项都是可选配置：没有设置对应的 Secret / Variable 时就跳过，构建仍会成功，
-      # 只是得到未签名的安装包、没有内置模型下载地址。
-      - name: 读取可选的发布配置
+      # Apple 签名与公证是可选配置：没有设置对应的 Secret 时就跳过，构建仍会成功，只是得到未签名的安装包。
+      - name: 读取可选的签名配置
         env:
-          FG_MODEL_BASE: ${{ vars.FG_MODEL_BASE }}
-          FG_SEAL_KEY: ${{ secrets.FG_SEAL_KEY }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -68,14 +65,13 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          for name in FG_MODEL_BASE FG_SEAL_KEY APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
             value="${!name}"
             if [ -n "$value" ]; then
               echo "::add-mask::$value"
               printf '%s=%s\n' "$name" "$value" >> "$GITHUB_ENV"
             fi
           done
-          [ -z "$FG_MODEL_BASE" ] && echo "::warning::未设置 FG_MODEL_BASE：这个安装包不知道从哪里下载模型，应用内的模型包将无法下载。"
           [ -z "$APPLE_CERTIFICATE" ] && echo "::warning::未设置 Apple 签名证书：这个安装包没有签名，首次打开会被 Gatekeeper 拦截。"
           exit 0
 

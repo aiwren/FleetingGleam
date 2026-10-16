@@ -1,20 +1,18 @@
 //! Models are downloaded when they are first needed, one pack at a time, not shipped inside the app and not fetched all at once.
-//! What is downloaded is the *sealed* form (see seal.rs); it is checked against the SHA-256 in the server's manifest and only then
-//! moved into place, so a broken or tampered download can never be used. Photos are never sent anywhere: this is the only
-//! network traffic the app makes, and it only ever fetches these files.
+//! Every file has a fixed address, size and SHA-256 in `models.manifest.json`, which is built into the app. Most come straight from
+//! the public repositories they were published in (Hugging Face). A download is checked against its SHA-256 and only then moved into
+//! place, so a broken or tampered file can never be used. Photos are never sent anywhere: this is the only network traffic the app
+//! makes, and it only ever fetches these files.
 
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 
-use crate::seal;
-
-/// Where the packs live on the server, set when the app is built (`FG_MODEL_BASE`) or, for testing, when it runs.
-fn base_url() -> Option<String> {
-    std::env::var("FG_MODEL_BASE").ok().or_else(|| option_env!("FG_MODEL_BASE").map(str::to_string)).map(|s| s.trim_end_matches('/').to_string())
-}
+use crate::modelfiles;
 
 pub struct Pack {
     pub id: &'static str,
@@ -47,17 +45,27 @@ pub struct PackStatus {
 }
 
 pub fn installed(dir: &Path, p: &Pack) -> bool {
-    p.files.iter().all(|f| seal::has_model(dir, f))
+    p.files.iter().all(|f| modelfiles::has_model(dir, f))
 }
 
 #[derive(Deserialize)]
 struct FileInfo {
+    /// None for the files that ship inside the app.
+    url: Option<String>,
     size: u64,
     sha256: String,
 }
-#[derive(Deserialize)]
-struct Manifest {
-    files: std::collections::HashMap<String, FileInfo>,
+
+/// The built-in list of every model file: where it comes from, how big it is and what its SHA-256 must be.
+fn manifest() -> &'static HashMap<String, FileInfo> {
+    static MANIFEST: OnceLock<HashMap<String, FileInfo>> = OnceLock::new();
+    MANIFEST.get_or_init(|| {
+        #[derive(Deserialize)]
+        struct Manifest {
+            files: HashMap<String, FileInfo>,
+        }
+        serde_json::from_str::<Manifest>(include_str!("../models.manifest.json")).expect("models.manifest.json is not valid").files
+    })
 }
 
 #[derive(Serialize, Clone)]
@@ -72,38 +80,37 @@ fn get(url: &str) -> Result<ureq::Response, String> {
     ureq::AgentBuilder::new().timeout_connect(std::time::Duration::from_secs(15)).timeout_read(std::time::Duration::from_secs(30)).build().get(url).call().map_err(|e| format!("download failed: {e}"))
 }
 
-fn manifest(base: &str) -> Result<Manifest, String> {
-    let mut text = String::new();
-    get(&format!("{base}/manifest.json"))?.into_reader().take(4 << 20).read_to_string(&mut text).map_err(|e| e.to_string())?;
-    serde_json::from_str(&text).map_err(|e| format!("the model manifest is not valid: {e}"))
+/// The files of a pack that still have to be downloaded, with what the manifest says about each.
+fn missing<'a>(dir: &Path, p: &'a Pack) -> Result<Vec<(&'a str, &'static FileInfo, &'static str)>, String> {
+    let m = manifest();
+    p.files
+        .iter()
+        .filter(|f| !modelfiles::has_model(dir, f))
+        .map(|f| {
+            let info = m.get(*f).ok_or_else(|| format!("{f} is not in the model list"))?;
+            let url = info.url.as_deref().ok_or_else(|| format!("{f} has no download address"))?;
+            Ok((*f, info, url))
+        })
+        .collect()
 }
 
-pub fn manifest_sizes(id: &str) -> Result<u64, String> {
+/// How many bytes downloading this pack would take (what is already in `dir` is not counted).
+pub fn manifest_sizes(dir: &Path, id: &str) -> Result<u64, String> {
     let p = pack(id).ok_or("unknown pack")?;
-    let base = base_url().ok_or("the model server is not configured")?;
-    let m = manifest(&base)?;
-    Ok(p.files.iter().filter_map(|f| m.files.get(&format!("{f}.{}", seal::EXT))).map(|i| i.size).sum())
+    Ok(missing(dir, p)?.iter().map(|(_, i, _)| i.size).sum())
 }
 
 /// Downloads what a pack is missing into `dir`. `cancel` stops it between chunks; half-finished files are removed.
 pub fn download(dir: &Path, id: &str, cancel: &AtomicBool, on_progress: &dyn Fn(Progress)) -> Result<(), String> {
     let p = pack(id).ok_or("unknown pack")?;
-    let base = base_url().ok_or("the model server is not configured")?;
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    let m = manifest(&base)?;
-    let todo: Vec<(&str, &FileInfo)> = p
-        .files
-        .iter()
-        .filter(|f| !seal::has_model(dir, f))
-        .map(|f| m.files.get(&format!("{f}.{}", seal::EXT)).map(|i| (*f, i)).ok_or_else(|| format!("{f} is not on the server")))
-        .collect::<Result<_, _>>()?;
-    let total: u64 = todo.iter().map(|(_, i)| i.size).sum();
+    let todo = missing(dir, p)?;
+    let total: u64 = todo.iter().map(|(_, i, _)| i.size).sum();
     let mut done_before = 0u64;
-    for (name, info) in todo {
-        let file = format!("{name}.{}", seal::EXT);
-        let part: PathBuf = dir.join(format!("{file}.part"));
+    for (name, info, url) in todo {
+        let part: PathBuf = dir.join(format!("{name}.part"));
         let result = (|| -> Result<(), String> {
-            let resp = get(&format!("{base}/{file}"))?;
+            let resp = get(url)?;
             let mut reader = resp.into_reader();
             let mut out = std::io::BufWriter::new(std::fs::File::create(&part).map_err(|e| e.to_string())?);
             let mut buf = vec![0u8; 256 * 1024];
@@ -123,8 +130,8 @@ pub fn download(dir: &Path, id: &str, cancel: &AtomicBool, on_progress: &dyn Fn(
             out.flush().map_err(|e| e.to_string())?;
             drop(out);
             if got != info.size { return Err(format!("{name}: incomplete download")); }
-            if seal::sha256_file(&part)? != info.sha256.to_lowercase() { return Err(format!("{name}: the file did not match its checksum")); }
-            std::fs::rename(&part, dir.join(&file)).map_err(|e| e.to_string())
+            if modelfiles::sha256_file(&part)? != info.sha256.to_lowercase() { return Err(format!("{name}: the file did not match its checksum")); }
+            std::fs::rename(&part, dir.join(name)).map_err(|e| e.to_string())
         })();
         if let Err(e) = result {
             let _ = std::fs::remove_file(&part);
@@ -139,7 +146,6 @@ pub fn download(dir: &Path, id: &str, cancel: &AtomicBool, on_progress: &dyn Fn(
 pub fn remove(dir: &Path, id: &str) -> Result<(), String> {
     let p = pack(id).ok_or("unknown pack")?;
     for f in p.files {
-        let _ = std::fs::remove_file(dir.join(format!("{f}.{}", seal::EXT)));
         let _ = std::fs::remove_file(dir.join(f));
     }
     Ok(())
@@ -149,30 +155,80 @@ pub fn remove(dir: &Path, id: &str) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    /// End to end against a local server: FG_MODEL_BASE=http://127.0.0.1:8765 (a folder made by the seal_models tool).
+    fn is_sha256(s: &str) -> bool {
+        s.len() == 64 && s.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
+    }
+
+    /// The built-in list must cover every file of every pack, and nothing else; the files that ship inside the app must match it exactly.
     #[test]
-    #[ignore = "needs a local model server and FG_MODEL_BASE"]
+    fn manifest_agrees_with_the_packs_and_the_bundled_files() {
+        let m = manifest();
+        for p in PACKS.iter() {
+            for f in p.files {
+                let info = m.get(*f).unwrap_or_else(|| panic!("{f} (pack {}) is not in models.manifest.json", p.id));
+                assert!(is_sha256(&info.sha256), "{f}: sha256 must be 64 lowercase hex characters");
+                match modelfiles::bundled(f) {
+                    Some(bytes) => {
+                        assert!(info.url.is_none(), "{f} ships inside the app, so it has no download address");
+                        assert_eq!(info.size, bytes.len() as u64, "{f}: size");
+                        assert_eq!(info.sha256, modelfiles::sha256_hex(bytes), "{f}: the copy in model-data/ differs from the manifest");
+                    }
+                    None => {
+                        let url = info.url.as_deref().unwrap_or_else(|| panic!("{f} is neither bundled nor has a download address"));
+                        assert!(url.starts_with("https://"), "{f}: {url}");
+                        assert!(info.size > 0, "{f}: size");
+                    }
+                }
+            }
+        }
+        for name in m.keys() {
+            assert!(PACKS.iter().any(|p| p.files.contains(&name.as_str())), "{name} is in the manifest but in no pack");
+        }
+    }
+
+    #[test]
+    fn sizes_count_only_what_has_to_be_downloaded() {
+        let nowhere = Path::new("/nonexistent-model-dir");
+        // the search pack: the text model and its tokenizer are downloaded, the projection (dense.bin) ships inside the app
+        let m = manifest();
+        let want = m["text_multilingual_qint8.onnx"].size + m["text_multilingual_tokenizer.json"].size;
+        assert_eq!(manifest_sizes(nowhere, "search").unwrap(), want);
+        assert!(manifest_sizes(nowhere, "nope").is_err());
+        // nothing left to download once the files are there
+        let dir = std::env::temp_dir().join(format!("fg-packs-size-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for f in pack("search").unwrap().files {
+            std::fs::write(dir.join(f), b"x").unwrap();
+        }
+        assert_eq!(manifest_sizes(&dir, "search").unwrap(), 0);
+        assert!(installed(&dir, pack("search").unwrap()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// End to end against the real address (38 MB): download, checksum, load the model, nothing to do the second time, cancel leaves nothing behind.
+    #[test]
+    #[ignore = "downloads 38 MB from huggingface.co"]
     fn downloads_verifies_and_loads() {
         let dir = std::env::temp_dir().join(format!("fg-packs-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let cancel = AtomicBool::new(false);
         let seen = std::sync::Mutex::new(0u64);
-        let size = manifest_sizes("search").unwrap();
-        println!("search pack: {size} bytes");
-        download(&dir, "search", &cancel, &|p| { *seen.lock().unwrap() = p.done; }).unwrap();
-        assert!(installed(&dir, pack("search").unwrap()));
+        let size = manifest_sizes(&dir, "faces").unwrap();
+        println!("faces pack: {size} bytes");
+        download(&dir, "faces", &cancel, &|p| { *seen.lock().unwrap() = p.done; }).unwrap();
+        assert!(installed(&dir, pack("faces").unwrap()));
         assert_eq!(*seen.lock().unwrap(), size);
+        assert!(std::fs::read_dir(&dir).unwrap().all(|e| !e.unwrap().file_name().to_string_lossy().ends_with(".part")));
         // nothing to do the second time
-        download(&dir, "search", &cancel, &|_| panic!("should not download again")).unwrap();
-        // the downloaded (sealed) text model works
-        let enc = crate::textsearch::TextEncoder::load(&dir).unwrap();
-        let v = enc.encode("烟花").unwrap();
-        assert_eq!(v.len(), 512);
-        // a corrupted file is rejected
-        remove(&dir, "search").unwrap();
+        download(&dir, "faces", &cancel, &|_| panic!("should not download again")).unwrap();
+        // the downloaded model works
+        crate::faces::FaceEmbedder::load(&dir).unwrap();
+        // a cancelled download leaves nothing behind
+        remove(&dir, "faces").unwrap();
         cancel.store(true, Ordering::Relaxed);
-        assert!(download(&dir, "search", &cancel, &|_| {}).is_err());
-        assert!(!installed(&dir, pack("search").unwrap()), "a cancelled download leaves nothing behind");
+        assert!(download(&dir, "faces", &cancel, &|_| {}).is_err());
+        assert!(!installed(&dir, pack("faces").unwrap()));
+        assert!(std::fs::read_dir(&dir).unwrap().all(|e| !e.unwrap().file_name().to_string_lossy().ends_with(".part")));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

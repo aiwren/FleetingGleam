@@ -1,4 +1,4 @@
-//! English to Chinese for the one-line scene descriptions, with the opus-mt-en-zh model (Helsinki-NLP, CC BY 4.0) running on this machine.
+//! English to Chinese for the one-line scene descriptions, with the opus-mt-en-zh model (Helsinki-NLP, Apache-2.0) running on this machine.
 //! The tokenizer file is the model's own with one change: its text-normalisation step (a table the `tokenizers` crate cannot read)
 //! is left out, which does not matter for plain English sentences.
 
@@ -9,7 +9,7 @@ use ort::session::Session;
 use ort::value::Tensor;
 use tokenizers::Tokenizer;
 
-use crate::seal;
+use crate::modelfiles;
 
 pub const ENCODER: &str = "opusmt_encoder_model_int8.onnx";
 pub const DECODER: &str = "opusmt_decoder_model_merged_int8.onnx";
@@ -28,11 +28,7 @@ const MAX_TOKENS: usize = 64;
 fn session(dir: &Path, name: &str) -> Result<Session, String> {
     // Two threads each: describing scenes runs while the app is in use and must not take every core.
     let mut b = Session::builder().map_err(|e| e.to_string())?.with_intra_threads(2).map_err(|e| e.to_string())?;
-    if seal::is_sealed(dir, name) {
-        b.commit_from_memory(&seal::read_model(dir, name)?).map_err(|e| e.to_string())
-    } else {
-        b.commit_from_file(dir.join(name)).map_err(|e| e.to_string())
-    }
+    b.commit_from_file(dir.join(name)).map_err(|e| e.to_string())
 }
 
 pub struct Translator {
@@ -43,11 +39,11 @@ pub struct Translator {
 
 impl Translator {
     pub fn available(dir: &Path) -> bool {
-        FILES.iter().all(|n| seal::has_model(dir, n))
+        FILES.iter().all(|n| modelfiles::has_model(dir, n))
     }
 
     pub fn load(dir: &Path) -> Result<Self, String> {
-        let tokenizer = Tokenizer::from_bytes(seal::read_model(dir, TOKENIZER)?).map_err(|e| e.to_string())?;
+        let tokenizer = Tokenizer::from_bytes(modelfiles::read_model(dir, TOKENIZER)?).map_err(|e| e.to_string())?;
         Ok(Self { encoder: Mutex::new(session(dir, ENCODER)?), decoder: Mutex::new(session(dir, DECODER)?), tokenizer })
     }
 

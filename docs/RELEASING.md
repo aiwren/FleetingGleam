@@ -42,12 +42,10 @@ git tag -d v0.1.0 && git push --delete origin v0.1.0   # 删除标签，同时�
 
 ## 在仓库里配置
 
-**Settings → Secrets and variables → Actions**。下面全部是**可选**的：不配置，构建照样成功，只是得到的包有缺陷，工作流会在日志里用黄色警告告诉你缺了什么。
+**Settings → Secrets and variables → Actions**。下面全部是**可选**的：不配置，构建照样成功，只是得到未签名的安装包，工作流会在日志里用黄色警告告诉你。
 
 | 名称 | 类型 | 作用 |
 |---|---|---|
-| `FG_MODEL_BASE` | Variable | 模型文件托管的 `https://` 地址。**不配置的话，应用不知道去哪里下载模型，装好后模型下载会失败** |
-| `FG_SEAL_KEY` | Secret | 模型封装用的密钥，必须和你封装托管模型时用的是同一个，见下 |
 | `APPLE_CERTIFICATE` | Secret | Developer ID Application 证书（`.p12` 文件的 base64） |
 | `APPLE_CERTIFICATE_PASSWORD` | Secret | 上述证书的密码 |
 | `APPLE_SIGNING_IDENTITY` | Secret | 例如 `Developer ID Application: 你的名字 (TEAMID)` |
@@ -57,23 +55,26 @@ git tag -d v0.1.0 && git push --delete origin v0.1.0   # 删除标签，同时�
 
 ## 模型怎么提供给用户
 
-模型文件很大，**不放进仓库，也不放进安装包**。应用装好之后，在用到某项功能时才去 `FG_MODEL_BASE` 下载，下载的是封装后的文件，校验通过才会使用（见 [PROTECTION.md](PROTECTION.md)）。
+模型**不放进仓库，也不放进安装包**，由应用在用到时自己下载。大部分直接从 Hugging Face 下载，地址、大小和 SHA-256 都写在应用内置的清单里，所以**发布应用不需要配置任何模型服务器**。详见 [MODELS.md](MODELS.md)。
 
-**CI 只构建应用，不封装也不托管模型**，这一步由你在本地做一次，之后每次发版都复用：
+只有 3 个文件例外：SigLIP 视觉模型（857 MB）和两个 MediaPipe 眼睛模型（共 6.8 MB）。上游没有现成可用的版本，是我们转换的，清单里把它们的地址指向本仓库的 Release `models-v1`。**这个 Release 需要在仓库公开之后上传一次**，之后每次发版都不用再管（除非更换这几个模型）：
 
 ```bash
-# 1. 把明文模型放进 apps/desktop/models/（不提交到 git）
-# 2. 用同一个密钥封装，输出到 apps/desktop/dist-models/（里面有 manifest.json）
-cd apps/desktop/src-tauri
-FG_SEAL_KEY=<你的密钥> cargo run --release --example seal_models -- ../models ../dist-models
-# 3. 把 dist-models/ 整个文件夹上传到一个能公开下载的地方，把地址配成 FG_MODEL_BASE
+# 在放着这三个文件的机器上，进入 apps/desktop/models/
+gh release create models-v1 \
+  siglip_so400m_vision_fp16.onnx face_landmarks.onnx face_blendshapes.onnx \
+  --repo lcopilot/FleetingGleam \
+  --title "模型文件（models-v1）" \
+  --notes "FleetingGleam 的应用在第一次用到“极致分析”和“MediaPipe 眼睛检测”时会从这里下载这几个文件，不需要手动下载。来源和转换方式见 docs/MODELS.md。"
 ```
 
 要点：
 
-- **密钥要保存好，并且每个版本都用同一个。** 密钥是编译进应用的，用密钥 A 封装的模型，只有用密钥 A 构建的应用才解得开。换了密钥就要重新封装、重新上传。生成密钥：`openssl rand -hex 32`。**不要把它提交进仓库。**
-- **放哪里**：任何支持直接下载的静态托管都行，比如对象存储（Cloudflare R2、阿里云 OSS、S3）。另一个可以考虑的办法是把 `dist-models/` 里的文件作为一个单独 Release（例如标签 `models-v1`）的附件，那么地址就是 `https://github.com/lcopilot/FleetingGleam/releases/download/models-v1`；**这个做法我们没有实际验证过**，并且 GitHub 对单个附件有 2 GiB 的上限，用之前请先试一遍。
-- **确认模型许可允许你再分发。** 你托管的是别人训练的模型，每个都有自己的许可，见 [THIRD_PARTY.md](THIRD_PARTY.md)。其中有的要求署名，有的许可还没有核实。
+- 上传前先核对：`shasum -a 256 <文件>` 必须和 `models.manifest.json` 里的值一致，否则应用会拒绝这个文件。
+- 必须是**已发布**的 Release（不能是草稿），应用才能匿名下载。仓库还是私有时，这些地址打不开。
+- 标签 `models-v1` 不符合 `v0.1.0` 这种格式，**不会触发**发布工作流。
+- GitHub 对单个附件的上限是 2 GiB，857 MB 的 SigLIP 文件在范围内。
+- 在上传之前，“极致分析”和“MediaPipe 眼睛检测”下载会失败，其余功能不受影响。
 
 ## 本地构建一个发布包
 
@@ -81,10 +82,10 @@ FG_SEAL_KEY=<你的密钥> cargo run --release --example seal_models -- ../model
 
 ```bash
 cd apps/desktop
-FG_SEAL_KEY=<密钥> FG_MODEL_BASE=<模型地址> sh scripts/release.sh
+sh scripts/release.sh
 ```
 
-它会构建辅助程序、封装模型、构建应用，并检查安装包里没有混进模型文件。
+它会构建辅助程序、构建应用，并检查安装包里没有混进模型文件。
 
 ## 当前的限制
 

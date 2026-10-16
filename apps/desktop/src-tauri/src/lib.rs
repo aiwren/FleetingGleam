@@ -11,7 +11,7 @@ mod florence;
 mod translate;
 mod faces;
 mod prefs;
-pub mod seal;
+pub mod modelfiles;
 mod scorer;
 mod colorsig;
 mod mediapipe;
@@ -174,7 +174,7 @@ fn models_dir(app: &AppHandle) -> PathBuf {
     #[cfg(debug_assertions)]
     {
         let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../models");
-        if std::env::var("FG_FORCE_DOWNLOAD").is_err() && seal::has_model(&dev, "clip_vit_b32_vision_int8.onnx") {
+        if std::env::var("FG_FORCE_DOWNLOAD").is_err() && modelfiles::has_model(&dev, "clip_vit_b32_vision_int8.onnx") {
             return dev;
         }
     }
@@ -978,7 +978,7 @@ async fn pack_size(app: AppHandle, id: String) -> Result<u64, String> {
     if modelpacks::installed(&dir, p) {
         return Ok(0);
     }
-    tauri::async_runtime::spawn_blocking(move || modelpacks::manifest_sizes(&id)).await.map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || modelpacks::manifest_sizes(&dir, &id)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -1265,11 +1265,6 @@ fn set_locale(app: AppHandle, locale: String) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Release builds refuse debugger attachment (macOS). A deterrent, not a wall: the real protection is sealing, stripping and code signing.
-    #[cfg(all(target_os = "macos", not(debug_assertions)))]
-    unsafe {
-        libc::ptrace(31 /* PT_DENY_ATTACH */, 0, std::ptr::null_mut(), 0);
-    }
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {

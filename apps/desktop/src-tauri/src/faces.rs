@@ -13,7 +13,7 @@ use ort::session::Session;
 use ort::value::Tensor;
 
 use crate::analyze::Photo;
-use crate::seal;
+use crate::modelfiles;
 
 pub const MODEL_FILE: &str = "face_recognition_sface_2021dec.onnx";
 const SIZE: u32 = 112;
@@ -53,7 +53,7 @@ pub struct Face {
 }
 
 pub fn available(dir: &Path) -> bool {
-    seal::has_model(dir, MODEL_FILE)
+    modelfiles::has_model(dir, MODEL_FILE)
 }
 
 pub struct FaceEmbedder {
@@ -63,11 +63,7 @@ pub struct FaceEmbedder {
 impl FaceEmbedder {
     pub fn load(dir: &Path) -> Result<Self, String> {
         let mut b = Session::builder().map_err(|e| e.to_string())?;
-        let session = if seal::is_sealed(dir, MODEL_FILE) {
-            b.commit_from_memory(&seal::read_model(dir, MODEL_FILE)?).map_err(|e| e.to_string())?
-        } else {
-            b.commit_from_file(dir.join(MODEL_FILE)).map_err(|e| e.to_string())?
-        };
+        let session = b.commit_from_file(dir.join(MODEL_FILE)).map_err(|e| e.to_string())?;
         Ok(Self { session: Mutex::new(session) })
     }
 

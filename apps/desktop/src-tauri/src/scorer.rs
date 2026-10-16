@@ -1,5 +1,5 @@
 use crate::clipgpu::GpuClip;
-use crate::seal;
+use crate::modelfiles;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
@@ -69,7 +69,7 @@ pub const SIGLIP_HEAD: &str = "aesthetic_v25_head.json";
 /// What will actually run for a request. High needs its files and an accelerator (the L/14 model is fp16 only);
 /// otherwise it quietly falls back to Fast, and everything downstream (cache, reporting) uses the effective choice.
 pub fn resolve(model_dir: &Path, accel: bool, want: Quality) -> Quality {
-    let has = |n: &str| seal::has_model(model_dir, n);
+    let has = |n: &str| modelfiles::has_model(model_dir, n);
     let quick = has(B32_FP16_FILE) || has(INT8_FILE);
     if want == Quality::Ultra && accel && quick && has(SIGLIP_FILE) && has(SIGLIP_HEAD) {
         Quality::Ultra
@@ -98,12 +98,8 @@ impl SiglipAesthetic {
         if gpu {
             b = b.with_execution_providers([CoreML::default().build()]).map_err(|e| e.to_string())?;
         }
-        let session = if seal::is_sealed(dir, SIGLIP_FILE) {
-            b.commit_from_memory(&seal::read_model(dir, SIGLIP_FILE)?).map_err(|e| e.to_string())?
-        } else {
-            b.commit_from_file(dir.join(SIGLIP_FILE)).map_err(|e| e.to_string())?
-        };
-        let head: Head = serde_json::from_slice(&seal::read_model(dir, SIGLIP_HEAD)?).map_err(|e| e.to_string())?;
+        let session = b.commit_from_file(dir.join(SIGLIP_FILE)).map_err(|e| e.to_string())?;
+        let head: Head = serde_json::from_slice(&modelfiles::read_model(dir, SIGLIP_HEAD)?).map_err(|e| e.to_string())?;
         Ok(Self { session: Mutex::new(session), head })
     }
 
@@ -189,14 +185,9 @@ struct CpuSpec {
 impl CpuSpec {
     /// The sessions, built side by side (loading one takes a moment).
     fn build(&self, copies: usize) -> Result<Pool, String> {
-        // a sealed model is decrypted in memory only; there is never a plaintext file on disk
-        let sealed = if seal::is_sealed(&self.dir, self.file) { Some(seal::read_model(&self.dir, self.file)?) } else { None };
         let one = || -> Result<Session, String> {
             let mut b = Session::builder().map_err(|e| e.to_string())?.with_intra_threads(self.threads).map_err(|e| e.to_string())?;
-            match &sealed {
-                Some(bytes) => b.commit_from_memory(bytes).map_err(|e| e.to_string()),
-                None => b.commit_from_file(self.dir.join(self.file)).map_err(|e| e.to_string()),
-            }
+            b.commit_from_file(self.dir.join(self.file)).map_err(|e| e.to_string())
         };
         let sessions: Vec<Result<Session, String>> = std::thread::scope(|sc| {
             let hs: Vec<_> = (0..copies.max(1)).map(|_| sc.spawn(&one)).collect();
@@ -232,7 +223,7 @@ fn gpu_encoder(model_dir: &Path, file: &str, spec: &CpuSpec) -> Option<GpuClip> 
     if !cfg!(target_os = "macos") || std::env::var_os("FG_NO_GPU").is_some() {
         return None;
     }
-    let bytes = seal::read_model(model_dir, file).ok()?;
+    let bytes = modelfiles::read_model(model_dir, file).ok()?;
     let marker = std::env::temp_dir().join(format!("fg-clip-gpu-{file}-{}", bytes.len()));
     let (ok_marker, bad_marker) = (marker.with_extension("ok"), marker.with_extension("bad"));
     if bad_marker.exists() {
@@ -300,7 +291,7 @@ impl ClipScorer {
         let (file, head_file, backend, model) = match q {
             Quality::High => (L14_FP16_FILE, L14_HEAD, "cpu-fp16", "ViT-L/14"),
             Quality::Fast | Quality::Ultra => {
-                if accel && seal::has_model(model_dir, B32_FP16_FILE) { (B32_FP16_FILE, B32_HEAD, "cpu-fp16", "ViT-B/32") } else { (INT8_FILE, B32_HEAD, "cpu-int8", "ViT-B/32") }
+                if accel && modelfiles::has_model(model_dir, B32_FP16_FILE) { (B32_FP16_FILE, B32_HEAD, "cpu-fp16", "ViT-B/32") } else { (INT8_FILE, B32_HEAD, "cpu-int8", "ViT-B/32") }
             }
         };
         let n = copies.unwrap_or_else(|| sessions_for(model)).max(1);
@@ -314,7 +305,7 @@ impl ClipScorer {
             let pool = spec.build(n).map_err(|e| format!("load CLIP model: {e}"))?;
             let _ = cpu.set(Ok(pool));
         }
-        let head: Head = serde_json::from_slice(&seal::read_model(model_dir, head_file).map_err(|e| format!("read aesthetic head: {e}"))?).map_err(|e| e.to_string())?;
+        let head: Head = serde_json::from_slice(&modelfiles::read_model(model_dir, head_file).map_err(|e| format!("read aesthetic head: {e}"))?).map_err(|e| e.to_string())?;
         // the newer scorer is added on top of the quick model, which keeps making the grouping / search vectors
         let (aes, model) = if q == Quality::Ultra { (Some(SiglipAesthetic::load(model_dir, true)?), "SigLIP so400m") } else { (None, model) };
         let backend = if gpu.is_some() { "gpu-fp16" } else { backend };
@@ -613,30 +604,6 @@ mod tests {
                 Err(e) => println!("{n}: rejected ({e})"),
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod sealed_tests {
-    use super::*;
-
-    /// The sealed models must give exactly the same scores as the plain ones. Needs the real models directory.
-    #[test]
-    #[ignore = "needs models/"]
-    fn sealed_scorer_matches_plain() {
-        let plain = Path::new(env!("CARGO_MANIFEST_DIR")).join("../models");
-        let sealed = std::env::temp_dir().join(format!("fg-sealed-{}", std::process::id()));
-        std::fs::create_dir_all(&sealed).unwrap();
-        for name in [INT8_FILE, B32_HEAD] {
-            seal::seal_file(&plain.join(name), &sealed.join(format!("{name}.{}", seal::EXT)), [3u8; 12]).unwrap();
-        }
-        assert!(!sealed.join(INT8_FILE).exists(), "no plaintext next to the sealed files");
-        let img = DynamicImage::ImageRgb8(image::RgbImage::from_fn(300, 200, |x, y| image::Rgb([(x % 251) as u8, (y % 241) as u8, ((x + y) % 239) as u8])));
-        let a = ClipScorer::load(&plain, false, Quality::Fast).unwrap().analyze(&img).unwrap();
-        let b = ClipScorer::load(&sealed, false, Quality::Fast).unwrap().analyze(&img).unwrap();
-        assert_eq!(a.embedding, b.embedding);
-        assert_eq!(a.score, b.score);
-        let _ = std::fs::remove_dir_all(&sealed);
     }
 }
 

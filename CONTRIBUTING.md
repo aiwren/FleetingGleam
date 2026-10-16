@@ -38,7 +38,7 @@ sh apps/desktop/scripts/build-vision.sh   # 构建 Apple Vision 辅助程序（�
 模型体积很大，**不放在仓库里**，应用平时是第一次用到时才下载。开发时有两种办法：
 
 1. **只改界面**：用浏览器预览模式（`pnpm desktop dev`，打开 `/?mock`）。它用绘制出来的示例照片和模拟的分析过程，不需要 Rust，也不需要任何模型。
-2. **要跑真实分析**：把模型文件放进 `apps/desktop/models/`（这个目录已被 `.gitignore` 忽略）。只有 debug 构建会读取这里的明文模型。需要哪些文件、文件名是什么，见 `apps/desktop/src-tauri/src/modelpacks.rs` 里的 `PACKS`；模型的来源见 [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md)。
+2. **要跑真实分析**：把模型文件放进 `apps/desktop/models/`（这个目录已被 `.gitignore` 忽略）。只有 debug 构建会读取这里的明文模型。需要哪些文件、文件名是什么，见 `apps/desktop/src-tauri/src/modelpacks.rs` 里的 `PACKS`；每个文件从哪里下载见 [docs/MODELS.md](docs/MODELS.md)，许可见 [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md)。
 
 > 目前还没有一键下载模型的脚本。如果你愿意写一个，那会是一份很受欢迎的贡献。
 

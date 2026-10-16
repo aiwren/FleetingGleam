@@ -15,7 +15,7 @@ use image::DynamicImage;
 use ort::session::Session;
 use ort::value::Tensor;
 
-use crate::seal;
+use crate::modelfiles;
 
 pub const LANDMARKS_FILE: &str = "face_landmarks.onnx";
 pub const BLENDSHAPES_FILE: &str = "face_blendshapes.onnx";
@@ -43,7 +43,7 @@ const BLINK_LEFT: usize = 9;
 const BLINK_RIGHT: usize = 10;
 
 pub fn available(dir: &Path) -> bool {
-    seal::has_model(dir, LANDMARKS_FILE) && seal::has_model(dir, BLENDSHAPES_FILE)
+    modelfiles::has_model(dir, LANDMARKS_FILE) && modelfiles::has_model(dir, BLENDSHAPES_FILE)
 }
 
 pub struct MediapipeEyes {
@@ -55,11 +55,7 @@ impl MediapipeEyes {
     pub fn load(dir: &Path) -> Result<Self, String> {
         let build = |file: &str| -> Result<Session, String> {
             let mut b = Session::builder().map_err(|e| e.to_string())?;
-            if seal::is_sealed(dir, file) {
-                b.commit_from_memory(&seal::read_model(dir, file)?).map_err(|e| e.to_string())
-            } else {
-                b.commit_from_file(dir.join(file)).map_err(|e| e.to_string())
-            }
+            b.commit_from_file(dir.join(file)).map_err(|e| e.to_string())
         };
         Ok(Self { landmarks: Mutex::new(build(LANDMARKS_FILE)?), blendshapes: Mutex::new(build(BLENDSHAPES_FILE)?) })
     }

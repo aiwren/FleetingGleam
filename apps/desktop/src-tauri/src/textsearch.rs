@@ -9,7 +9,7 @@ use ort::session::Session;
 use ort::value::Tensor;
 use tokenizers::Tokenizer;
 
-use crate::seal;
+use crate::modelfiles;
 
 pub const TEXT_MODEL: &str = "text_multilingual_qint8.onnx";
 pub const TEXT_TOKENIZER: &str = "text_multilingual_tokenizer.json";
@@ -27,19 +27,15 @@ pub struct TextEncoder {
 
 impl TextEncoder {
     pub fn available(dir: &Path) -> bool {
-        [TEXT_MODEL, TEXT_TOKENIZER, TEXT_DENSE].iter().all(|n| seal::has_model(dir, n))
+        [TEXT_MODEL, TEXT_TOKENIZER, TEXT_DENSE].iter().all(|n| modelfiles::has_model(dir, n))
     }
 
     pub fn load(dir: &Path) -> Result<Self, String> {
         let mut b = Session::builder().map_err(|e| e.to_string())?;
         // The int8 model is built for the CPU; it is tiny work (one short sentence), so no accelerator is involved.
-        let session = if seal::is_sealed(dir, TEXT_MODEL) {
-            b.commit_from_memory(&seal::read_model(dir, TEXT_MODEL)?).map_err(|e| e.to_string())?
-        } else {
-            b.commit_from_file(dir.join(TEXT_MODEL)).map_err(|e| e.to_string())?
-        };
-        let tokenizer = Tokenizer::from_bytes(seal::read_model(dir, TEXT_TOKENIZER)?).map_err(|e| e.to_string())?;
-        let raw = seal::read_model(dir, TEXT_DENSE)?;
+        let session = b.commit_from_file(dir.join(TEXT_MODEL)).map_err(|e| e.to_string())?;
+        let tokenizer = Tokenizer::from_bytes(modelfiles::read_model(dir, TEXT_TOKENIZER)?).map_err(|e| e.to_string())?;
+        let raw = modelfiles::read_model(dir, TEXT_DENSE)?;
         if raw.len() != HIDDEN * OUT * 4 {
             return Err("text projection has an unexpected size".into());
         }
