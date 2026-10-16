@@ -1,0 +1,101 @@
+# 发布：只在推送形如 v0.1.0 的版本标签时运行，构建 macOS 安装包并创建 GitHub Release（草稿）。
+# 日常提交不会触发它。发布步骤见 docs/RELEASING.md。
+name: Release
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+
+# 创建 Release、上传安装包需要写权限，仅此工作流使用
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    name: macOS（${{ matrix.label }}）
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-15, target: aarch64-apple-darwin, label: Apple Silicon }
+          - { runner: macos-15-intel, target: x86_64-apple-darwin, label: Intel }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 校验标签与应用版本一致
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          app=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
+          if [ "$tag" != "$app" ]; then
+            echo "::error::标签 $GITHUB_REF_NAME 与 tauri.conf.json 的版本 $app 不一致，请先修改版本号再打标签。"
+            exit 1
+          fi
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+          key: ${{ matrix.target }}
+
+      - run: pnpm install --frozen-lockfile
+
+      # 由 Swift 源码构建 Apple Vision / ImageIO 辅助程序（编译产物不进仓库）
+      - name: 构建 macOS 辅助程序
+        run: sh apps/desktop/scripts/build-vision.sh
+
+      # 去掉编译产物里的本机路径（与 scripts/release.sh 一致）
+      - name: 设置 RUSTFLAGS
+        run: echo "RUSTFLAGS=--remap-path-prefix=$HOME=/build --remap-path-prefix=$GITHUB_WORKSPACE=/src" >> "$GITHUB_ENV"
+
+      # 下面三项都是可选配置：没有设置对应的 Secret / Variable 时就跳过，构建仍会成功，
+      # 只是得到未签名的安装包、没有内置模型下载地址。
+      - name: 读取可选的发布配置
+        env:
+          FG_MODEL_BASE: ${{ vars.FG_MODEL_BASE }}
+          FG_SEAL_KEY: ${{ secrets.FG_SEAL_KEY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for name in FG_MODEL_BASE FG_SEAL_KEY APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            value="${!name}"
+            if [ -n "$value" ]; then
+              echo "::add-mask::$value"
+              printf '%s=%s\n' "$name" "$value" >> "$GITHUB_ENV"
+            fi
+          done
+          [ -z "$FG_MODEL_BASE" ] && echo "::warning::未设置 FG_MODEL_BASE：这个安装包不知道从哪里下载模型，应用内的模型包将无法下载。"
+          [ -z "$APPLE_CERTIFICATE" ] && echo "::warning::未设置 Apple 签名证书：这个安装包没有签名，首次打开会被 Gatekeeper 拦截。"
+          exit 0
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/desktop
+          tauriScript: pnpm tauri
+          args: --config src-tauri/tauri.release.conf.json --target ${{ matrix.target }}
+          tagName: ${{ github.ref_name }}
+          releaseName: FleetingGleam ${{ github.ref_name }}
+          releaseBody: |
+            ## 安装
+            下载对应芯片的 `.dmg`：Apple Silicon（M 系列）选 `aarch64`，Intel 选 `x64`。需要 macOS 15 及以上。
+
+            未签名的安装包首次打开需要在「系统设置 → 隐私与安全性」里手动放行。
+            照片只在本机处理；应用只会联网下载模型文件。
+
+            更新内容见 [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)。
+          # 先作为草稿，维护者检查安装包后再手动发布
+          releaseDraft: true
+          prerelease: ${{ contains(github.ref_name, '-') }}

@@ -1,0 +1,57 @@
+# 持续集成：每次推送到 main 和每个 Pull Request 都会运行，只做检查，不发布任何东西。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# 默认只读；CI 不需要写权限
+permissions:
+  contents: read
+
+# 同一分支上有新提交时，取消还在跑的旧任务
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: 落地页（类型检查 + 构建）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # pnpm 版本取自根目录 package.json 的 packageManager 字段
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @fleetinggleam/web exec tsc --noEmit
+      - run: pnpm build:web
+
+  desktop:
+    name: 桌面端（前端构建 + Rust 检查，macOS）
+    # 桌面端的原生部分用 swiftc 编译，只能在 macOS 上构建
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - run: pnpm install --frozen-lockfile
+      # Tauri 编译时要读取 frontendDist，所以必须先构建前端
+      - run: pnpm --filter @fleetinggleam/desktop build
+      - name: cargo check
+        run: cargo check --locked
+        working-directory: apps/desktop/src-tauri
+      - name: cargo test
+        run: cargo test --locked --lib
+        working-directory: apps/desktop/src-tauri

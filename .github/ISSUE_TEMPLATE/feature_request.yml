@@ -1,0 +1,21 @@
+name: 功能建议
+description: 想要一个新功能，或改进现有的体验
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你想解决什么问题
+      description: 先说场景，而不是方案。比如“一次旅行拍了 3000 张，我想……”
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: 你设想的做法
+      description: 如果有想法，可以写下来；没有也没关系
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 你现在是怎么做的
+      description: 现有的变通办法，或者别的软件是怎么处理的

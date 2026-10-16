@@ -1,0 +1,51 @@
+name: 报告问题
+description: 应用崩溃、结果不对、界面异常
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。**请不要在这里上传你的个人照片。** 如果需要说明某张照片的问题，描述一下它的特征就好（比如“逆光的人像”“夜景”）。
+        如果是**安全问题**，请不要在这里公开，见 [SECURITY.md](https://github.com/lcopilot/FleetingGleam/blob/main/SECURITY.md)。
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么
+      description: 你看到了什么？你原本期望看到什么？
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 怎么复现
+      placeholder: |
+        1. 新建项目，选择一个包含约 200 张照片的文件夹
+        2. 点击“开始分析”
+        3. ……
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 应用版本
+      description: 「设置 → 关于」里能看到
+      placeholder: 例如 0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: system
+    attributes:
+      label: 系统与芯片
+      options:
+        - macOS 15 · Apple Silicon（M 系列）
+        - macOS 15 · Intel
+        - macOS 26 或更新 · Apple Silicon
+        - macOS 26 或更新 · Intel
+        - 其他
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: 其他信息
+      description: 截图、屏幕录制、你的设置（分析质量、分析方式）、照片的格式（JPEG / RAW / HEIC）等
