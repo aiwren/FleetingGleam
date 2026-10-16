@@ -1,7 +1,8 @@
 /**
  * The hero's sea of light: a nebula. Thousands of motes, one for every photograph of a long shoot, gather in three slow arms
- * around a bright heart, with depth (the near ones larger and brighter, and they shift more as the pointer moves) and a turn so
- * slow it is felt rather than seen, the inside faster than the edge, so the arms keep slowly changing shape.
+ * around a bright heart, with depth (the near ones larger and brighter, and they shift more as the pointer moves), and the whole
+ * of it sways a few degrees back and forth, so slowly it is felt rather than seen. It sways as one piece: the arms keep their shape
+ * however long the page is open, and nothing anchored to them ever wanders far from where it was placed.
  *
  * The frames hover *over* the arms. Each one is anchored to a point on an arm (which arm, how far out), rides the turn with it,
  * and floats a little above it on a vertical stem; the nearer ones (lower on the screen) are larger. As the reader scrolls, most of
@@ -29,16 +30,17 @@ export type Palette = {
 
 /** The shape of the nebula's arms: how much they twist over the reach, and how the whole is pressed into an ellipse. */
 export const SPIRAL = { twist: 2.7, ex: 1.25, ey: 0.5 } as const;
-/** A point on arm `arm` (0..2) at radius `r` around the heart (cx, cy), with the nebula turned by `spin` seconds. */
-export function armPoint(cx: number, cy: number, arm: number, r: number, reach: number, spin = 0): [number, number] {
-  const a = armAngle(arm, r, reach, spin);
+/** A point on arm `arm` (0..2) at radius `r` around the heart (cx, cy), with the whole nebula turned by `theta` radians. */
+export function armPoint(cx: number, cy: number, arm: number, r: number, reach: number, theta = 0): [number, number] {
+  const a = armAngle(arm, r, reach, theta);
   return [cx + Math.cos(a) * r * SPIRAL.ex, cy + Math.sin(a) * r * SPIRAL.ey];
 }
-/** The inside turns faster than the edge, so the arms keep slowly winding. */
-export function omega(r: number, reach: number) { return 0.028 + 0.05 * (1 - Math.min(1, r / reach)); }
-export function armAngle(arm: number, r: number, reach: number, spin: number) {
-  return arm * ((Math.PI * 2) / 3) + (r / reach) * SPIRAL.twist + omega(r, reach) * spin;
+export function armAngle(arm: number, r: number, reach: number, theta: number) {
+  return arm * ((Math.PI * 2) / 3) + (r / reach) * SPIRAL.twist + theta;
 }
+/** The sway: how far the nebula turns (radians, either way) and how long one turn there and back takes (seconds). */
+export const SWAY = { amplitude: 0.17, period: 36 } as const;
+export function swayAt(t: number) { return SWAY.amplitude * Math.sin((t / SWAY.period) * Math.PI * 2); }
 
 /** Where in the scroll (0 to 1 over the pinned stretch) each part of the story happens. The DOM side keys to the same numbers. */
 export const ST = {
@@ -108,7 +110,7 @@ export class Motes {
   private running = false;
   private began = -1; // performance.now() when the sea first appeared
   private last = 0;
-  private spin = 0; // seconds the nebula has been turning
+  private swayT = 0; // seconds the nebula has been swaying (not counting time paused)
   private target = 0; private P = 0; // scroll progress asked for, and the smoothed value actually shown
   private cx = 0.66; private cy = 0.5; // the nebula's heart, as fractions of the canvas
   private reach = 400; // the radius (px) its arms twist over; the motes run out to about 1.5 times this
@@ -118,8 +120,9 @@ export class Motes {
   private palette: Palette;
   private lost = false;
   private poseList: Pose[] = [];
-  /** Called once per frame with the smoothed progress and where every frame is, for the DOM side to follow. */
-  onTick: ((p: number, poses: Pose[]) => void) | null = null;
+  /** Called once per frame with the smoothed progress, where every frame's anchor is, and how far the kept frames have left their
+   * anchors (0 on the arms .. 1 gone), for the DOM side to follow without any lag of its own. */
+  onTick: ((p: number, poses: Pose[], leaving: number) => void) | null = null;
 
   constructor(private canvas: HTMLCanvasElement, palette: Palette, opts: { field: number }) {
     this.palette = palette;
@@ -210,11 +213,11 @@ export class Motes {
     this.placeFromPolar(i);
   }
 
-  /** The nebula is an ellipse, wider than it is tall, around the heart. */
-  private placeFromPolar(i: number) {
+  /** The nebula is an ellipse, wider than it is tall, around the heart; `ang` is the mote's own angle, `theta` the whole sway. */
+  private placeFromPolar(i: number, theta = 0) {
     const s = this.s;
-    s.fx[i] = this.cx * this.w + Math.cos(s.ang[i]) * s.rad[i] * SPIRAL.ex;
-    s.fy[i] = this.cy * this.h + Math.sin(s.ang[i]) * s.rad[i] * SPIRAL.ey;
+    s.fx[i] = this.cx * this.w + Math.cos(s.ang[i] + theta) * s.rad[i] * SPIRAL.ex;
+    s.fy[i] = this.cy * this.h + Math.sin(s.ang[i] + theta) * s.rad[i] * SPIRAL.ey;
   }
 
   private seedSea(from: number, to: number) {
@@ -256,12 +259,13 @@ export class Motes {
     });
   }
 
-  /** Where each frame's anchor is now, from its arm and the turn so far; and the cells of its motes, floating above it. */
+  /** Where each frame's anchor is now, from its arm and the sway; and the cells of its motes, floating above it. */
   private retarget() {
     const s = this.s, reach = this.reach, hx = this.cx * this.w, hy = this.cy * this.h;
+    const theta = swayAt(this.swayT);
     let i = 0;
     this.frames.forEach((f, fi) => {
-      const [ax, ay] = armPoint(hx, hy, f.arm, f.r, reach, this.spin);
+      const [ax, ay] = armPoint(hx, hy, f.arm, f.r, reach, theta);
       const sc = this.scaleAt(ay);
       const pose = this.poseList[fi];
       if (pose) { pose.x = ax; pose.y = ay; pose.scale = sc; }
@@ -330,11 +334,12 @@ export class Motes {
     this.P += (this.target - this.P) * Math.min(1, 7 * dt);
     if (Math.abs(this.target - this.P) < 0.0005) this.P = this.target;
     const P = this.P;
-    // the nebula keeps turning, and the frames and their cells turn with it, until the frames leave the arms
+    // the nebula sways, and the anchors sway with it; the kept frames let go of their anchors as the best is chosen
     const leaving = smooth(ST.best - 0.02, ST.best + 0.08, P);
-    this.spin += dt * (1 - leaving);
+    this.swayT += dt;
+    const theta = swayAt(this.swayT);
     this.retarget();
-    this.onTick?.(P, this.poseList);
+    this.onTick?.(P, this.poseList, leaving);
     const seaIn = smooth(0.05, 0.95, t);
     // once the frames have formed the sea steps back a little, so the photographs are what the eye lands on
     const seaDim = 1 - 0.28 * smooth(ST.gather + 0.12, ST.developEnd, P);
@@ -356,12 +361,11 @@ export class Motes {
       if (amber) { r = ar; g = ag; b = ab; }
       const z = s.z[i];
       if (kind === 0) {
-        // the sea. Each mote has a place: in the nebula it turns slowly about the heart (faster near it), in the background it
-        // drifts and wraps at the edges. The mote itself is pulled back to its place, so whatever the pointer does is undone later.
+        // the sea. Each mote has a place: in the nebula it sways with the whole about the heart, in the background it drifts and
+        // wraps at the edges. The mote itself is pulled back to its place, so whatever the pointer does is undone later.
         let hx: number, hy: number;
         if (s.rad[i] >= 0) {
-          s.ang[i] += omega(s.rad[i], reach) * dt * (1 - leaving);
-          this.placeFromPolar(i);
+          this.placeFromPolar(i, theta);
           hx = s.fx[i] + Math.sin(t * 0.7 + s.seed[i]) * 0.6; hy = s.fy[i] + Math.cos(t * 0.5 + s.seed[i]) * 0.6;
         } else {
           hx = s.fx[i] + s.vx[i] * dt; hy = s.fy[i] + s.vy[i] * dt;
@@ -394,7 +398,7 @@ export class Motes {
       } else if (kind === 1) {
         const fr = this.frames[s.frame[i]];
         const loose = fr?.out ? ST.decide + fr.order * 0.01 : Infinity;
-        if (s.rad[i] >= 0) { s.ang[i] += omega(s.rad[i], reach) * dt * (1 - leaving); this.placeFromPolar(i); }
+        if (s.rad[i] >= 0) this.placeFromPolar(i, theta);
         if (P < loose) {
           // on its way to its cell, on an arc rather than a rail; it takes on its pixel as it settles, then fades as the photo develops
           const k = clamp01((P - s.t0[i]) / s.dur[i]);

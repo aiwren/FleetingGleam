@@ -41,10 +41,10 @@ const DESK: Geo = lay({
   cardTop: 372, cardW: 324, cols: 24, rows: 16, field: 4600, max: 1.2, travel: "320vh",
 });
 const PHONE: Geo = lay({
-  W: 360, H: 340, FW: 62, FH: 42, reach: 170, lift: 22,
-  spots: [[1, 36], [2, 60], [0, 63], [1, 93], [2, 93], [1, 141], [0, 144], [1, 186]],
-  final: { 1: [149, 72, 1.9], 5: [10, 8, 1.05], 6: [288, 8, 1.05] },
-  cardTop: 160, cardW: 300, cols: 16, rows: 11, field: 1300, max: 1.15, travel: "280vh",
+  W: 360, H: 360, FW: 58, FH: 39, reach: 175, lift: 18,
+  spots: [[1, 37], [0, 61], [2, 67], [1, 115], [2, 115], [0, 124], [0, 151], [1, 157]],
+  final: { 1: [151, 74, 2.05], 5: [10, 8, 1.1], 6: [292, 8, 1.1] },
+  cardTop: 168, cardW: 300, cols: 16, rows: 11, field: 1300, max: 1.15, travel: "280vh",
 });
 
 /** How far the story has come: 0 the sea, 1 the photographs, 2 a few kept, 3 one best, 4 the reasons. */
@@ -81,7 +81,6 @@ export default function HeroScene({ lang, children }: { lang: Lang; children: (p
   const stems = useRef<(HTMLElement | null)[]>([]); // the vertical stem under each frame, down to its anchor on the arm
   const motes = useRef<Motes | null>(null);
   const geom = useRef({ u: 1, sx: 0, sy: 0, pw: 1, ph: 1 }); // stage scale and its place in canvas pixels, for the ride
-  const orbit = useRef(1); // how much of the ride is applied: 1 on the arms, eased to 0 once the frames leave them
   const posesRef = useRef<Pose[]>([]);
   const [u, setU] = useState(0);
   const [phone, setPhone] = useState(false);
@@ -121,13 +120,13 @@ export default function HeroScene({ lang, children }: { lang: Lang; children: (p
   useMotionValueEvent(scrollYProgress, "change", (p) => { if (motes.current?.ok) motes.current.setProgress(p); else if (!reduce) follow(p); });
 
   /** Puts each photograph above where the nebula has carried its anchor to, as a plain transform, every tick; no React render.
-   * The stem under it is shown once the frame begins to form and goes with the frame when it is turned down. */
-  const ride = (p: number, poses: Pose[]) => {
+   * `leaving` (from the scroll, same as the engine's) takes the kept frames off their anchors as the best is chosen, so the
+   * photographs and the motes never disagree about where a frame is. The stem under a frame is shown once it begins to form and
+   * goes with the frame when it is turned down. */
+  const ride = (p: number, poses: Pose[], leaving: number) => {
     posesRef.current = poses;
     const { u, sx, sy } = geom.current;
-    const target = phaseRef.current >= 3 ? 0 : 1;
-    orbit.current += (target - orbit.current) * 0.08;
-    const w = orbit.current < 0.002 ? 0 : orbit.current;
+    const w = leaving >= 0.998 ? 0 : 1 - leaving;
     const span = ST.gatherEnd - ST.gather;
     poses.forEach((pose, i) => {
       const el = rides.current[i];
@@ -182,7 +181,7 @@ export default function HeroScene({ lang, children }: { lang: Lang; children: (p
     measure();
     mm.setFrames(frames());
     mm.setProgress(scrollYProgress.get());
-    mm.onTick = (p, poses) => { follow(p); ride(p, poses); };
+    mm.onTick = (p, poses, leaving) => { follow(p); ride(p, poses, leaving); };
     mm.start();
     // the pixels arrive when the photographs have loaded; until then the motes carry their own light
     Promise.all(SHOTS.map((_, i) => imgs.current[i]?.decode?.().catch(() => undefined))).then(() => { if (motes.current === mm) mm.setFrames(frames()); });
