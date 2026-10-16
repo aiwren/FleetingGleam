@@ -2,7 +2,7 @@
 
 **一款在你自己电脑上运行的照片筛选软件。** 把几千张照片里同一瞬间的连拍分好组，挑出每组最好的一张，并告诉你为什么。照片不会离开你的电脑。
 
-> “惊鸿”是目前暂定的中文名，英文名 FleetingGleam 已固定。
+**A local-first photo culling app for macOS.** It groups the bursts in thousands of photos, picks the best frame in each group and shows you why. Your photos never leave your computer.
 
 <p align="center">
   <img src="apps/web/public/shots/wall-dark-1200.webp" alt="FleetingGleam 的照片墙：同一瞬间的连拍排在一起，最好的一张带金色星标" width="880">
