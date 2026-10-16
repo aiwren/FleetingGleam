@@ -8,5 +8,15 @@
     "dev:desktop": "pnpm --filter @fleetinggleam/desktop tauri dev",
     "dev:web": "pnpm --filter @fleetinggleam/web dev",
     "build:web": "pnpm --filter @fleetinggleam/web build"
-  }
+  },
+  "description": "FleetingGleam：在本机运行的照片筛选软件（monorepo）",
+  "license": "AGPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lcopilot/FleetingGleam.git"
+  },
+  "bugs": {
+    "url": "https://github.com/lcopilot/FleetingGleam/issues"
+  },
+  "homepage": "https://github.com/lcopilot/FleetingGleam#readme"
 }

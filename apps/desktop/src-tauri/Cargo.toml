@@ -1,8 +1,10 @@
 [package]
 name = "fleetinggleam"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "FleetingGleam：在本机运行的照片筛选软件"
+authors = ["FleetingGleam contributors"]
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/lcopilot/FleetingGleam"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
