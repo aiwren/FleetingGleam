@@ -16,9 +16,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # 暂时只有 Apple Silicon：ONNX Runtime（ort 2.0.0-rc.13）没有 x86_64 macOS 的预编译库，Intel 版要从源码编译它
         include:
           - { runner: macos-15, target: aarch64-apple-darwin, label: Apple Silicon }
-          - { runner: macos-15-intel, target: x86_64-apple-darwin, label: Intel }
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -85,13 +85,21 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: FleetingGleam ${{ github.ref_name }}
           releaseBody: |
-            ## 安装
-            下载对应芯片的 `.dmg`：Apple Silicon（M 系列）选 `aarch64`，Intel 选 `x64`。需要 macOS 15 及以上。
+            ## 安装 / Install
 
-            未签名的安装包首次打开需要在「系统设置 → 隐私与安全性」里手动放行。
-            照片只在本机处理；应用只会联网下载模型文件。
+            需要 Apple Silicon（M 系列芯片）的 Mac，macOS 15 及以上。Intel Mac 暂不支持。
+            Requires a Mac with Apple Silicon (M-series) and macOS 15 or later. Intel Macs are not supported yet.
 
-            更新内容见 [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)。
+            1. 下载 `.dmg`，把 FleetingGleam 拖进“应用程序”。 / Download the `.dmg` and drag FleetingGleam into Applications.
+            2. 这个版本没有经过苹果公证。第一次打开前，在“终端”里执行一次： / This build is not notarised by Apple. Before opening it for the first time, run this once in Terminal:
+
+               ```
+               xattr -cr /Applications/FleetingGleam.app
+               ```
+
+            照片只在本机处理；应用只会联网下载模型文件。 / Your photos stay on your Mac; the app only goes online to download model files.
+
+            更新内容 / What's new: [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)
           # 先作为草稿，维护者检查安装包后再手动发布
           releaseDraft: true
           prerelease: ${{ contains(github.ref_name, '-') }}

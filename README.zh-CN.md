@@ -30,9 +30,13 @@
 
 ### 使用
 
-在 [Releases](../../releases) 下载 `.dmg`，Apple Silicon（M 系列）选 `aarch64`，Intel 选 `x64`，需要 **macOS 15 及以上**。详细步骤见 [新手上手指南](docs/GETTING_STARTED.md)。
+在 [Releases](../../releases) 下载 `.dmg`。需要 **Apple Silicon（M 系列）的 Mac 和 macOS 15 及以上**，Intel Mac 暂不支持。这个版本没有经过苹果公证，第一次打开前在“终端”执行一次：
 
-Windows 版本在计划中，目前还没有。
+```bash
+xattr -cr /Applications/FleetingGleam.app
+```
+
+详细步骤见 [新手上手指南](docs/GETTING_STARTED.md)。Windows 版本在计划中，目前还没有。
 
 ### 开发
 

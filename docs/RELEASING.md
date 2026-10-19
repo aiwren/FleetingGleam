@@ -29,7 +29,7 @@ Release 一律先创建成**草稿**，你检查过安装包再手动点“Publi
    ```
 
    工作流会先检查标签和 `tauri.conf.json` 的版本是否一致，不一致会直接报错并停下。
-5. 在仓库的 **Actions** 页面看构建。成功后，到 **Releases** 里能看到一个草稿，里面有 Apple Silicon（`aarch64`）和 Intel（`x64`）两个 `.dmg`。
+5. 在仓库的 **Actions** 页面看构建。成功后，到 **Releases** 里能看到一个草稿，里面有 Apple Silicon（`aarch64`）的 `.dmg`。
 6. 下载安装包，**自己装一遍、跑一遍**，确认没问题后点 **Publish release**。
 
 带连字符的标签（例如 `v0.2.0-beta.1`）会被标成“预发布”。
@@ -51,7 +51,7 @@ git tag -d v0.1.0 && git push --delete origin v0.1.0   # 删除标签，同时�
 | `APPLE_SIGNING_IDENTITY` | Secret | 例如 `Developer ID Application: 你的名字 (TEAMID)` |
 | `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID` | Secret | 用于公证；`APPLE_PASSWORD` 是 Apple ID 的**App 专用密码** |
 
-**没有签名会怎样？** 没配 Apple 证书时，安装包是未签名的，用户首次打开会被 Gatekeeper 拦住，需要手动放行（[新手上手指南](GETTING_STARTED.md#1-安装)里写了怎么做）。要让所有人双击就能用，需要 Apple 开发者账号（每年 99 美元）并配上面的 Secret。
+**没有签名会怎样？** 没配 Apple 证书时，安装包用 ad-hoc 签名（`tauri.release.conf.json` 里的 `signingIdentity: "-"`，免费，但不能公证）。用户下载后 macOS 会提示“已损坏”或“无法验证开发者”，需要在终端执行一次 `xattr -cr /Applications/FleetingGleam.app`（Release 说明和[新手上手指南](GETTING_STARTED.md#1-安装)里都写了）。要让所有人双击就能用，需要 Apple 开发者账号（每年 99 美元）并配上面的 Secret；配好之后，记得把 `release.yml` 里 Release 说明的那条命令删掉。
 
 ## 模型怎么提供给用户
 
@@ -103,6 +103,6 @@ pnpm dlx wrangler@4.146.0 deploy     # 首次部署前先 pnpm dlx wrangler@4.14
 
 ## 当前的限制
 
-- **只有 macOS**，需要 macOS 15 及以上（原生部分的编译目标是 macOS 15）。
-- Intel 版本在 `macos-15-intel` 上构建。GitHub 以后如果调整这个运行器，需要改 `release.yml` 里的 `matrix`。
+- **只有 macOS**，需要 macOS 15 及以上（原生部分的编译目标是 macOS 15，安装包里的最低系统版本也写的是 15.0）。
+- **只有 Apple Silicon。** 推理用的 ONNX Runtime（`ort` 2.0.0-rc.13）只提供 Apple Silicon 的 macOS 预编译库，没有 Intel 的。要出 Intel 版，需要在 CI 里从源码编译 ONNX Runtime，或者换用提供 x86_64 库的版本，再在 `release.yml` 的 `matrix` 里加回 `macos-15-intel`。
 - 工作流里用到的第三方 Action 都是按主版本号引用的（例如 `actions/checkout@v4`），需要升级时请手动改。如果你想要更强的供应链安全，可以把它们固定到提交 SHA。

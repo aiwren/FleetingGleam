@@ -30,9 +30,13 @@
 
 ### Using the app
 
-Download the `.dmg` from [Releases](../../releases): pick `aarch64` for Apple Silicon (M-series) or `x64` for Intel. It needs **macOS 15 or later**. Step by step instructions are in the [getting started guide](docs/GETTING_STARTED.md) (Chinese).
+Download the `.dmg` from [Releases](../../releases). It needs **a Mac with Apple Silicon (M-series) and macOS 15 or later**; Intel Macs are not supported yet. This build is not notarised by Apple, so before opening it the first time, run this once in Terminal:
 
-A Windows version is planned and does not exist yet.
+```bash
+xattr -cr /Applications/FleetingGleam.app
+```
+
+Step by step instructions are in the [getting started guide](docs/GETTING_STARTED.md) (Chinese). A Windows version is planned and does not exist yet.
 
 ### Developing
 

@@ -3,6 +3,9 @@
     "resources": {
       "bin/fg-vision": "bin/fg-vision",
       "bin/fg-image": "bin/fg-image"
+    },
+    "macOS": {
+      "signingIdentity": "-"
     }
   }
 }
