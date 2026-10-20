@@ -28,8 +28,24 @@ impl EyeMethod {
     pub fn parse(s: Option<&str>) -> Self {
         match s { Some("mediapipe") => EyeMethod::Mediapipe, _ => EyeMethod::Vision }
     }
-    pub fn tag(self) -> &'static str {
-        match self { EyeMethod::Vision => "vision", EyeMethod::Mediapipe => "mediapipe" }
+}
+/// The `eye_method` tag of a photo measured in MediaPipe mode whose value nevertheless came from Vision's geometric ratio,
+/// because the learned model was not sure about any face in it. It is on Vision's scale, and it already is the best MediaPipe
+/// mode can do for that photo, so it is not measured again.
+pub const MEDIAPIPE_FALLBACK: &str = "mediapipe-fallback";
+
+/// Below this a photo's eyes count as closed: MediaPipe's own openness for a MediaPipe value, Vision's ratio for everything
+/// else (including MediaPipe mode's fallback). The two scales are not comparable, so the line must follow the value's origin,
+/// not the method selected in Settings.
+pub fn eyes_closed_line(method: Option<&str>) -> f32 {
+    if method == Some("mediapipe") { scoring::MEDIAPIPE_EYES_CLOSED } else { scoring::EYES_CLOSED }
+}
+
+/// True when a cached eye measurement already answers for the method now selected, so the photo need not be measured again.
+pub fn eyes_current(method: Option<&str>, selected: EyeMethod) -> bool {
+    match selected {
+        EyeMethod::Vision => method == Some("vision"),
+        EyeMethod::Mediapipe => matches!(method, Some("mediapipe") | Some(MEDIAPIPE_FALLBACK)),
     }
 }
 
@@ -56,6 +72,9 @@ pub struct Photo {
     pub ai_score: Option<f32>,
     /// Probability the user would keep this, from the on-device taste model (None when it is off or not yet trained).
     pub pref_score: Option<f32>,
+    /// How much the taste model moved the final score (signed, 0 when it was not applied), so the reasons can say so.
+    #[serde(default)]
+    pub pref_delta: f32,
     pub face_count: u32,
     pub face_min: Option<f32>,
     /// Openness of the most closed pair of eyes among the faces big enough to measure (see scoring::EYES_CLOSED); `None` = not measured.
@@ -106,15 +125,20 @@ pub struct Photo {
 /// Eye openness for a photo whose cached value is missing or was computed by the other method: asks Vision about the
 /// saved analysis copy, then (for `Mediapipe`) hands Vision's face crops to the learned model instead of trusting
 /// Vision's own ratio.
-pub fn measure_eyes(path: &Path, cache_dir: &Path, vision: &Vision, method: EyeMethod, mp: Option<&MediapipeEyes>) -> Option<f32> {
+pub fn measure_eyes(path: &Path, cache_dir: &Path, vision: &Vision, method: EyeMethod, mp: Option<&MediapipeEyes>) -> Option<(f32, &'static str)> {
     let copy = cache_name(path, ".a.jpg", cache_dir);
     let copy = if copy.exists() { copy } else { return None };
     let v = vision.analyze(&copy)?;
+    let ratio = v.eyes.iter().cloned().reduce(f32::min).unwrap_or(1.0).min(1.0);
     match method {
-        EyeMethod::Vision => Some(v.eyes.iter().cloned().reduce(f32::min).unwrap_or(1.0).min(1.0)),
+        EyeMethod::Vision => Some((ratio, "vision")),
         EyeMethod::Mediapipe => {
             let img = image::open(&copy).ok()?;
-            mp.and_then(|m| m.openness(&img, &v.eye_boxes)).or_else(|| Some(v.eyes.iter().cloned().reduce(f32::min).unwrap_or(1.0).min(1.0)))
+            // the value's tag says which scale it is on: the learned model's, or (when it was not sure) Vision's ratio
+            Some(match mp.and_then(|m| m.openness(&img, &v.eye_boxes)) {
+                Some(e) => (e, "mediapipe"),
+                None => (ratio, MEDIAPIPE_FALLBACK),
+            })
         }
     }
 }
@@ -178,12 +202,16 @@ pub fn analyze(
     let face_count = sys.as_ref().map_or(0, |s| s.faces.len() as u32);
     // MediaPipe reads the same crops Vision found, in the working copy already in memory; Vision's own ratio is the
     // fallback whenever a face is there but the learned model is not (not downloaded, or not confident about that face).
-    let eyes_open = match (eye_method, &sys) {
-        (EyeMethod::Mediapipe, Some(s)) => mp.and_then(|m| m.openness(&work, &s.eye_boxes)).or_else(|| s.eyes.iter().cloned().reduce(f32::min)),
-        (_, Some(s)) => s.eyes.iter().cloned().reduce(f32::min),
-        (_, None) => None,
+    // The tag records which scale the value is on, because the two are judged against different lines.
+    let (eyes_open, eye_method_used) = match (eye_method, &sys) {
+        (EyeMethod::Mediapipe, Some(s)) => match mp.and_then(|m| m.openness(&work, &s.eye_boxes)) {
+            Some(e) => (Some(e), Some("mediapipe")),
+            None => (s.eyes.iter().cloned().reduce(f32::min), Some(MEDIAPIPE_FALLBACK)),
+        },
+        (_, Some(s)) => (s.eyes.iter().cloned().reduce(f32::min), Some("vision")),
+        (_, None) => (None, None),
     };
-    let eye_method_used = eyes_open.map(|_| eye_method.tag().to_string());
+    let eye_method_used = eyes_open.and(eye_method_used).map(str::to_string);
     // Who is in the picture: only looked at when the recognition model is there and Vision could find the faces.
     let (face_boxes, face_embs, faces_done) = match (faces, &sys) {
         (Some(f), Some(s)) => {
@@ -217,6 +245,7 @@ pub fn analyze(
         sys_score,
         ai_score,
         pref_score: None,
+        pref_delta: 0.0,
         face_count,
         face_min,
         eyes_open,
@@ -551,7 +580,7 @@ fn orientation(p: &Photo) -> i8 {
 
 /// Groups near-duplicates, clusters looser scenes, then computes final scores (which need the
 /// group context for face comparison) and marks the best photo of every group.
-pub fn group_and_score(photos: &mut [Photo], prefs: Option<&crate::prefs::Prefs>, eye_method: EyeMethod) {
+pub fn group_and_score(photos: &mut [Photo], prefs: Option<&crate::prefs::Prefs>) {
     let groups = cluster(photos, |a, b| {
         if let (Some(x), Some(y)) = (a.taken_at, b.taken_at) {
             if (x - y).abs() > DUP_MAX_GAP_SECS {
@@ -589,11 +618,13 @@ pub fn group_and_score(photos: &mut [Photo], prefs: Option<&crate::prefs::Prefs>
 
     // Closed eyes only count against a shot when the same moment has another frame with open eyes to pick instead.
     // A lone frame, or a group where every frame is closed (a sleeping child, a deliberate pose), is not marked down.
-    let mut open_alt: std::collections::HashMap<usize, f32> = std::collections::HashMap::new();
+    // Each photo's value is judged on its own scale (see `eyes_closed_line`): a group can mix MediaPipe values with Vision ratios.
+    let mut open_alt: std::collections::HashMap<usize, bool> = std::collections::HashMap::new();
     for (i, p) in photos.iter().enumerate() {
         if let Some(e) = p.eyes_open {
-            let m = open_alt.entry(groups[i] as usize).or_insert(0.0);
-            *m = m.max(e);
+            if e >= eyes_closed_line(p.eye_method.as_deref()) {
+                open_alt.insert(groups[i] as usize, true);
+            }
         }
     }
     for (i, p) in photos.iter_mut().enumerate() {
@@ -608,14 +639,15 @@ pub fn group_and_score(photos: &mut [Photo], prefs: Option<&crate::prefs::Prefs>
         let kind = crate::scene::classify(&p.embedding).map(|(k, _)| crate::scene::with_faces(k, p.face_count)).unwrap_or(if p.face_count > 0 { "people" } else { "" });
         p.kind = kind.to_string();
         p.flags.retain(|f| f != "eyes");
-        let closed_at = if eye_method == EyeMethod::Mediapipe { scoring::MEDIAPIPE_EYES_CLOSED } else { scoring::EYES_CLOSED };
+        let closed_at = eyes_closed_line(p.eye_method.as_deref());
         if matches!(kind, "portrait" | "people") && p.eyes_open.map_or(false, |e| e < closed_at)
-            && group_size[&groups[i]] > 1 && open_alt.get(&(groups[i] as usize)).map_or(false, |&m| m >= closed_at) {
+            && group_size[&groups[i]] > 1 && open_alt.get(&(groups[i] as usize)).copied().unwrap_or(false) {
             p.flags.push("eyes".to_string());
         }
         p.score = scoring::final_score(kind, p.ai_score, p.sharp_score, p.expo_score, face_rel, &p.flags);
         // The learned taste nudges the score; hard problems (blur, screenshots) still cap it via the flags above.
         p.pref_score = prefs.and_then(|m| m.predict(&p.embedding));
+        p.pref_delta = 0.0;
         if let (Some(pref), Some(m)) = (p.pref_score, prefs) {
             let lam = m.strength();
             let before = p.score;
@@ -623,6 +655,7 @@ pub fn group_and_score(photos: &mut [Photo], prefs: Option<&crate::prefs::Prefs>
             // Taste can lift a photo, but never rescue one with a hard problem (blur, screenshot).
             let hard = p.flags.iter().any(|f| f == "blur" || f == "utility");
             p.score = if hard { blended.min(before) } else { blended };
+            p.pref_delta = p.score - before;
         }
     }
 
@@ -640,6 +673,30 @@ pub fn group_and_score(photos: &mut [Photo], prefs: Option<&crate::prefs::Prefs>
 }
 
 #[cfg(test)]
+mod eye_scale_tests {
+    use super::*;
+
+    /// A value is judged on the scale it was measured on, whatever method is selected now; and a MediaPipe-mode fallback
+    /// value counts as current for MediaPipe, so it is not measured again on every open.
+    #[test]
+    fn eye_values_keep_their_own_scale() {
+        assert_eq!(eyes_closed_line(Some("mediapipe")), scoring::MEDIAPIPE_EYES_CLOSED);
+        assert_eq!(eyes_closed_line(Some(MEDIAPIPE_FALLBACK)), scoring::EYES_CLOSED);
+        assert_eq!(eyes_closed_line(Some("vision")), scoring::EYES_CLOSED);
+        assert_eq!(eyes_closed_line(None), scoring::EYES_CLOSED);
+        // 0.3 is wide open on Vision's ratio and must not read as closed because MediaPipe mode is selected
+        assert!(0.3 >= eyes_closed_line(Some(MEDIAPIPE_FALLBACK)));
+        assert!(0.3 < eyes_closed_line(Some("mediapipe")));
+        assert!(eyes_current(Some("mediapipe"), EyeMethod::Mediapipe));
+        assert!(eyes_current(Some(MEDIAPIPE_FALLBACK), EyeMethod::Mediapipe));
+        assert!(!eyes_current(Some("vision"), EyeMethod::Mediapipe));
+        assert!(eyes_current(Some("vision"), EyeMethod::Vision));
+        assert!(!eyes_current(Some(MEDIAPIPE_FALLBACK), EyeMethod::Vision));
+        assert!(!eyes_current(None, EyeMethod::Vision));
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -654,7 +711,7 @@ mod tests {
             p
         }).collect();
         photos.sort_by(|a, b| a.path.cmp(&b.path));
-        group_and_score(&mut photos, None, EyeMethod::Vision);
+        group_and_score(&mut photos, None);
         let mut by: std::collections::BTreeMap<String, usize> = Default::default();
         photos.iter().for_each(|p| *by.entry(p.kind.clone()).or_default() += 1);
         println!("kinds: {by:?}");
@@ -710,7 +767,7 @@ mod tests {
             .iter()
             .map(|p| analyze(p, &tmp, scorer.as_ref().map(|s| s as &dyn AiScorer), vision.as_ref(), EyeMethod::Vision, None, None, &|_, _, _| {}).unwrap())
             .collect();
-        group_and_score(&mut photos, None, EyeMethod::Vision);
+        group_and_score(&mut photos, None);
         for p in &photos {
             println!(
                 "{:<14} score={:.2} sharp={:.2} expo={:.2} clip={:?} sys={:?} faces={} flags={:?} group={} scene={} best={}",
@@ -1004,7 +1061,7 @@ mod tests {
                 photos.push(Photo { path: format!("p{i}"), width: 4000, height: 3000, embedding: e, hash: (i as u64 / 6).wrapping_mul(0x9e3779b97f4a7c15), taken_at: Some(1_700_000_000 + i as i64 * 20), score: 0.5 + (i % 50) as f32 / 100.0, ..Default::default() });
             }
             let t = std::time::Instant::now();
-            group_and_score(&mut photos, None, EyeMethod::Vision);
+            group_and_score(&mut photos, None);
             println!("{n} photos: grouping and scoring {:?}", t.elapsed());
         }
     }

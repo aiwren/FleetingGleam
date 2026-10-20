@@ -106,6 +106,35 @@ fn flag_reasons(p: &Photo) -> Vec<Reason> {
     out
 }
 
+/// What the group's best does clearly better than this photo, if one thing stands out: the reason key that names it.
+/// Closed eyes trump everything (the flag is already on the photo); otherwise the biggest gap among the parts of the score,
+/// and only when it is big enough to be the story (the gap of a hair is not told).
+fn shortfall(p: &Photo, best: &Photo) -> Option<&'static str> {
+    if p.flags.iter().any(|f| f == "eyes") {
+        return Some("reason.betterEyes");
+    }
+    let mut gaps: Vec<(&'static str, f32)> = vec![("reason.betterSharp", best.sharp_score - p.sharp_score), ("reason.betterExpo", best.expo_score - p.expo_score)];
+    if let (Some(a), Some(b)) = (best.ai_score, p.ai_score) {
+        gaps.push(("reason.betterLook", a - b));
+    }
+    if let (Some(a), Some(b)) = (best.face_min, p.face_min) {
+        gaps.push(("reason.betterFace", a - b));
+    }
+    gaps.into_iter().filter(|(_, d)| *d >= 0.05).max_by(|a, b| a.1.total_cmp(&b.1)).map(|(k, _)| k)
+}
+
+/// The taste model's say, when it moved the score enough to matter: so the person can see when it is their own preference talking.
+fn pref_reason(p: &Photo) -> Option<Reason> {
+    const SAYS: f32 = 0.04;
+    if p.pref_delta >= SAYS {
+        Some(reason_with("reason.prefUp", &[("pts", Value::from(pct(p.pref_delta)))]))
+    } else if p.pref_delta <= -SAYS {
+        Some(reason_with("reason.prefDown", &[("pts", Value::from(pct(-p.pref_delta)))]))
+    } else {
+        None
+    }
+}
+
 /// One candidate in the pick queue: the best photo left of a scene, with what it is worth right now (score minus the scene penalty).
 struct Cand {
     value: f32,
@@ -233,13 +262,18 @@ pub fn decide(photos: &[Photo], keep_ratio: f32, pick_mode: PickMode, one_per_gr
                 reasons = vec![reason_with("reason.nearBest", &[("diff", Value::from(pct(best.score - p.score).max(0)))])];
             } else {
                 state = State::Reject;
-                reasons = vec![reason_with("reason.betterExists", &[("best", Value::from(pct(best.score))), ("score", Value::from(pct(p.score)))])];
+                // say what the best does better, when one thing stands out; the bare comparison otherwise
+                let k = shortfall(p, best).unwrap_or("reason.betterExists");
+                reasons = vec![reason_with(k, &[("best", Value::from(pct(best.score))), ("score", Value::from(pct(p.score)))])];
             }
             reasons.extend(flag_r);
         } else {
             state = State::Reject;
             reasons = vec![if is_soft(&p.flags) { reason("reason.exposureFloor") } else { reason_with("reason.belowLine", &[("score", Value::from(pct(p.score)))]) }];
             reasons.extend(flag_r);
+        }
+        if let Some(r) = pref_reason(p) {
+            reasons.push(r);
         }
 
         if let Some(o) = overrides.get(&p.path) {
@@ -261,6 +295,40 @@ pub fn decide(photos: &[Photo], keep_ratio: f32, pick_mode: PickMode, one_per_gr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The reason for a rejected group mate names the part of the score the best is clearly better at; closed eyes come first;
+    /// a mate that is simply a little worse everywhere gets the plain comparison.
+    #[test]
+    fn a_rejected_mate_is_told_what_the_best_does_better() {
+        let mut best = solo("a.jpg", 0.9, 1, &[]);
+        best.sharp_score = 0.9; best.expo_score = 0.8; best.ai_score = Some(0.7);
+        // mates well below the review band, so they are rejected as "a better one exists" and not asked about
+        let mut soft = solo("b.jpg", 0.5, 1, &[]);
+        soft.group_best = false; soft.sharp_score = 0.4; soft.expo_score = 0.78; soft.ai_score = Some(0.69);
+        let mut closed = solo("c.jpg", 0.5, 1, &["eyes"]);
+        closed.group_best = false; closed.sharp_score = 0.4; closed.expo_score = 0.8; closed.ai_score = Some(0.7);
+        let mut even = solo("d.jpg", 0.5, 1, &[]);
+        even.group_best = false; even.sharp_score = 0.88; even.expo_score = 0.79; even.ai_score = Some(0.68);
+        let out = decide(&[best, soft, closed, even], 1.0, PickMode::Best, false, &HashMap::new());
+        assert_eq!(out["b.jpg"].reasons[0].k, "reason.betterSharp");
+        assert_eq!(out["c.jpg"].reasons[0].k, "reason.betterEyes");
+        assert_eq!(out["d.jpg"].reasons[0].k, "reason.betterExists");
+    }
+
+    /// When the taste model moved a score by enough, the reasons say so, in the direction it moved it.
+    #[test]
+    fn the_taste_models_say_is_shown_when_it_mattered() {
+        let mut up = solo("up.jpg", 0.8, 1, &[]);
+        up.pref_delta = 0.06;
+        let mut down = solo("down.jpg", 0.8, 2, &[]);
+        down.pref_delta = -0.05;
+        let mut quiet = solo("quiet.jpg", 0.8, 3, &[]);
+        quiet.pref_delta = 0.01;
+        let out = decide(&[up, down, quiet], 1.0, PickMode::Best, false, &HashMap::new());
+        assert!(out["up.jpg"].reasons.iter().any(|r| r.k == "reason.prefUp"));
+        assert!(out["down.jpg"].reasons.iter().any(|r| r.k == "reason.prefDown"));
+        assert!(!out["quiet.jpg"].reasons.iter().any(|r| r.k.starts_with("reason.pref")));
+    }
 
     /// A photo that is the sole (and therefore best) member of its own group, with everything else defaulted.
     fn solo(path: &str, score: f32, group: usize, flags: &[&str]) -> Photo {
@@ -285,7 +353,7 @@ mod tests {
         let mut photos: Vec<Photo> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| crate::analyze::is_image(p))
             .filter_map(|p| { let (sz, mt) = crate::cache::file_key(&p)?; c.get(&p.to_string_lossy(), sz, mt, &tag) }).collect();
         photos.sort_by(|a, b| a.path.cmp(&b.path));
-        crate::analyze::group_and_score(&mut photos, None, crate::analyze::EyeMethod::Mediapipe);
+        crate::analyze::group_and_score(&mut photos, None);
         for one_per_group in [false, true] {
             let out = decide(&photos, 1.0, PickMode::Diverse, one_per_group, &HashMap::new());
             let count = |s: State| out.values().filter(|d| d.state == s).count();

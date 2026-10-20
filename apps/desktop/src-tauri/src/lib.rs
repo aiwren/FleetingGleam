@@ -384,20 +384,19 @@ async fn scan_project(app: AppHandle, key: String, dirs: Vec<String>, compute: O
         // A photo missing eyes_open (analysed before that signal existed), or whose cached value came from the other
         // method than the one now selected, gets it (re)measured from its saved analysis copy.
         let mut hits = hits;
-        let method_tag = eye_method.tag();
-        if hits.iter().any(|p| p.face_count > 0 && p.eye_method.as_deref() != Some(method_tag)) {
+        if hits.iter().any(|p| p.face_count > 0 && !analyze::eyes_current(p.eye_method.as_deref(), eye_method)) {
             if let Some(v) = vision::Vision::start(&vision_bin, 2, cpu_only) {
-                let measured: Vec<(usize, f32)> = hits
+                let measured: Vec<(usize, (f32, &'static str))> = hits
                     .par_iter()
                     .enumerate()
-                    .filter(|(_, p)| p.face_count > 0 && p.eye_method.as_deref() != Some(method_tag) && !cancelled())
+                    .filter(|(_, p)| p.face_count > 0 && !analyze::eyes_current(p.eye_method.as_deref(), eye_method) && !cancelled())
                     .filter_map(|(i, p)| analyze::measure_eyes(Path::new(&p.path), &cache_dir, &v, eye_method, mp.as_deref()).map(|e| (i, e)))
                     .collect();
                 if !measured.is_empty() {
-                    for (i, e) in &measured {
+                    for (i, (e, tag)) in &measured {
                         // no face big enough to measure is remembered as "very open", so it is not asked again
                         hits[*i].eyes_open = Some(*e);
-                        hits[*i].eye_method = Some(method_tag.to_string());
+                        hits[*i].eye_method = Some(tag.to_string());
                     }
                     with_cache(&app, |c| {
                         for (i, _) in &measured {
@@ -488,7 +487,7 @@ async fn scan_project(app: AppHandle, key: String, dirs: Vec<String>, compute: O
         photos.extend(fresh);
         photos.sort_by(|a, b| a.path.cmp(&b.path));
         let prefs = if learn { Some(app.state::<AppState>().prefs.lock().unwrap().get(style.as_deref()).prefs.clone()) } else { None };
-        analyze::group_and_score(&mut photos, prefs.as_ref().filter(|p| p.active()), eye_method);
+        analyze::group_and_score(&mut photos, prefs.as_ref().filter(|p| p.active()));
         *app.state::<AppState>().last_photos.lock().unwrap() = (key, photos.clone());
         Ok(photos)
     })
