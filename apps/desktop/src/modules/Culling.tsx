@@ -26,7 +26,7 @@ import Ticker from "../components/Ticker";
 import Tile, { StageInfo } from "../components/Tile";
 import { DUR, EASE_OUT, SPRING } from "../motion";
 import { newProjectFromDialog, pickFolder } from "../projectActions";
-import { Project, setActive, trashProject, updateProject, useProjects } from "../projects";
+import { Project, setActive, trashProject, updateProject, useProjects, useProjectsStatus } from "../projects";
 import { getSettings, ScanInfo, setScanInfo, useSettings } from "../settings";
 import { Decision, Photo, Probe, ProbeFile, Reason, State, pct, thumbSrc } from "../types";
 import Organize from "./Organize";
@@ -71,6 +71,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
 }) {
   const { t, i18n } = useTranslation();
   const store = useProjects();
+  const { saveError } = useProjectsStatus();
   const project: Project | null = store.projects.find((p) => p.id === store.activeId && !p.trashed) ?? null;
   const settings = useSettings();
 
@@ -714,6 +715,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
         {phase === "done" && panelOpen && <Resizer panel={filterW} edge="right" label={t("cull.filters")} />}
         <div className="scroll" ref={scrollRef}>
           {error && <p className="error">{t(error, { defaultValue: error })}</p>}
+          {saveError && <p className="error">{t("cull.saveFailed", { error: saveError })}</p>}
 
           {(phase === "probing" || phase === "loading") && <p className="ash pad loading">{phase === "loading" && mediaProg && mediaProg.done < mediaProg.total ? t("cull.preparingMedia", { done: mediaProg.done, total: mediaProg.total }) : phase === "loading" && peopleProg && peopleProg.done < peopleProg.total ? t("cull.recognising", { done: peopleProg.done, total: peopleProg.total }) : t(phase === "probing" ? "cull.probing" : "cull.loading")}</p>}
 

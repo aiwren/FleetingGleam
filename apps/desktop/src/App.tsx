@@ -7,7 +7,7 @@ import Culling from "./modules/Culling";
 import Styles from "./modules/Styles";
 import Settings from "./modules/Settings";
 import { newProjectFromDialog } from "./projectActions";
-import { purgeExpired, setActive } from "./projects";
+import { purgeExpired, setActive, useProjectsStatus } from "./projects";
 import { SPRING } from "./motion";
 import logo from "./assets/logo.png";
 import "./App.css";
@@ -59,6 +59,9 @@ export default function App() {
     { id: "exif", title: t("nav.meter"), subtitle: t("nav.meterSub"), ready: false, icon: ICON.meter },
   ];
   const current = modules.find((m) => m.id === moduleId);
+  // the projects are read from the backend first; until then there is nothing right to show
+  const { loaded } = useProjectsStatus();
+  if (!loaded) return <div className="shell" />;
 
   return (
     <MotionConfig reducedMotion="user">

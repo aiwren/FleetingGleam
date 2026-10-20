@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { State } from "./types";
 
 /** A project is a named set of folders plus the decisions made on its photos. Analysis results live in the backend cache. */
@@ -35,40 +36,113 @@ export type Project = {
 /** The recycle bin only holds what was deleted within this many days; older items are removed when the app opens. */
 export const TRASH_DAYS = 7;
 type Store = { projects: Project[]; activeId: string | null };
+/** Whether the projects have been read yet, and the last error writing them (null when the last write went through). */
+export type ProjectsStatus = { loaded: boolean; saveError: string | null };
 
+/*
+ * The projects are the person's own work (hours of keep / reject decisions), so they are kept by the backend in
+ * `projects.json`, written whole and atomically, never in the WebView's storage: that has a quota of a few MB that a
+ * handful of large projects can hit, and a write that hits it fails silently. The WebView's storage is only read once,
+ * to carry over the projects of versions before this one, and in the browser preview (where there is no backend).
+ */
 const KEY = "fg.projects";
 const subs = new Set<() => void>();
 const notify = () => subs.forEach((f) => f());
 const subscribe = (f: () => void) => { subs.add(f); return () => { subs.delete(f); }; };
 
-let purgedOnLoad = false;
-function load(): Store {
+let store: Store = { projects: [], activeId: null };
+let status: ProjectsStatus = { loaded: false, saveError: null };
+/** false once the backend turned out not to be there (the browser preview): the WebView's storage is all there is. */
+let backend = true;
+
+/** The stored form, checked and with the recycle bin's expired items removed; null when it is not a projects store at all. */
+function parse(raw: string): { store: Store; purged: boolean } | null {
+  try {
+    const v = JSON.parse(raw) as Store;
+    if (!Array.isArray(v.projects)) return null;
+    const cutoff = Date.now() - TRASH_DAYS * 86400_000;
+    const projects = v.projects.filter((p) => !p.trashed || p.trashed > cutoff);
+    const active = projects.find((p) => p.id === v.activeId && !p.trashed) ? v.activeId : null;
+    return { store: { projects, activeId: active ?? null }, purged: projects.length !== v.projects.length };
+  } catch {
+    return null;
+  }
+}
+function fromLocalStorage() {
   try {
     const raw = localStorage.getItem(KEY);
-    if (raw) {
-      const v = JSON.parse(raw) as Store;
-      if (Array.isArray(v.projects)) {
-        // Anything that has sat in the recycle bin for TRASH_DAYS is removed for good, right as the app opens.
-        const cutoff = Date.now() - TRASH_DAYS * 86400_000;
-        const projects = v.projects.filter((p) => !p.trashed || p.trashed > cutoff);
-        purgedOnLoad = projects.length !== v.projects.length;
-        const active = projects.find((p) => p.id === v.activeId && !p.trashed) ? v.activeId : null;
-        return { projects, activeId: active ?? null };
-      }
-    }
-  } catch { /* storage may be unavailable */ }
-  return { projects: [], activeId: null };
+    return raw ? parse(raw) : null;
+  } catch {
+    return null;
+  }
 }
-let store: Store = load();
-// If the launch-time clean-up removed anything, write that back so the old records are really gone.
-if (purgedOnLoad) { try { localStorage.setItem(KEY, JSON.stringify(store)); } catch { /* ignore */ } }
+
+/**
+ * Reads the projects; called once at start-up, after the browser preview has installed its stand-in backend, so that the
+ * preview goes through the same two commands as the app. Nothing that shows projects renders before it is done.
+ */
+let loading: Promise<void> | null = null;
+export function loadProjects(): Promise<void> {
+  return (loading ??= load());
+}
+async function load() {
+  let got: { store: Store; purged: boolean } | null = null;
+  let carriedOver = false;
+  try {
+    const raw = await invoke<string | null>("projects_load");
+    got = raw ? parse(raw) : null;
+    if (!got) {
+      // first run of this version: whatever the previous one kept in the WebView's storage becomes the file
+      got = fromLocalStorage();
+      carriedOver = !!got;
+    }
+  } catch {
+    backend = false;
+    got = fromLocalStorage();
+  }
+  store = got?.store ?? { projects: [], activeId: null };
+  status = { ...status, loaded: true };
+  notify();
+  // what the launch-time clean-up removed, and anything carried over, is written back right away
+  if (carriedOver || got?.purged) void persist();
+}
+
+/* Writes go one at a time: a change made while one is in flight is written once it is done, as the latest state. */
+let saving = false;
+let again = false;
+async function persist() {
+  if (!backend) {
+    try {
+      localStorage.setItem(KEY, JSON.stringify(store));
+      if (status.saveError) { status = { ...status, saveError: null }; notify(); }
+    } catch (e) {
+      status = { ...status, saveError: String(e) }; notify();
+    }
+    return;
+  }
+  if (saving) { again = true; return; }
+  saving = true;
+  try {
+    do {
+      again = false;
+      await invoke("projects_save", { json: JSON.stringify(store) });
+    } while (again);
+    if (status.saveError) { status = { ...status, saveError: null }; notify(); }
+  } catch (e) {
+    // the state on screen is still right; the person is told, and the next change tries again
+    status = { ...status, saveError: String(e) }; notify();
+  } finally {
+    saving = false;
+  }
+}
 function commit(next: Store) {
   store = next;
-  try { localStorage.setItem(KEY, JSON.stringify(store)); } catch { /* ignore */ }
   notify();
+  void persist();
 }
 
 export const useProjects = () => useSyncExternalStore(subscribe, () => store);
+export const useProjectsStatus = () => useSyncExternalStore(subscribe, () => status);
 export const getStore = () => store;
 
 export function createProject(name: string, folders: string[]): Project {

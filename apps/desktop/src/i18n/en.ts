@@ -37,6 +37,7 @@ const en = {
     queued_other: "{{count}} more queued",
     analyzing: "Analyzing on this computer",
     stop: "Stop analysis",
+    saveFailed: "The project could not be saved to disk ({{error}}). What you did is still on screen and the next change will try again; check disk space and permissions.",
     eta: "about {{s}}s left",
     loadingModel: "Loading AI model…",
     doneTitle: "Analysis complete",

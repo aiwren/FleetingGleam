@@ -514,6 +514,39 @@ async fn decide_photos(app: AppHandle, key: String, keep_ratio: f32, pick_mode: 
     .map_err(|e| e.to_string())?
 }
 
+/// The projects (named folder sets and every decision made on their photos) live in `projects.json` in the app's data folder,
+/// read whole here and written whole, atomically, by `projects_save`. The frontend keeps the shape; the backend only keeps it safe.
+#[tauri::command]
+async fn projects_load(app: AppHandle) -> Result<Option<String>, String> {
+    let path = data_dir(&app).join("projects.json");
+    tauri::async_runtime::spawn_blocking(move || match std::fs::read_to_string(&path) {
+        Ok(s) => Ok(Some(s)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("{}: {e}", path.display())),
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Writes are serialised and go through a temporary file and a rename, so a crash mid-write leaves the previous file intact.
+static PROJECTS_WRITE: Mutex<()> = Mutex::new(());
+
+#[tauri::command]
+async fn projects_save(app: AppHandle, json: String) -> Result<(), String> {
+    let path = data_dir(&app).join("projects.json");
+    tauri::async_runtime::spawn_blocking(move || {
+        let _one_at_a_time = PROJECTS_WRITE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, json.as_bytes()).map_err(|e| format!("{}: {e}", tmp.display()))?;
+        std::fs::rename(&tmp, &path).map_err(|e| format!("{}: {e}", path.display()))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Stops the scan in progress: it ends at the next photo, and what it analysed by then is already in the cache. Called when
 /// the person asks for it, and whenever the page leaves a project (its scan may still be running).
 #[tauri::command]
@@ -1328,7 +1361,7 @@ pub fn run() {
         .on_menu_event(|app, event| {
             let _ = app.emit("menu", event.id().0.clone());
         })
-        .invoke_handler(tauri::generate_handler![probe_folder, scan_project, scan_cancel, decide_photos, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, trash_photos, reveal, preview_thumbs, photo_info, large_preview, motion_clip, hdrview::hdr_overlay_supported, hdrview::hdr_overlay_show, hdrview::hdr_overlay_move, hdrview::hdr_overlay_hide, hdrview::hdr_overlay_detail, hdrview::hdr_overlay_detail_hide, photo_detail, machine_info, search_status, search_index, search_photos, scene_text, packs_status, pack_size, pack_download, pack_cancel, pack_remove])
+        .invoke_handler(tauri::generate_handler![probe_folder, scan_project, scan_cancel, decide_photos, projects_load, projects_save, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, trash_photos, reveal, preview_thumbs, photo_info, large_preview, motion_clip, hdrview::hdr_overlay_supported, hdrview::hdr_overlay_show, hdrview::hdr_overlay_move, hdrview::hdr_overlay_hide, hdrview::hdr_overlay_detail, hdrview::hdr_overlay_detail_hide, photo_detail, machine_info, search_status, search_index, search_photos, scene_text, packs_status, pack_size, pack_download, pack_cancel, pack_remove])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

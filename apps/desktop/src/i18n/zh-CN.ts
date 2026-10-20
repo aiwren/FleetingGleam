@@ -35,6 +35,7 @@ const zh = {
     queued_other: "还有 {{count}} 张在排队",
     analyzing: "正在本机分析",
     stop: "停止分析",
+    saveFailed: "项目没能保存到磁盘（{{error}}）。你的操作仍在屏幕上，下一次改动会再试一次；请检查磁盘空间和权限。",
     eta: "约剩 {{s}} 秒",
     loadingModel: "正在加载 AI 模型…",
     doneTitle: "分析完成",
