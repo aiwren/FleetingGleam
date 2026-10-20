@@ -150,3 +150,39 @@
 - 对同一张照片的变体：标准档（B/32）0.78 → 轻度模糊 0.71 → 重度模糊 0.40；高质量档（L/14）0.54 → 0.46 → 0.21。L/14 对模糊的相对反应更强（降 61% 对 49%）。单张耗时约 500-800 ms 对约 45 ms。
 - **这只证明它对明显问题更敏感，不能证明选片更准。** 是否更符合你的口味，要用真实照片和你的手动选择来判断。
 - 该评分头的原始训练目标是 AVA / SAC / LAION-Logos 的美学评分，对“旅行照片是否好”并非专门训练。
+
+## 14. 美学评分模型调研（2026-10-20）
+
+目标：找比现有三档更好、许可允许随 AGPL 项目再分发、能用 ONNX Runtime 本地运行、评真实照片的美学模型。基线：pyiqa 官方基准里，与现用"高质量档"同款的 CLIP ViT-L/14 + LAION 头在 AVA 测试集上 SRCC 0.665 / PLCC 0.666（https://iqa-pytorch.readthedocs.io/en/latest/benchmark.html ）。现用"标准档"（B/32 头）与"极致档"（v2.5）没有公开的 AVA 数字。
+
+### 两条硬事实
+
+1. **pyiqa / IQA-PyTorch 整体不可用**：代码许可是 PolyForm Noncommercial 1.0.0，权重仓库 `chaofengc/IQA-PyTorch-Weights` 是 CC-BY-NC-SA-4.0。非商业条款与 AGPL 不兼容，所以它收录的 TOPIQ-IAA（AVA SRCC 0.791，小模型里最好）、重训的 NIMA、转换的 MUSIQ 都只能排除。
+2. **多模态大模型打分器分数明显更高**（Q-Align 0.82、Q-ReAlign 0.80–0.83），但体积都是 GB 级，只有 Q-ReAlign-Mini-0.8B 有现实的 ONNX 路径。
+
+### 候选
+
+| 模型 | 许可（核实到的） | 大小 | AVA SRCC | ONNX | 结论 |
+|---|---|---|---|---|---|
+| [Q-ReAlign-Mini-0.8B](https://huggingface.co/q-future/Q-ReAlign-Mini-0.8B)（Qwen3.5-VL 0.8B） | HF 模型卡 apache-2.0；GitHub 仓库无 LICENSE 文件 | bf16 2.2 GB；按 [onnx-community/Qwen3.5-0.8B-ONNX](https://huggingface.co/onnx-community/Qwen3.5-0.8B-ONNX) 的配方量化后约 853 MB | 0.797（README） | 无官方 ONNX，同架构基座有社区导出；decoder 用到 `com.microsoft` contrib 算子，需确认 ort rc.13 支持；只能 CPU | **推荐作为第四档"精排"**，只对每组前几名跑 |
+| [VILA-R](https://github.com/google-research/google-research/tree/master/vila)（Google，CoCa） | 代码 Apache-2.0；GCS 权重无单独声明 | 完整 checkpoint 1.55 GB（含文本解码器）；TF Hub 版大小未核实 | 0.774（[IAA-LQ 对比表](https://arxiv.org/pdf/2309.02861)，VILA 补充材料同值） | TF Hub SavedModel → tf2onnx，难度中 | 可试，替换/并列高质量档 |
+| [MUSIQ-AVA](https://github.com/google-research/google-research/tree/master/musiq)（Google） | 同上 | 163 MB（JAX .npz） | 0.726 | 多尺度动态 patch，导出最费事；不能借用 pyiqa 的实现 | 可试，收益小 |
+| [TANet](https://github.com/woshidandan/TANet) | Apache-2.0 | 仓库里没找到权重 | 0.758（二手引用） | PyTorch 常规结构，易导出 | 先找到权重再说 |
+| [rsinema/aesthetic-scorer](https://huggingface.co/rsinema/aesthetic-scorer) | MIT | 350 MB（整体微调的 B/32） | 无指标 | 易导出 | 可试：输出整体/技术/构图/光线/色彩/景深/内容 7 维，正好对应"告诉你为什么" |
+| idealo NIMA MobileNet | Apache-2.0 | 十几 MB | 0.609 | 容易 | 排除，弱于现有 |
+
+### 排除（查过）
+
+pyiqa 全家（许可）；CLIP-IQA（AVA 0.338，不是美学）；LIQE、MANIQA（技术质量，不评美学）；Q-Align/OneAlign、ArtiMuse（15.9 GB）、AesExpert、Q-Insight、VisualQuality-R1、UniPercept、ROC4MLLM、Q-ReAlign-Lite/Pro（都 >1 GB 且无 ONNX）；HF 上所有 SigLIP2 "aesthetic" 头（要么训练自动漫/插画，要么无指标无说明，**没有一个面向真实照片且带指标的**）；HPS/ImageReward/PickScore（AI 生成图偏好）。只有论文没权重：QPT V2、IAA-LQ、FGAesthetics、Real-time Burst Photo Selection。
+
+连拍选片数据集：Chang 2016 "Automatic Triage for a Photo Series"（15,545 张/5,953 组）下载站已无法访问，2026 年论文称其"只部分开源"；FGAesthetics（含连拍分组）未发布。**目前没有现成的"同场景多张选最佳"模型或完整数据集。**
+
+### 结论
+
+- 没有能直接替换现有三档的"小、干净、更准"的现成模型。小模型里最准的被非商业许可挡住；更准的都是大模型。
+- 最可行的升级是 Q-ReAlign-Mini-0.8B 做精排档（AVA 0.797 对现有 0.665），代价是自己导出并量化 ONNX、验证 ort 算子支持、CPU 上单张秒级（未实测）。
+- 自己在现有 SigLIP / CLIP-L 向量上训头仍是最便宜的路，前提是先有自己照片的标注评测集（见第 5 节的个性化闭环）。用户决定暂缓。
+
+### 未核实
+
+Q-ReAlign 的 GitHub 许可文件与 ort 算子支持；VILA/MUSIQ 的 TF Hub 模型大小与 GCS 权重许可；TANet 权重位置；rsinema 模型用的 PARA 数据集许可；Chang 2016 数据集是否仍可申请。pyiqa 基准数字是其作者自测，部分对比值是二手引用。

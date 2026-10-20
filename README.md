@@ -88,7 +88,8 @@ Most of the documentation is written in Chinese for now. Issues and pull request
 | [docs/RELEASING.md](docs/RELEASING.md) (Chinese) | How to publish a version and how the GitHub Actions work |
 | [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md) (Chinese) | The third-party models and libraries we use, and their licenses |
 | [docs/MODELS.md](docs/MODELS.md) (Chinese) | Where every model file is downloaded from, its size and license, and how it is verified |
-| [docs/RESEARCH.md](docs/RESEARCH.md) (Chinese) | Research notes on culling methods and models |
+| [docs/RESEARCH.md](docs/RESEARCH.md) (Chinese) | Research notes on culling methods and models, including the aesthetic-model survey |
+| [docs/REVIEW-2026-10-20.md](docs/REVIEW-2026-10-20.md) (Chinese) | Code review of the desktop app: prioritised list of what to improve |
 | [DESIGN.md](DESIGN.md) | The design system |
 | [CHANGELOG.md](CHANGELOG.md) (Chinese) | Release notes |
 | [SECURITY.md](SECURITY.md) (Chinese) | How to report a security problem |
