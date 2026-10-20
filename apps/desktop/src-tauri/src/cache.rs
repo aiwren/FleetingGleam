@@ -215,13 +215,21 @@ impl Cache {
             .collect()
     }
 
-    /// Every analysed photo's file stem and embedding: the "typical photo" the learned taste is compared against.
+    /// A sample of analysed photos (file stem and embedding): the "typical photo" the learned taste is compared against.
+    /// At most a couple of thousand, spread over the cache: that is plenty to stand for "typical", and cloning every
+    /// embedding of a large cache (tens of MB) on each keypress was what made marking a photo stall.
     pub fn pool(&self) -> Vec<(String, Vec<f32>)> {
-        self.entries
-            .values()
-            .filter(|e| !e.emb.is_empty())
-            .map(|e| (Path::new(&e.photo.name).file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default(), e.emb.clone()))
-            .collect()
+        const MAX: usize = 2000;
+        let with: Vec<_> = self.entries.values().filter(|e| !e.emb.is_empty()).collect();
+        let step = (with.len() as f32 / MAX as f32).max(1.0);
+        let mut out = Vec::with_capacity(with.len().min(MAX));
+        let mut i = 0f32;
+        while (i as usize) < with.len() && out.len() < MAX {
+            let e = with[i as usize];
+            out.push((Path::new(&e.photo.name).file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default(), e.emb.clone()));
+            i += step;
+        }
+        out
     }
 
     pub fn embedding(&self, key: &str) -> Option<Vec<f32>> {

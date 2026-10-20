@@ -34,6 +34,7 @@ const zh = {
     emptyView: "这个视图里没有照片。",
     queued_other: "还有 {{count}} 张在排队",
     analyzing: "正在本机分析",
+    stop: "停止分析",
     eta: "约剩 {{s}} 秒",
     loadingModel: "正在加载 AI 模型…",
     doneTitle: "分析完成",

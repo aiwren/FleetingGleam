@@ -36,6 +36,7 @@ const en = {
     queued_one: "{{count}} more queued",
     queued_other: "{{count}} more queued",
     analyzing: "Analyzing on this computer",
+    stop: "Stop analysis",
     eta: "about {{s}}s left",
     loadingModel: "Loading AI model…",
     doneTitle: "Analysis complete",

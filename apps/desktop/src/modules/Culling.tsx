@@ -181,7 +181,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
       }),
     ]);
     try {
-      const res = await invoke<Photo[]>("scan_project", { dirs: proj.folders, compute: "auto", quality: currentTier(), style: proj.style, learn: getSettings().learn && proj.learn !== false, quiet, force, eyeMethod: eyeMethodNow() });
+      const res = await invoke<Photo[]>("scan_project", { key: proj.id, dirs: proj.folders, compute: "auto", quality: currentTier(), style: proj.style, learn: getSettings().learn && proj.learn !== false, quiet, force, eyeMethod: eyeMethodNow() });
       if (tok !== token.current) return;
       setPhotos(res);
       setPhase("done");
@@ -189,7 +189,8 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
       updateProject(proj.id, { cover: [...res].sort((a, b) => b.score - a.score).slice(0, 4).map((p) => p.thumb) });
       if (!quiet) { setCelebrate(true); setTimeout(() => setCelebrate(false), 3200); }
     } catch (e) {
-      if (tok === token.current) { setError(String(e)); setPhase("ready"); }
+      // a cancelled scan is not an error: the project simply goes back to "ready to analyse"
+      if (tok === token.current) { if (String(e) !== "cancelled") setError(String(e)); setPhase("ready"); }
     } finally {
       offs.forEach((f) => f());
     }
@@ -200,6 +201,8 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const folderKey = project ? `${project.id}|${project.folders.join("|")}` : "";
   useEffect(() => {
     const tok = ++token.current;
+    // whatever scan was running belonged to the project (or settings) just left; it stops at its next photo
+    invoke("scan_cancel").catch(() => { /* not in Tauri */ });
     setSelected(null); setQuery(""); setZoomed(false); setError(null); setMode("all"); setSceneFilter(null); setPersonFilter(null); setSceneView(false); setCelebrate(false); setDirty(0);
     if (!project || project.folders.length === 0) { setPhase("idle"); setPhotos([]); setFiles([]); return; }
     setPhase("probing");
@@ -277,10 +280,11 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
       return;
     }
     const tok = ++decideToken.current;
-    invoke<Record<string, Decision>>("decide_photos", { keepRatio, pickMode, onePerGroup, overrides: Object.fromEntries(overrides) })
+    invoke<Record<string, Decision>>("decide_photos", { key: project?.id ?? "", keepRatio, pickMode, onePerGroup, overrides: Object.fromEntries(overrides) })
       .then((res) => { if (tok === decideToken.current) setDecisions(new Map(Object.entries(res))); })
-      .catch((e) => { if (tok === decideToken.current) { console.error("decide_photos:", e); setDecisions(new Map()); } });
-  }, [photos, keepRatio, pickMode, onePerGroup, overrides]);
+      // "stale": the backend holds another project's photos (a scan of this one is on its way); the next scan result asks again
+      .catch((e) => { if (tok === decideToken.current) { if (String(e) !== "stale") console.error("decide_photos:", e); setDecisions(new Map()); } });
+  }, [photos, keepRatio, pickMode, onePerGroup, overrides, project?.id]);
   const counts = useMemo(() => {
     const c = { all: photos.length, keep: 0, review: 0, reject: 0 };
     decisions.forEach((d) => { c[d.state]++; });
@@ -500,8 +504,10 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     if (st === null) delete next[path]; else next[path] = st;
     localPatch.current = st !== null && project.keepCap === undefined && !project.onePerGroup ? { path, state: st, photos } : null;
     updateProject(project.id, { overrides: next });
-    // Only explicit keep / reject teach the taste model; "review" and "cleared" mean "not sure".
-    invoke("record_label", { path, label: st === null || st === "review" ? null : st === "keep", style: project?.style }).catch(() => { /* not in Tauri */ });
+    // Only explicit keep / reject teach the taste model; "review" and "cleared" mean "not sure". With learning off, nothing is recorded at all.
+    if (getSettings().learn && project.learn !== false) {
+      invoke("record_label", { path, label: st === null || st === "review" ? null : st === "keep", style: project?.style }).catch(() => { /* not in Tauri */ });
+    }
     setDirty((d) => d + 1);
     if (!fromUndo) {
       undoStack.current.push({ path, prev });
@@ -682,6 +688,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
                     <div className="banner-line">
                       <b>{t("cull.analyzing")}</b>
                       <span className="mono ash banner-count"><Ticker value={progress.done} /> / {progress.total}{eta ? ` · ${t("cull.eta", { s: eta })}` : ""}</span>
+                      <button type="button" className="btn banner-stop" onClick={() => { invoke("scan_cancel").catch(() => { /* not in Tauri */ }); }}>{t("cull.stop")}</button>
                     </div>
                     <span className="mono ash banner-now">
                       {last ? `${last.path.split("/").pop()} · ${t(`cull.stage.${last.stage}`, { defaultValue: last.stage })}` : t("cull.loadingModel")}

@@ -84,9 +84,12 @@ struct AppState {
     mediapipe_eyes: Mutex<Option<std::sync::Arc<mediapipe::MediapipeEyes>>>,
     /// Loaded once, on first use: the face-recognition network is tens of MB.
     face_embedder: Mutex<Option<std::sync::Arc<faces::FaceEmbedder>>>,
-    /// The last project's photos, kept so `decide_photos` can re-run keep/review/reject on a plain override change
-    /// without the whole (possibly large) list crossing the IPC boundary again.
-    last_photos: Mutex<Vec<Photo>>,
+    /// The last project's photos (with the project key they belong to), kept so `decide_photos` can re-run keep/review/reject
+    /// on a plain override change without the whole (possibly large) list crossing the IPC boundary again. The key stops a
+    /// scan that finished late (of a project since left) from answering for the project now open.
+    last_photos: Mutex<(String, Vec<Photo>)>,
+    /// Bumped by every scan and by `scan_cancel`, so a scan that is no longer the current one stops at the next photo.
+    scan_job: AtomicU64,
     /// Loaded once, on first use: the scene-description model (a few hundred MB) and the English-to-Chinese one.
     captioner: Mutex<Option<std::sync::Arc<florence::Captioner>>>,
     translator: Mutex<Option<std::sync::Arc<translate::Translator>>>,
@@ -249,11 +252,14 @@ async fn probe_folder(app: AppHandle, dirs: Vec<String>, compute: Option<String>
 }
 
 /// Analyses whatever is new or changed, reuses the cache for the rest, then groups and scores every photo
-/// together. `learn` blends in the on-device taste model; `quiet` suppresses progress events (used for
-/// instant re-opens and re-scoring); `force` ignores the cache and re-analyses every photo.
+/// together. `key` names the project (so `decide_photos` can tell whose photos it holds); `learn` blends in the on-device
+/// taste model; `quiet` suppresses progress events (used for instant re-opens and re-scoring); `force` ignores the cache
+/// and re-analyses every photo. A newer scan, or `scan_cancel`, stops this one at the next photo with `Err("cancelled")`;
+/// what it analysed by then is already in the cache.
 #[tauri::command]
-async fn scan_project(app: AppHandle, dirs: Vec<String>, compute: Option<String>, quality: Option<String>, learn: bool, quiet: bool, style: Option<String>, force: Option<bool>, eye_method: Option<String>) -> Result<Vec<Photo>, String> {
+async fn scan_project(app: AppHandle, key: String, dirs: Vec<String>, compute: Option<String>, quality: Option<String>, learn: bool, quiet: bool, style: Option<String>, force: Option<bool>, eye_method: Option<String>) -> Result<Vec<Photo>, String> {
     let force = force.unwrap_or(false);
+    let job = app.state::<AppState>().scan_job.fetch_add(1, Ordering::Relaxed) + 1;
     let cpu_only = compute.as_deref() == Some("cpu");
     let want = scorer::Quality::parse(quality.as_deref());
     let eye_method = analyze::EyeMethod::parse(eye_method.as_deref());
@@ -266,6 +272,7 @@ async fn scan_project(app: AppHandle, dirs: Vec<String>, compute: Option<String>
     let fe = face_embedder(&app, &model_dir);
 
     tauri::async_runtime::spawn_blocking(move || {
+        let cancelled = || app.state::<AppState>().scan_job.load(Ordering::Relaxed) != job;
         let files = list_all(&dirs);
         let total = files.len();
         let mut hits: Vec<Photo> = Vec::new();
@@ -327,6 +334,9 @@ async fn scan_project(app: AppHandle, dirs: Vec<String>, compute: Option<String>
             fresh = jobs
                 .par_iter()
                 .filter_map(|(p, _, _)| {
+                    if cancelled() {
+                        return None;
+                    }
                     let key = p.to_string_lossy().into_owned();
                     let on_stage = |stage: &str, pct: u8, thumb: Option<(&str, u32, u32)>| {
                         if quiet {
@@ -367,6 +377,9 @@ async fn scan_project(app: AppHandle, dirs: Vec<String>, compute: Option<String>
             let rest = std::mem::take(&mut pending.lock().unwrap_or_else(|e| e.into_inner()).0);
             save_batch(&rest);
         }
+        if cancelled() {
+            return Err("cancelled".to_string());
+        }
 
         // A photo missing eyes_open (analysed before that signal existed), or whose cached value came from the other
         // method than the one now selected, gets it (re)measured from its saved analysis copy.
@@ -377,7 +390,7 @@ async fn scan_project(app: AppHandle, dirs: Vec<String>, compute: Option<String>
                 let measured: Vec<(usize, f32)> = hits
                     .par_iter()
                     .enumerate()
-                    .filter(|(_, p)| p.face_count > 0 && p.eye_method.as_deref() != Some(method_tag))
+                    .filter(|(_, p)| p.face_count > 0 && p.eye_method.as_deref() != Some(method_tag) && !cancelled())
                     .filter_map(|(i, p)| analyze::measure_eyes(Path::new(&p.path), &cache_dir, &v, eye_method, mp.as_deref()).map(|e| (i, e)))
                     .collect();
                 if !measured.is_empty() {
@@ -408,7 +421,7 @@ async fn scan_project(app: AppHandle, dirs: Vec<String>, compute: Option<String>
                     let found: Vec<(usize, Vec<[f32; 4]>, Vec<Vec<f32>>)> = pool.install(|| {
                         hits.par_iter()
                             .enumerate()
-                            .filter(|(_, p)| !p.faces_done)
+                            .filter(|(_, p)| !p.faces_done && !cancelled())
                             .filter_map(|(i, p)| {
                                 let r = analyze::measure_faces(Path::new(&p.path), &cache_dir, &v, f).map(|(b, e)| (i, b, e));
                                 let _ = app.emit("people-progress", Progress { done: counter.fetch_add(1, Ordering::Relaxed) + 1, total });
@@ -444,7 +457,7 @@ async fn scan_project(app: AppHandle, dirs: Vec<String>, compute: Option<String>
                 let found: Vec<(usize, media::Media)> = pool.install(|| {
                     hits.par_iter()
                         .enumerate()
-                        .filter(|(_, p)| !p.media_done)
+                        .filter(|(_, p)| !p.media_done && !cancelled())
                         .map(|(i, p)| {
                             let m = media::probe(Path::new(&p.path), &cache_dir);
                             let _ = app.emit("media-progress", Progress { done: counter.fetch_add(1, Ordering::Relaxed) + 1, total });
@@ -468,12 +481,15 @@ async fn scan_project(app: AppHandle, dirs: Vec<String>, compute: Option<String>
                 });
             }
         }
+        if cancelled() {
+            return Err("cancelled".to_string());
+        }
         let mut photos = hits;
         photos.extend(fresh);
         photos.sort_by(|a, b| a.path.cmp(&b.path));
         let prefs = if learn { Some(app.state::<AppState>().prefs.lock().unwrap().get(style.as_deref()).prefs.clone()) } else { None };
         analyze::group_and_score(&mut photos, prefs.as_ref().filter(|p| p.active()), eye_method);
-        *app.state::<AppState>().last_photos.lock().unwrap() = photos.clone();
+        *app.state::<AppState>().last_photos.lock().unwrap() = (key, photos.clone());
         Ok(photos)
     })
     .await
@@ -483,11 +499,27 @@ async fn scan_project(app: AppHandle, dirs: Vec<String>, compute: Option<String>
 /// Keep / review / reject for the project last returned by `scan_project`, re-run on the backend so the ranking
 /// logic never ships as readable front-end JS. Only the small bits that can change between calls (the keep ratio,
 /// and any photos the user overrode by hand) cross the IPC boundary; the photos themselves stay cached in `AppState`.
+/// `key` must be the project the photos were scanned for: otherwise the answer would be another project's and is refused.
+/// Deciding is seconds on a very large project, so it runs off the main thread.
 #[tauri::command]
-fn decide_photos(app: AppHandle, keep_ratio: f32, pick_mode: Option<String>, one_per_group: Option<bool>, overrides: std::collections::HashMap<String, String>) -> std::collections::HashMap<String, decide::Decision> {
-    let st = app.state::<AppState>();
-    let photos = st.last_photos.lock().unwrap();
-    decide::decide(&photos, keep_ratio, decide::PickMode::parse(pick_mode.as_deref()), one_per_group.unwrap_or(false), &overrides)
+async fn decide_photos(app: AppHandle, key: String, keep_ratio: f32, pick_mode: Option<String>, one_per_group: Option<bool>, overrides: std::collections::HashMap<String, String>) -> Result<std::collections::HashMap<String, decide::Decision>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let st = app.state::<AppState>();
+        let photos = st.last_photos.lock().unwrap();
+        if photos.0 != key {
+            return Err("stale".to_string());
+        }
+        Ok(decide::decide(&photos.1, keep_ratio, decide::PickMode::parse(pick_mode.as_deref()), one_per_group.unwrap_or(false), &overrides))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Stops the scan in progress: it ends at the next photo, and what it analysed by then is already in the cache. Called when
+/// the person asks for it, and whenever the page leaves a project (its scan may still be running).
+#[tauri::command]
+fn scan_cancel(app: AppHandle) {
+    app.state::<AppState>().scan_job.fetch_add(1, Ordering::Relaxed);
 }
 
 #[derive(Serialize)]
@@ -1059,20 +1091,25 @@ fn retrain_style(app: &AppHandle, styles: &mut prefs::Styles, style: Option<&str
     with_cache(app, |c| p.retrain(|k| c.embedding(k), || c.pool()));
 }
 
+/// Retraining and saving take a moment (and the taste model is retrained on every keypress), so this runs off the main thread.
 #[tauri::command]
-fn record_label(app: AppHandle, path: String, label: Option<bool>, style: Option<String>) -> prefs::PrefsInfo {
-    let st = app.state::<AppState>();
-    let mut styles = st.prefs.lock().unwrap();
-    {
-        let p = &mut styles.get_mut(style.as_deref()).prefs;
-        match label {
-            Some(v) => { p.labels.insert(path, v); }
-            None => { p.labels.remove(&path); }
+async fn record_label(app: AppHandle, path: String, label: Option<bool>, style: Option<String>) -> Result<prefs::PrefsInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let st = app.state::<AppState>();
+        let mut styles = st.prefs.lock().unwrap();
+        {
+            let p = &mut styles.get_mut(style.as_deref()).prefs;
+            match label {
+                Some(v) => { p.labels.insert(path, v); }
+                None => { p.labels.remove(&path); }
+            }
         }
-    }
-    retrain_style(&app, &mut styles, style.as_deref());
-    styles.save();
-    styles.get(style.as_deref()).prefs.info()
+        retrain_style(&app, &mut styles, style.as_deref());
+        styles.save();
+        styles.get(style.as_deref()).prefs.info()
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1235,25 +1272,34 @@ fn thumbs_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app.path().app_cache_dir().map_err(|e| e.to_string())?.join("thumbs"))
 }
 
+/// Walks tens of thousands of thumbnails on a big install, so it runs off the main thread.
 #[tauri::command]
-fn cache_size(app: AppHandle) -> Result<u64, String> {
+async fn cache_size(app: AppHandle) -> Result<u64, String> {
     let dir = thumbs_dir(&app)?;
-    Ok(WalkDir::new(dir)
-        .into_iter()
-        .filter_map(Result::ok)
-        .filter_map(|e| e.metadata().ok())
-        .filter(|m| m.is_file())
-        .map(|m| m.len())
-        .sum())
+    tauri::async_runtime::spawn_blocking(move || {
+        WalkDir::new(dir)
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter_map(|e| e.metadata().ok())
+            .filter(|m| m.is_file())
+            .map(|m| m.len())
+            .sum()
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn clear_cache(app: AppHandle) -> Result<(), String> {
+async fn clear_cache(app: AppHandle) -> Result<(), String> {
     let dir = thumbs_dir(&app)?;
-    if dir.exists() {
-        std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
-    }
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+        }
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// The frontend owns the language; it tells us so the native menu bar follows.
@@ -1271,7 +1317,7 @@ pub fn run() {
             let dir = data_dir(app.handle());
             imageio::init(image_bin(app.handle()));
             app.manage(Downloads::default());
-            app.manage(AppState { text: Mutex::new(None), cache: Mutex::new(None), prefs: Mutex::new(prefs::Styles::load(&dir)), mediapipe_eyes: Mutex::new(None), face_embedder: Mutex::new(None), last_photos: Mutex::new(Vec::new()), captioner: Mutex::new(None), translator: Mutex::new(None), scene_sentences: Mutex::new(None), scene_job: AtomicU64::new(0) });
+            app.manage(AppState { text: Mutex::new(None), cache: Mutex::new(None), prefs: Mutex::new(prefs::Styles::load(&dir)), mediapipe_eyes: Mutex::new(None), face_embedder: Mutex::new(None), last_photos: Mutex::new((String::new(), Vec::new())), scan_job: AtomicU64::new(0), captioner: Mutex::new(None), translator: Mutex::new(None), scene_sentences: Mutex::new(None), scene_job: AtomicU64::new(0) });
             let menu = build_menu(app.handle(), "en")?;
             app.set_menu(menu)?;
             // scratch files (larger previews, zoom crops, motion clips) are kept within bounds; done in the background
@@ -1283,7 +1329,7 @@ pub fn run() {
         .on_menu_event(|app, event| {
             let _ = app.emit("menu", event.id().0.clone());
         })
-        .invoke_handler(tauri::generate_handler![probe_folder, scan_project, decide_photos, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, trash_photos, reveal, preview_thumbs, photo_info, large_preview, motion_clip, hdrview::hdr_overlay_supported, hdrview::hdr_overlay_show, hdrview::hdr_overlay_move, hdrview::hdr_overlay_hide, hdrview::hdr_overlay_detail, hdrview::hdr_overlay_detail_hide, photo_detail, machine_info, search_status, search_index, search_photos, scene_text, packs_status, pack_size, pack_download, pack_cancel, pack_remove])
+        .invoke_handler(tauri::generate_handler![probe_folder, scan_project, scan_cancel, decide_photos, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, trash_photos, reveal, preview_thumbs, photo_info, large_preview, motion_clip, hdrview::hdr_overlay_supported, hdrview::hdr_overlay_show, hdrview::hdr_overlay_move, hdrview::hdr_overlay_hide, hdrview::hdr_overlay_detail, hdrview::hdr_overlay_detail_hide, photo_detail, machine_info, search_status, search_index, search_photos, scene_text, packs_status, pack_size, pack_download, pack_cancel, pack_remove])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

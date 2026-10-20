@@ -177,6 +177,7 @@ w.__TAURI_INTERNALS__ = {
         return { files, bytes: files.filter((f) => !f.cached).length * 9_000_000, uncached: files.filter((f) => !f.cached).length };
       }
       case "scan_project": return scan(args.dirs as string[], !!args.quiet);
+      case "scan_cancel": return null;
       // The native HDR layer exists only in the app; here the calls are just recorded (window.__hdrCalls) so the page's side can be checked.
       case "hdr_overlay_supported": return true;
       case "hdr_overlay_show": case "hdr_overlay_move": case "hdr_overlay_hide": {
