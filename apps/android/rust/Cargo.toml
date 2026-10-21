@@ -18,6 +18,7 @@ path = "src/bin/uniffi-bindgen.rs"
 [dependencies]
 fleetinggleam-core.workspace = true
 rayon.workspace = true
+ureq = { version = "2", features = ["tls"] }
 uniffi = { version = "0.32", features = ["cli"] }
 
 [dev-dependencies]

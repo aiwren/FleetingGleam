@@ -1532,7 +1532,8 @@ fn machine_info() -> Machine {
 #[tauri::command]
 async fn packs_status(app: AppHandle) -> Result<Vec<modelpacks::PackStatus>, String> {
     let dir = models_dir(&app);
-    Ok(modelpacks::PACKS.iter().map(|p| modelpacks::PackStatus { id: p.id.to_string(), installed: modelpacks::installed(&dir, p), bytes: 0 }).collect())
+    // `detect`（人脸检测器）是给没有系统人脸检测的平台（Android）用的，Mac 端用 Apple Vision，设置页不列它
+    Ok(modelpacks::PACKS.iter().filter(|p| p.id != "detect").map(|p| modelpacks::PackStatus { id: p.id.to_string(), installed: modelpacks::installed(&dir, p), bytes: 0 }).collect())
 }
 
 /// How many bytes a pack still needs (0 if it is installed), so the app can say so before asking.

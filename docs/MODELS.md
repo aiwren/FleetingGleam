@@ -61,6 +61,14 @@
 |---|---|---|---|---|---|
 | `face_recognition_sface_2021dec.onnx` | 38.7 MB | Hugging Face | opencv/face_recognition_sface · face_recognition_sface_2021dec.onnx | Apache-2.0 | `0ba9fbfa01b5` |
 
+### 人脸检测（`detect`），需下载约 1.6 MB（只有 Android 用）
+
+Mac 端用 Apple Vision 找脸，不需要它；没有系统人脸检测的平台（Android）用这个很小的检测器找脸，再交给 MediaPipe 的网格模型（`eyes` 包）量眼睛、定出人物识别要的五个点（`packages/core/src/facepipe.rs`）。
+
+| 文件 | 大小 | 获取方式 | 来源 | 许可 | SHA-256（前 12 位） |
+|---|---|---|---|---|---|
+| `face_detector_rfb640.onnx` | 1.6 MB | Hugging Face | onnxmodelzoo/version-RFB-640 · version-RFB-640.onnx（ONNX Model Zoo 的 UltraFace RFB-640） | MIT | `8f4c65927597` |
+
 ### 场景描述（`scenetext`），需下载约 390 MB
 
 | 文件 | 大小 | 获取方式 | 来源 | 许可 | SHA-256（前 12 位） |

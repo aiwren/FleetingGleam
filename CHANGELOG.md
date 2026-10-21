@@ -8,6 +8,7 @@
 - 仓库根目录改为 Cargo 工作区：与平台无关的核心（分析、分组、打分、取舍、喜好学习、搜索、场景描述、模型包、NAS 直连、云备份、本机加密仓库）抽成独立 crate `packages/core`（`fleetinggleam-core`），由桌面端与 Android 端共用；macOS 特有的部分（Apple Vision、ImageIO 边车、Metal 上的 CLIP）改为实现核心库 `platform.rs` 里的 trait，桌面端行为不变。模型清单与随应用分发的小模型文件随之搬到 `packages/core/`。
 
 ### 新增
+- Android 端模型层（路线图阶段 B 第 2 步）：和 Mac 端同一批模型、同一份清单与 SHA-256 校验，"模型"页签可下载 / 删除每个包并显示进度；ONNX 会话统一从核心库 `onnx.rs` 建，Android 上 CLIP 走 NNAPI（先和 CPU 比对一致才用）；没有系统人脸检测的平台用核心库自己的人脸流水线（UltraFace 找脸 + MediaPipe 网格量眼睛、定五官，新模型包 `detect`），Mac 端不受影响。Android 的导航改为底部悬浮的玻璃标签栏。
 - Android 端骨架（路线图阶段 B 第 1 步）：`apps/android/rust` 用 UniFFI 把核心库暴露给 Kotlin，`apps/android` 是 Kotlin + Jetpack Compose（Material 3）工程，`./gradlew assembleDebug` 自动用 cargo-ndk 编出 arm64-v8a 的库并生成绑定；冒烟界面能显示核心版本、分析一组示例照片、列出一台 NAS 的共享。
 - 设置里可以「添加 NAS」：只填服务器地址和账号，「测试连接」通过即可保存，不用选共享。应用内置纯 Rust 的 SMB2/3 客户端自己连接（不经过访达，桌面上不出现挂载卷，密码加密保存在本机；Mac 与以后的 Android 共用这一份实现）。新建项目时在应用里从这台 NAS 的共享开始逐级浏览，任意一层文件夹都可以选作项目；照片先复制到应用自己的镜像缓存再分析（第一次打开要等它读完并显示进度，之后只补新增、删掉远端已没有的），查看与导出都用这份副本；打开项目时自动连接，连不上会说明并可重试；淘汰的照片在共享里移到根目录的「.FleetingGleam Recycle Bin」文件夹（按日期分开，可手动放回），本机副本随之删掉；移除 NAS 会删掉本机副本，NAS 上的照片不动。
 - 设置里新增「备份」分组：把「我的设置与喜好」（含各风格学到的向量与决定）自动备份到你自己的云存储。可以添加多个备份方式并各起名字（目前只有 Cloudflare R2：S3 端点、桶名、API 令牌；Secret 加密保存在本机），设置或喜好改动后约 20 秒上传到每个目标；桶里 `fleetinggleam/taste.json` 是最新一份，另外按天放在 `auto/` 并只保留最近 N 份（可设，默认 30）；「立即备份」就是手动触发同一次上传；可从任一目标恢复。导出 / 导入文件也挪到了这个分组。没有账号系统，用的是你自己的桶。

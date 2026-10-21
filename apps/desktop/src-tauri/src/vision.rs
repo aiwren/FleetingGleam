@@ -88,7 +88,7 @@ impl Proc {
             return None;
         }
         Some(VisionOut {
-            aesthetic: r.aesthetic?,
+            aesthetic: Some(r.aesthetic?),
             utility: r.utility.unwrap_or(false),
             faces: r.faces.unwrap_or_default(),
             eyes: r.eyes.unwrap_or_default(),

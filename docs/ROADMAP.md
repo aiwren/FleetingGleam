@@ -89,7 +89,7 @@ Android 没有 Apple Vision，两端要一样就得两端用同样的东西：
 
 ## 阶段 B：Android 端（原生，约 3–4 个月）
 
-目标：**Mac 端的全部功能在 Android 上都要有**，不做"精简版"。原则：**核心逻辑复用 Rust，界面原生 Kotlin + Jetpack Compose。** 结构按 Material 3 Expressive（导航、返回手势、权限流程），表面用玻璃材质（Android 12+ 的实时模糊），颜色 / 字号 / 间距 / 动效节奏与琥珀只给"保留"等规则直接沿用 DESIGN.md。面向高端机：三档模型都提供。
+目标：**Mac 端的全部功能在 Android 上都要有**，不做"精简版"。原则：**核心逻辑复用 Rust，界面原生 Kotlin + Jetpack Compose。** 结构按 Material 3 Expressive（导航、返回手势、权限流程），表面用玻璃材质（Android 12+ 的实时模糊），颜色 / 字号 / 间距 / 动效节奏与琥珀只给"保留"等规则直接沿用 DESIGN.md。面向高端机：三档模型都提供。**导航是底部悬浮的液态玻璃标签栏**（作者 2026-10-21 要求：像 iOS 那种悬浮的 tab bar，要苹果的液态玻璃效果），不用贴底的 NavigationBar；页签只有**照片**和**设置**（NAS、模型、备份、外观、语言都在设置里，作者明确不要 NAS 单独占一格）。冒烟骨架里已经按这个结构搭（`MainActivity.kt` 的 `FloatingTabBar`）：现在是 Haze 的实时模糊 + 轻微着色 + 一圈上亮下暗的高光描边 + 阴影；**液态玻璃的折射与高光流动**在第 4 步做：Android 13+ 用 AGSL `RuntimeShader` 对标签栏后面的内容做边缘折射（把背景采样坐标按到边缘的距离做透镜形变）、按压时的光斑随手指移动，Android 12 退化成模糊玻璃，更早的系统不支持（最低 API 31）。
 
 ### 功能对齐清单（Mac 端有的，Android 都要）
 | 功能 | Android 上怎么做 | 复用 |
@@ -115,7 +115,13 @@ Android 没有 Apple Vision，两端要一样就得两端用同样的东西：
    - 假设（没问过，先按默认做）：最低 Android 12（API 31，玻璃材质要实时模糊，面向高端机）；ONNX Runtime 用 pyke 的 `aarch64-linux-android+nnapi` 预编译包（core 的 Cargo.toml 在 Android 目标上开 `nnapi` 特性），QNN 第 2 步再看；工具链 Gradle 8.13 / AGP 8.12 / Kotlin 2.1.20 / Compose 1.9.3 / Material 3 1.4.0 / JNA 5.17；只编 arm64-v8a。
    - 留给第 3 步：桌面端 `scan_project` 的流程（缓存命中、NAS 同步、分批落盘、补测眼睛 / 人脸 / HDR、取消）还在 `lib.rs` 里，Android 的 `analyze_folder` 是不走缓存的直通版；第 3 步把这段流程搬进核心（进度与取消做成 trait），两端共用。核心里 `std::env::temp_dir()` 的两处（非原生格式的临时渲染、GPU 编码器的标记文件）在 Android 上不可写，到时给核心一个可配置的临时目录。
    - 本机遗留：旧的 `apps/desktop/src-tauri/target`（约 13 GB）不再使用，可以删；新的构建目录是仓库根的 `target/`。
-2. [ ] **模型层**（2–3 周）：ONNX Runtime Android（NNAPI / QNN），同一批 ONNX 文件与清单、同样的 SHA-256 校验；MediaPipe 人脸；Florence-2 与 OPUS-MT 作为可选包。
+2. [x] **模型层**（完成 2026-10-21）：ONNX Runtime Android 跑的是和 Mac 端完全同一批 ONNX 文件与同一份清单（`packages/core/models.manifest.json`），同样的 SHA-256 校验；下载、删除、进度、取消经 UniFFI 暴露（`packs_status` / `pack_download` / `pack_cancel` / `pack_remove`），Android 的"模型"页签能下载全部 8 个包（Florence-2 与 OPUS-MT 就是 `scenetext` 可选包）。
+   - 会话统一从 `packages/core/src/onnx.rs` 建：平台加速器只在这一处接——macOS 的 CoreML（只有 SigLIP 用，和以前一样）、Android 的 NNAPI（NCHW、不开 fp16 松弛）。只有视觉编码器（CLIP / SigLIP）走加速器，而且第一次要在固定输入上和 CPU 比对（余弦 > 0.999），结论记在草稿目录的标记文件里，不一致就只用 CPU（`onnx::verified`，`scorer.rs` 的 `build_accelerated`）。int8 的文本 / 场景 / 翻译模型和小的人脸模型都在 CPU 上跑。
+   - **人脸**：没有系统人脸检测的平台用核心库自己的流水线 `facepipe.rs` 作为 `SystemVision`：UltraFace RFB-640（新包 `detect`，1.6 MB，MIT）找脸 → MediaPipe 网格（`eyes` 包）量眼睛、定出人物识别用的五个点（网格 33/133、362/263、1、61、291）→ `faces` 包认人。给出的 `VisionOut` 和 Apple Vision 一样，分析流水线不用区分。Mac 端照旧用 Vision（A4 未动；Mac 设置页不列 `detect`）。
+   - 校准：UltraFace 的框比 Vision 的松，MediaPipe 对框敏感；在作者 80 张 Mac 端分析过的照片上对比（`facepipe::tests::agreement_with_apple_vision_on_a_real_cache`），框收到 0.85 后闭眼比例 17%（Mac 端 16%），人脸数 96% 一致。`VisionOut.aesthetic` 改为 `Option`：这条流水线给不出 Apple 的美学分，`sys_score` 为空，美学只剩 CLIP 头——两端分数一致仍要等 A4。
+   - 偏离清单的地方（记下，未问）：检测器用的是 UltraFace 而不是 MediaPipe 的 BlazeFace——后者只有 TFLite，转 ONNX 要 tf2onnx（本机没有），而 UltraFace 有现成的 ONNX；以后换只动 `facepipe.rs` 的前处理和清单。QNN 没接：pyke 的预编译包只带 NNAPI，QNN 要 Qualcomm 的 SDK 与自己编 ONNX Runtime；NNAPI 在 Android 15 起被标为废弃，第 6 步做性能对比时再决定是否自己编带 XNNPACK / QNN 的 ONNX Runtime。
+   - 核心里 `std::env::temp_dir()` 已换成 `platform::scratch_dir()`，Android 启动时 `init(cacheDir/scratch, 代理)` 设置。核心所有联网（模型下载、云备份）改走 `platform::http_agent`，可带 HTTP 代理：Android 把系统的全局代理交给它（模拟器用 `-http-proxy http://10.0.2.2:7897` 走作者本机的 Clash，否则模拟器直连不到 Hugging Face）；Mac 端还没把系统代理交给核心，记为 A 阶段的小项。
+   - 还没验证的：在真机上 NNAPI 是否真的比 CPU 快（模拟器只有参考实现）；模拟器上只验证了下载 / 校验 / 加载和 CPU 推理。
 3. [ ] **应用骨架**（2 周）：相册权限与 MediaStore / SAF 读取、项目模型、设置页（含 NAS、备份、导入 Mac 的设置与喜好）、分析用前台服务 + 发热 / 充电策略。
 4. [ ] **选片界面**（4–6 周）：照片墙、单张、对比、检查器与理由、筛选面板、手势版 P / R / X 与撤销、搜索、风格与学习进度、HDR 与实况照片查看。
 5. [ ] **整理与 NAS**（2 周）：MediaStore / SAF 的移动与回收站（系统确认框）、导出保留照片；NAS 项目的镜像同步与回收。

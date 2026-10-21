@@ -141,6 +141,13 @@
       "sha256": "9b213671b4e78e8d1f0f4c6845757849e7b6b3325e1ad964715c8e2268c68eb4",
       "source": "Xenova/opus-mt-en-zh · tokenizer.json（去掉分词器读不懂的文本归一化步骤）",
       "license": "Apache-2.0"
+    },
+    "face_detector_rfb640.onnx": {
+      "url": "https://huggingface.co/onnxmodelzoo/version-RFB-640/resolve/c39647011b1d0eb48037ce3051438e51b19e2b11/version-RFB-640.onnx",
+      "size": 1588012,
+      "sha256": "8f4c659275977e7a3bfbfa339a9c769ad793df50f9c0baa8c14b11baa1646430",
+      "source": "onnxmodelzoo/version-RFB-640 · version-RFB-640.onnx（ONNX Model Zoo 的 UltraFace RFB-640）",
+      "license": "MIT"
     }
   }
 }

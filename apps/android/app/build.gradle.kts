@@ -56,7 +56,7 @@ val cargoBuild by tasks.registering(Exec::class) {
     description = "用 cargo-ndk 编译 Rust 核心（arm64-v8a）"
     workingDir = repoRoot
     environment("PATH", cargoPath)
-    commandLine("cargo", "ndk", "-t", "arm64-v8a", "-o", jniLibs.asFile.absolutePath, "build", "-p", rustCrate, "--release")
+    commandLine("cargo", "ndk", "-t", "arm64-v8a", "-P", "31", "-o", jniLibs.asFile.absolutePath, "build", "-p", rustCrate, "--release")
     inputs.dir(File(repoRoot, "packages/core/src"))
     inputs.dir(File(repoRoot, "apps/android/rust/src"))
     inputs.files(File(repoRoot, "Cargo.toml"), File(repoRoot, "Cargo.lock"), File(repoRoot, "apps/android/rust/Cargo.toml"), File(repoRoot, "packages/core/Cargo.toml"))
@@ -85,7 +85,10 @@ val uniffiBindgen by tasks.registering(Exec::class) {
         val lib = hostLib.firstOrNull { it.exists() } ?: error("宿主上的绑定库没编出来：${hostLib.joinToString()}")
         commandLine("cargo", "run", "-p", rustCrate, "--bin", "uniffi-bindgen", "--", "generate", "--library", lib.absolutePath, "--language", "kotlin", "--out-dir", uniffiOut.get().asFile.absolutePath, "--no-format")
     }
+    inputs.dir(File(repoRoot, "apps/android/rust/src"))
     outputs.dir(uniffiOut)
+    // 生成只要一秒，接口一改绑定就得跟着变：每次都跑
+    outputs.upToDateWhen { false }
 }
 
 // 3. ONNX Runtime 的预编译包动态链接 NDK 的 C++ 运行库，APK 里要带上它
@@ -106,6 +109,9 @@ dependencies {
     implementation("androidx.compose.foundation:foundation:1.9.3")
     implementation("androidx.compose.material3:material3:1.4.0")
     implementation("androidx.compose.ui:ui-tooling-preview:1.9.3")
+    // 悬浮标签栏的玻璃材质：对后面的内容做实时模糊（Android 12+；更早的系统退为半透明）
+    implementation("dev.chrisbanes.haze:haze:1.6.10")
+    implementation("dev.chrisbanes.haze:haze-materials:1.6.10")
     // UniFFI 生成的 Kotlin 绑定通过 JNA 调 Rust
     implementation("net.java.dev.jna:jna:5.17.0@aar")
 }

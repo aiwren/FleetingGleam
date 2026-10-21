@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">FleetingGleam</string>
-    <string name="core_version">核心库 %1$s · %2$d GB 内存 · %3$d 核</string>
+    <string name="core_version">核心库 %1$s · %2$d GB 内存 · %3$d 核 · %4$s</string>
     <string name="section_analyze">分析一个文件夹</string>
     <string name="analyze_hint">分析应用内生成的一组示例照片（不需要任何权限）：分组、打分与保留 / 待定 / 淘汰的判断都来自共用的 Rust 核心。</string>
     <string name="analyze_button">分析示例照片</string>
@@ -17,4 +17,26 @@
     <string name="nas_button">测试连接</string>
     <string name="nas_shares">共享：%1$s</string>
     <string name="error_prefix">出错：%1$s</string>
+    <string name="tab_photos">照片</string>
+    <string name="tab_models">模型</string>
+    <string name="tab_settings">设置</string>
+    <string name="scan_no_clip">没有分析模型（到"模型"里下载"标准分析"）</string>
+    <string name="scan_info">CLIP：%1$s · 人脸 %2$s · 人物 %3$s</string>
+    <string name="faces_n">%1$d 张脸</string>
+    <string name="eyes_v">眼 %1$.2f</string>
+    <string name="models_hint">和 Mac 端同一批模型、同一份清单，下载后按 SHA-256 校验；放在应用私有目录，之后完全离线。</string>
+    <string name="pack_standard">标准分析</string>
+    <string name="pack_high">高质量分析</string>
+    <string name="pack_ultra">极致分析（实验）</string>
+    <string name="pack_search">照片搜索</string>
+    <string name="pack_eyes">MediaPipe 眼睛检测</string>
+    <string name="pack_faces">人物识别</string>
+    <string name="pack_detect">人脸检测</string>
+    <string name="pack_scenetext">场景描述</string>
+    <string name="pack_unknown">%1$s</string>
+    <string name="pack_installed">已安装</string>
+    <string name="pack_size">需下载 %1$s</string>
+    <string name="pack_download">下载</string>
+    <string name="pack_cancel">取消</string>
+    <string name="pack_remove">删除</string>
 </resources>

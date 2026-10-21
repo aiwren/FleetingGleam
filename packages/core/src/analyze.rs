@@ -197,7 +197,7 @@ pub fn analyze(
     // Vision gets the small, already-upright copy: no need to decode the full-size original twice.
     let sys = vision.and_then(|v| save_analysis_copy(&work, path, cache_dir).and_then(|p| v.analyze(&p)));
     let utility = sys.as_ref().map_or(false, |s| s.utility);
-    let sys_score = sys.as_ref().map(|s| s.aesthetic);
+    let sys_score = sys.as_ref().and_then(|s| s.aesthetic);
     let face_min = sys.as_ref().and_then(|s| s.faces.iter().cloned().reduce(f32::min));
     let face_count = sys.as_ref().map_or(0, |s| s.faces.len() as u32);
     // MediaPipe reads the same crops Vision found, in the working copy already in memory; Vision's own ratio is the
@@ -339,7 +339,7 @@ fn load_with_size(path: &Path, max: u32) -> Result<(DynamicImage, u32, u32), Str
         return Ok((full, w, h));
     }
     let info = crate::imageio::info(path, false).ok_or_else(|| format!("{}: cannot be read on this machine", path.display()))?;
-    let tmp = std::env::temp_dir().join(format!("fg-{:016x}.jpg", { let mut h = DefaultHasher::new(); path.hash(&mut h); std::thread::current().id().hash(&mut h); h.finish() }));
+    let tmp = crate::platform::scratch_dir().join(format!("fg-{:016x}.jpg", { let mut h = DefaultHasher::new(); path.hash(&mut h); std::thread::current().id().hash(&mut h); h.finish() }));
     crate::imageio::render(path, &tmp, max, true)?;
     let img = image::open(&tmp).map_err(|e| format!("{}: {e}", path.display()));
     let _ = std::fs::remove_file(&tmp);

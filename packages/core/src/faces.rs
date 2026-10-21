@@ -62,9 +62,7 @@ pub struct FaceEmbedder {
 
 impl FaceEmbedder {
     pub fn load(dir: &Path) -> Result<Self, String> {
-        let mut b = Session::builder().map_err(|e| e.to_string())?;
-        let session = b.commit_from_file(dir.join(MODEL_FILE)).map_err(|e| e.to_string())?;
-        Ok(Self { session: Mutex::new(session) })
+        Ok(Self { session: Mutex::new(crate::onnx::load(&dir.join(MODEL_FILE), None)?) })
     }
 
     /// An embedding for every mark that is big enough to recognise. Faces the network cannot read are left out.

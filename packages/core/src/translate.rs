@@ -27,8 +27,7 @@ const MAX_TOKENS: usize = 64;
 
 fn session(dir: &Path, name: &str) -> Result<Session, String> {
     // Two threads each: describing scenes runs while the app is in use and must not take every core.
-    let mut b = Session::builder().map_err(|e| e.to_string())?.with_intra_threads(2).map_err(|e| e.to_string())?;
-    b.commit_from_file(dir.join(name)).map_err(|e| e.to_string())
+    crate::onnx::load(&dir.join(name), Some(2))
 }
 
 pub struct Translator {

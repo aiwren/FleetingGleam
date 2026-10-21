@@ -31,9 +31,8 @@ impl TextEncoder {
     }
 
     pub fn load(dir: &Path) -> Result<Self, String> {
-        let mut b = Session::builder().map_err(|e| e.to_string())?;
         // The int8 model is built for the CPU; it is tiny work (one short sentence), so no accelerator is involved.
-        let session = b.commit_from_file(dir.join(TEXT_MODEL)).map_err(|e| e.to_string())?;
+        let session = crate::onnx::load(&dir.join(TEXT_MODEL), None)?;
         let tokenizer = Tokenizer::from_bytes(modelfiles::read_model(dir, TEXT_TOKENIZER)?).map_err(|e| e.to_string())?;
         let raw = modelfiles::read_model(dir, TEXT_DENSE)?;
         if raw.len() != HIDDEN * OUT * 4 {

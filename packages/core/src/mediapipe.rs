@@ -53,10 +53,7 @@ pub struct MediapipeEyes {
 
 impl MediapipeEyes {
     pub fn load(dir: &Path) -> Result<Self, String> {
-        let build = |file: &str| -> Result<Session, String> {
-            let mut b = Session::builder().map_err(|e| e.to_string())?;
-            b.commit_from_file(dir.join(file)).map_err(|e| e.to_string())
-        };
+        let build = |file: &str| crate::onnx::load(&dir.join(file), None);
         Ok(Self { landmarks: Mutex::new(build(LANDMARKS_FILE)?), blendshapes: Mutex::new(build(BLENDSHAPES_FILE)?) })
     }
 
@@ -67,7 +64,13 @@ impl MediapipeEyes {
         boxes.iter().filter_map(|b| self.face_openness(img, *b)).reduce(f32::min)
     }
 
-    fn face_openness(&self, img: &DynamicImage, [x, y, w, h]: [f32; 4]) -> Option<f32> {
+    fn face_openness(&self, img: &DynamicImage, b: [f32; 4]) -> Option<f32> {
+        self.blink(&self.mesh(img, b)?).map(|blink| (1.0 - blink).clamp(0.0, 1.0))
+    }
+
+    /// 一张脸的 478 点网格（坐标相对整张图归一化，左上为原点）和模型对"这里确实有一张摆正的脸"的把握（0..1）。
+    /// `b` 是脸框 `[x, y, w, h]`，相对 `img` 归一化；按 MediaPipe 自己的流程放大 1.5 倍成正方形再裁。网格模型不放心的脸返回 None。
+    pub fn mesh(&self, img: &DynamicImage, [x, y, w, h]: [f32; 4]) -> Option<Mesh> {
         let (iw, ih) = (img.width() as f32, img.height() as f32);
         let side = (w.max(h) * ROI_SCALE).min(1.0);
         let x0 = (x + w / 2.0 - side / 2.0).clamp(0.0, 1.0 - side);
@@ -88,7 +91,7 @@ impl MediapipeEyes {
             }
         }
         let input = Tensor::from_array(([1usize, CROP as usize, CROP as usize, 3usize], data)).ok()?;
-        let (mesh, confidence) = {
+        let (local, confidence) = {
             let mut s = self.landmarks.lock().ok()?;
             let out = s.run(ort::inputs!["input_12" => input]).ok()?;
             let (_, points) = out["Identity"].try_extract_tensor::<f32>().ok()?;
@@ -96,25 +99,45 @@ impl MediapipeEyes {
             (points.to_vec(), *flag.first()?)
         };
         // A raw logit: the model's own confidence there is a well-posed face here, before the classifier is asked anything.
-        if sigmoid(confidence) < CONFIDENCE_MIN || mesh.len() < 478 * 3 {
+        let confidence = sigmoid(confidence);
+        if confidence < CONFIDENCE_MIN || local.len() < 478 * 3 {
             return None;
         }
+        let points = (0..478).map(|i| [(px0 as f32 + local[i * 3] * pw as f32) / iw, (py0 as f32 + local[i * 3 + 1] * ph as f32) / ih]).collect();
+        Some(Mesh { points, confidence, frame: (iw, ih) })
+    }
 
-        // Local 0..1 mesh coordinates, the 146-point subset, projected back into this frame's pixel space.
+    /// 眨眼程度（0 睁 .. 1 闭）：两只眼里闭得更厉害的那只。
+    pub fn blink(&self, mesh: &Mesh) -> Option<f32> {
+        // The 146-point subset, in the pixel space of the frame the mesh was measured in.
         let mut points = vec![0f32; 146 * 2];
         for (i, &idx) in SUBSET.iter().enumerate() {
-            let (lx, ly) = (mesh[idx * 3], mesh[idx * 3 + 1]);
-            points[i * 2] = px0 as f32 + lx * pw as f32;
-            points[i * 2 + 1] = py0 as f32 + ly * ph as f32;
+            points[i * 2] = mesh.points[idx][0] * mesh.frame.0;
+            points[i * 2 + 1] = mesh.points[idx][1] * mesh.frame.1;
         }
         let input = Tensor::from_array(([1usize, 146usize, 2usize], points)).ok()?;
-        let blink = {
-            let mut s = self.blendshapes.lock().ok()?;
-            let out = s.run(ort::inputs!["serving_default_input_points:0" => input]).ok()?;
-            let (_, scores) = out["StatefulPartitionedCall:0"].try_extract_tensor::<f32>().ok()?;
-            scores[BLINK_LEFT].max(scores[BLINK_RIGHT])
-        };
-        Some((1.0 - blink).clamp(0.0, 1.0))
+        let mut s = self.blendshapes.lock().ok()?;
+        let out = s.run(ort::inputs!["serving_default_input_points:0" => input]).ok()?;
+        let (_, scores) = out["StatefulPartitionedCall:0"].try_extract_tensor::<f32>().ok()?;
+        Some(scores[BLINK_LEFT].max(scores[BLINK_RIGHT]))
+    }
+}
+
+/// 一张脸的网格：478 个点，坐标相对整张图归一化（左上为原点）。
+pub struct Mesh {
+    pub points: Vec<[f32; 2]>,
+    /// 网格模型对这是一张摆正的脸的把握（0..1）。
+    pub confidence: f32,
+    /// 测量时整张图的像素尺寸（blendshape 模型要按它缩放）。
+    frame: (f32, f32),
+}
+
+impl Mesh {
+    /// 人物识别对齐用的五个点（见 faces.rs 的 `TEMPLATE`）：画面左眼、画面右眼、鼻尖、画面左嘴角、画面右嘴角。
+    /// 网格里 33 / 133 是画面左边那只眼的两个眼角，362 / 263 是右边的；1 是鼻尖；61 / 291 是两个嘴角。
+    pub fn five_points(&self) -> [[f32; 2]; 5] {
+        let mid = |a: usize, b: usize| [(self.points[a][0] + self.points[b][0]) / 2.0, (self.points[a][1] + self.points[b][1]) / 2.0];
+        [mid(33, 133), mid(362, 263), self.points[1], self.points[61], self.points[291]]
     }
 }
 

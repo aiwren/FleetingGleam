@@ -17,6 +17,7 @@
 | 美学评分头（极致档） | Aesthetic Predictor V2.5 的评分头 | [discus0434/aesthetic-predictor-v2-5](https://github.com/discus0434/aesthetic-predictor-v2-5) | **AGPL-3.0** |
 | 照片搜索 | 多语言文本编码器（CLIP ViT-B/32 多语言版，int8） | [`sentence-transformers/clip-ViT-B-32-multilingual-v1`](https://huggingface.co/sentence-transformers/clip-ViT-B-32-multilingual-v1) | Apache-2.0 |
 | 眼睛检测 | MediaPipe Face Landmarker 与 Blendshapes | [Google MediaPipe](https://github.com/google-ai-edge/mediapipe) | Apache-2.0 |
+| 人脸检测（Android） | UltraFace RFB-640（`version-RFB-640`） | [Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB](https://github.com/Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB)；ONNX 文件来自 [ONNX Model Zoo](https://github.com/onnx/models) 在 Hugging Face 的镜像 [`onnxmodelzoo/version-RFB-640`](https://huggingface.co/onnxmodelzoo/version-RFB-640) | MIT |
 | 人物识别 | SFace（`face_recognition_sface_2021dec`） | [OpenCV Zoo](https://github.com/opencv/opencv_zoo)，Hugging Face 的 [`opencv/face_recognition_sface`](https://huggingface.co/opencv/face_recognition_sface) | Apache-2.0 |
 | 场景描述 | Florence-2-base-ft（int8） | Microsoft；ONNX 版本来自 [`onnx-community/Florence-2-base-ft`](https://huggingface.co/onnx-community/Florence-2-base-ft) | MIT |
 | 场景描述的翻译 | OPUS-MT 英译中（int8） | Helsinki-NLP 的 [`opus-mt-en-zh`](https://huggingface.co/Helsinki-NLP/opus-mt-en-zh)；ONNX 版本来自 [`Xenova/opus-mt-en-zh`](https://huggingface.co/Xenova/opus-mt-en-zh) | Apache-2.0（模型卡标注） |
@@ -27,7 +28,7 @@
 
 ## 代码库
 
-下面列的是主要的直接依赖，完整的依赖及其许可见 `pnpm-lock.yaml` 和 `apps/desktop/src-tauri/Cargo.lock`。
+下面列的是主要的直接依赖，完整的依赖及其许可见 `pnpm-lock.yaml` 和根目录的 `Cargo.lock`。
 
 | 依赖 | 用途 | 许可 |
 |---|---|---|
@@ -35,6 +36,8 @@
 | [ort](https://github.com/pykeio/ort) | ONNX Runtime 的 Rust 封装 | MIT / Apache-2.0 |
 | [tokenizers](https://github.com/huggingface/tokenizers) | 文本分词 | Apache-2.0 |
 | [smb2](https://github.com/vdavid/smb2) | 纯 Rust 的 SMB2/3 客户端（NAS 直连） | MIT / Apache-2.0 |
+| [UniFFI](https://github.com/mozilla/uniffi-rs) | Rust 核心给 Kotlin 的绑定（Android） | MPL-2.0 |
+| [Haze](https://github.com/chrisbanes/haze) | Android 端悬浮标签栏的玻璃模糊 | Apache-2.0 |
 | React、Vite | 前端 | MIT |
 | [Motion](https://motion.dev) | 动画 | MIT |
 | i18next、react-i18next | 国际化 | MIT |

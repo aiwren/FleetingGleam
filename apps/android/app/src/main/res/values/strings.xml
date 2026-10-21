@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">FleetingGleam</string>
-    <string name="core_version">Core library %1$s · %2$d GB · %3$d cores</string>
+    <string name="core_version">Core library %1$s · %2$d GB · %3$d cores · %4$s</string>
     <string name="section_analyze">Analyse a folder</string>
     <string name="analyze_hint">Analyses a folder of sample photos generated inside the app (no permissions needed): grouping, scoring and the keep / review / reject decision come from the shared Rust core.</string>
     <string name="analyze_button">Analyse sample photos</string>
@@ -17,4 +17,26 @@
     <string name="nas_button">Test connection</string>
     <string name="nas_shares">Shares: %1$s</string>
     <string name="error_prefix">Error: %1$s</string>
+    <string name="tab_photos">Photos</string>
+    <string name="tab_models">Models</string>
+    <string name="tab_settings">Settings</string>
+    <string name="scan_no_clip">no analysis model (download “Standard analysis” in Models)</string>
+    <string name="scan_info">CLIP: %1$s · faces %2$s · people %3$s</string>
+    <string name="faces_n">%1$d face(s)</string>
+    <string name="eyes_v">eyes %1$.2f</string>
+    <string name="models_hint">The same models and manifest as the Mac app, checked by SHA-256 after download; downloaded into the app’s private storage, used offline afterwards.</string>
+    <string name="pack_standard">Standard analysis</string>
+    <string name="pack_high">High-quality analysis</string>
+    <string name="pack_ultra">Ultra analysis (experimental)</string>
+    <string name="pack_search">Photo search</string>
+    <string name="pack_eyes">MediaPipe eyes</string>
+    <string name="pack_faces">People recognition</string>
+    <string name="pack_detect">Face detection</string>
+    <string name="pack_scenetext">Scene descriptions</string>
+    <string name="pack_unknown">%1$s</string>
+    <string name="pack_installed">Installed</string>
+    <string name="pack_size">Download %1$s</string>
+    <string name="pack_download">Download</string>
+    <string name="pack_cancel">Cancel</string>
+    <string name="pack_remove">Remove</string>
 </resources>

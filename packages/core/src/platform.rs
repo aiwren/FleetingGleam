@@ -32,8 +32,8 @@ pub trait SystemImages: Send + Sync {
 
 /// 系统视觉信号对一张照片的回答（macOS 上来自 Apple Vision）。
 pub struct VisionOut {
-    /// Apple 的 overallScore，大约 -1..1。
-    pub aesthetic: f32,
+    /// Apple 的 overallScore，大约 -1..1；只有 Apple Vision 给得出，别的实现是 None。
+    pub aesthetic: Option<f32>,
     /// 截图、文档之类的"实用图片"。
     pub utility: bool,
     /// 每张检测到的脸一个拍摄质量值（0..1）。
@@ -63,6 +63,41 @@ pub trait GpuClipFactory: Send + Sync {
 }
 
 static IMAGES: OnceLock<Box<dyn SystemImages>> = OnceLock::new();
+static SCRATCH: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mutex::new(None);
+
+/// 宿主告诉核心可以写临时文件的地方（Android 上系统的临时目录应用写不了）；没设就用系统的。
+pub fn set_scratch_dir(dir: std::path::PathBuf) {
+    let _ = std::fs::create_dir_all(&dir);
+    *SCRATCH.lock().unwrap_or_else(|e| e.into_inner()) = Some(dir);
+}
+
+static PROXY: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// 宿主告诉核心走哪个 HTTP 代理（`http://主机:端口`；Android 上来自系统的全局代理设置）；None = 直连。
+pub fn set_proxy(url: Option<String>) {
+    *PROXY.lock().unwrap_or_else(|e| e.into_inner()) = url.filter(|u| !u.trim().is_empty());
+}
+
+pub fn proxy() -> Option<String> {
+    PROXY.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// 核心所有联网（模型下载、云备份）共用的 HTTP 客户端构建器：超时由调用方定，代理按 `proxy()`。
+pub fn http_agent(connect: std::time::Duration, read: std::time::Duration) -> ureq::Agent {
+    let mut b = ureq::AgentBuilder::new().timeout_connect(connect).timeout_read(read);
+    if let Some(p) = proxy() {
+        match ureq::Proxy::new(&p) {
+            Ok(px) => b = b.proxy(px),
+            Err(e) => eprintln!("proxy {p} ignored: {e}"),
+        }
+    }
+    b.build()
+}
+
+/// 临时文件的目录：非原生格式的临时渲染、加速器的标记文件都放这里。
+pub fn scratch_dir() -> std::path::PathBuf {
+    SCRATCH.lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_else(std::env::temp_dir)
+}
 static GPU_CLIP: OnceLock<Box<dyn GpuClipFactory>> = OnceLock::new();
 
 /// 宿主启动时注册系统图像解码器；只认第一次。

@@ -6,8 +6,6 @@ use std::sync::Mutex;
 
 use image::imageops::FilterType;
 use image::DynamicImage;
-#[cfg(target_os = "macos")]
-use ort::ep::CoreML;
 use ort::session::Session;
 use ort::value::Tensor;
 use serde::Deserialize;
@@ -94,15 +92,10 @@ pub struct SiglipAesthetic {
 }
 
 impl SiglipAesthetic {
-    #[cfg_attr(not(target_os = "macos"), allow(unused_variables, unused_mut))]
     fn load(dir: &Path, gpu: bool) -> Result<Self, String> {
-        let mut b = Session::builder().map_err(|e| e.to_string())?;
-        // 加速只在 macOS 有（CoreML 提供者）；其它平台先用 CPU，Android 的 NNAPI 在阶段 B 第 2 步接上
-        #[cfg(target_os = "macos")]
-        if gpu {
-            b = b.with_execution_providers([CoreML::default().build()]).map_err(|e| e.to_string())?;
-        }
-        let session = b.commit_from_file(dir.join(SIGLIP_FILE)).map_err(|e| e.to_string())?;
+        // 这台平台的加速器（macOS 的 CoreML、Android 的 NNAPI）；要不要用它，`gpu` 说了算
+        let path = dir.join(SIGLIP_FILE);
+        let session = if gpu { crate::onnx::load_accelerated(&path, None)? } else { crate::onnx::load(&path, None)? };
         let head: Head = serde_json::from_slice(&modelfiles::read_model(dir, SIGLIP_HEAD)?).map_err(|e| e.to_string())?;
         Ok(Self { session: Mutex::new(session), head })
     }
@@ -175,11 +168,11 @@ struct CpuSpec {
 }
 
 impl CpuSpec {
-    /// The sessions, built side by side (loading one takes a moment).
-    fn build(&self, copies: usize) -> Result<Pool, String> {
+    /// The sessions, built side by side (loading one takes a moment). `accelerated`: on this platform's accelerator instead of the CPU.
+    fn build_with(&self, copies: usize, accelerated: bool) -> Result<Pool, String> {
+        let path = self.dir.join(self.file);
         let one = || -> Result<Session, String> {
-            let mut b = Session::builder().map_err(|e| e.to_string())?.with_intra_threads(self.threads).map_err(|e| e.to_string())?;
-            b.commit_from_file(self.dir.join(self.file)).map_err(|e| e.to_string())
+            if accelerated { crate::onnx::load_accelerated(&path, Some(self.threads)) } else { crate::onnx::load(&path, Some(self.threads)) }
         };
         let sessions: Vec<Result<Session, String>> = std::thread::scope(|sc| {
             let hs: Vec<_> = (0..copies.max(1)).map(|_| sc.spawn(&one)).collect();
@@ -187,6 +180,35 @@ impl CpuSpec {
         });
         let sessions = sessions.into_iter().collect::<Result<Vec<_>, _>>()?;
         Ok(Pool { sessions: sessions.into_iter().map(Mutex::new).collect(), next: AtomicUsize::new(0) })
+    }
+
+    fn build(&self, copies: usize) -> Result<Pool, String> {
+        self.build_with(copies, false)
+    }
+
+    /// 平台加速器上的一个会话池（一份就够：加速器不像 CPU 那样靠多份并行），只在它和 CPU 在固定输入上算出同样的向量时给；
+    /// 这台机器上只比一次（见 `onnx::verified`）。macOS 不走这里（CoreML 接不了 fp16 的 CLIP 图，GPU 路径另有 clipgpu.rs），只有 Android 用。
+    fn build_accelerated(&self) -> Option<Pool> {
+        if !cfg!(target_os = "android") {
+            return None;
+        }
+        let size = std::fs::metadata(self.dir.join(self.file)).map(|m| m.len()).unwrap_or(0);
+        let key = format!("{}-{size}", self.file);
+        let mut pool: Option<Pool> = None;
+        let ok = crate::onnx::verified(&key, || {
+            let fast = self.build_with(1, true)?;
+            let input = probe_input();
+            let a = run_clip(&fast, input.clone())?;
+            let b = run_clip(&self.build_with(1, false)?, input)?;
+            let same = a.iter().all(|v| v.is_finite()) && crate::onnx::cosine(&a, &b) > 0.999;
+            pool = Some(fast);
+            Ok(same)
+        });
+        if !ok {
+            return None;
+        }
+        // 标记文件早就说过"可以"时，上面的闭包没跑，池还要建
+        pool.or_else(|| self.build_with(1, true).map_err(|e| eprintln!("{}: {e}", crate::onnx::accelerator())).ok())
     }
 }
 
@@ -204,10 +226,7 @@ fn probe_input() -> Vec<f32> {
     (0..3 * 224 * 224).map(|i| (((i * 7919) % 255) as f32) / 127.0 - 1.0).collect()
 }
 
-fn cosine(a: &[f32], b: &[f32]) -> f32 {
-    let d: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
-    d / (a.iter().map(|x| x * x).sum::<f32>().sqrt() * b.iter().map(|x| x * x).sum::<f32>().sqrt()).max(1e-12)
-}
+use crate::onnx::cosine;
 
 /// The encoder on the GPU, when this machine can run it and it agrees with ONNX Runtime. The first time on a machine the two are compared on a fixed
 /// input (a marker file remembers the verdict, so later starts skip the comparison and never load the CPU copy at all).
@@ -218,7 +237,7 @@ fn gpu_encoder(model_dir: &Path, file: &str, spec: &CpuSpec) -> Option<Box<dyn G
         return None;
     }
     let bytes = modelfiles::read_model(model_dir, file).ok()?;
-    let marker = std::env::temp_dir().join(format!("fg-clip-gpu-{file}-{}", bytes.len()));
+    let marker = crate::platform::scratch_dir().join(format!("fg-clip-gpu-{file}-{}", bytes.len()));
     let (ok_marker, bad_marker) = (marker.with_extension("ok"), marker.with_extension("bad"));
     if bad_marker.exists() {
         return None;
@@ -295,8 +314,16 @@ impl ClipScorer {
         // only the float16 models are built for the GPU (the int8 one is a quantised graph of another kind)
         let gpu = if backend == "cpu-fp16" { gpu_encoder(model_dir, file, &spec) } else { None };
         let cpu = std::sync::OnceLock::new();
+        let mut backend = backend;
         if gpu.is_none() {
-            let pool = spec.build(n).map_err(|e| format!("load CLIP model: {e}"))?;
+            // 平台加速器（Android 的 NNAPI）上的一份，验过和 CPU 一致才用；否则 CPU 上的几份
+            let pool = match if accel { spec.build_accelerated() } else { None } {
+                Some(p) => {
+                    backend = if backend == "cpu-fp16" { "nnapi-fp16" } else { "nnapi-int8" };
+                    p
+                }
+                None => spec.build(n).map_err(|e| format!("load CLIP model: {e}"))?,
+            };
             let _ = cpu.set(Ok(pool));
         }
         let head: Head = serde_json::from_slice(&modelfiles::read_model(model_dir, head_file).map_err(|e| format!("read aesthetic head: {e}"))?).map_err(|e| e.to_string())?;
@@ -373,6 +400,7 @@ impl AiScorer for ClipScorer {
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
+    use ort::ep::CoreML;
 
     /// How the CLIP image encoder runs under different CoreML settings: latency of one inference, the work of four threads sharing one session
     /// (what a scan does now) against four sessions, and whether the embedding is the same.

@@ -19,13 +19,15 @@ pub struct Pack {
     pub files: &'static [&'static str],
 }
 
-pub const PACKS: [Pack; 7] = [
+pub const PACKS: [Pack; 8] = [
     Pack { id: "standard", files: &["clip_vit_b32_vision_fp16.onnx", "clip_vit_b32_vision_int8.onnx", "aesthetic_head_vit_b_32.json"] },
     Pack { id: "high", files: &["clip_vit_l14_vision_fp16.onnx", "aesthetic_head_vit_l_14.json"] },
     Pack { id: "ultra", files: &["siglip_so400m_vision_fp16.onnx", "aesthetic_v25_head.json"] },
     Pack { id: "search", files: &["text_multilingual_qint8.onnx", "text_multilingual_tokenizer.json", "text_multilingual_dense.bin"] },
     Pack { id: "eyes", files: &[crate::mediapipe::LANDMARKS_FILE, crate::mediapipe::BLENDSHAPES_FILE] },
     Pack { id: "faces", files: &[crate::faces::MODEL_FILE] },
+    // 没有系统人脸检测的平台（Android）用它找脸，再交给 MediaPipe 的网格模型（`eyes` 包）量眼睛、定五官
+    Pack { id: "detect", files: &[crate::facepipe::DETECTOR_FILE] },
     Pack { id: "scenetext", files: &[
         crate::florence::VISION, crate::florence::EMBED, crate::florence::ENCODER, crate::florence::DECODER, crate::florence::TOKENIZER,
         crate::translate::ENCODER, crate::translate::DECODER, crate::translate::TOKENIZER,
@@ -77,7 +79,7 @@ pub struct Progress {
 }
 
 fn get(url: &str) -> Result<ureq::Response, String> {
-    ureq::AgentBuilder::new().timeout_connect(std::time::Duration::from_secs(15)).timeout_read(std::time::Duration::from_secs(30)).build().get(url).call().map_err(|e| format!("download failed: {e}"))
+    crate::platform::http_agent(std::time::Duration::from_secs(15), std::time::Duration::from_secs(30)).get(url).call().map_err(|e| format!("download failed: {e}"))
 }
 
 /// The files of a pack that still have to be downloaded, with what the manifest says about each.
