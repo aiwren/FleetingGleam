@@ -1,0 +1,85 @@
+{
+ "android": {
+  "picker": {
+   "albums": "Albums on this phone",
+   "albumsDesc": "Camera, screenshots and the other albums on the phone",
+   "folder": "Choose a folder…",
+   "folderDesc": "Any folder on the phone, an SD card or a cloud drive",
+   "permissionNeeded": "To list the albums on this phone the app needs permission to read photos. Photos are only processed on this phone, never uploaded.",
+   "grant": "Allow access to photos",
+   "noAlbums": "There are no photos on this phone yet.",
+   "partial": "You allowed access to some photos only, so the albums show just those. Select more on the right, or allow all photos in system settings.",
+   "albumCount": "{{count}}",
+   "permissionBlocked": "Access to photos is turned off and Android will not ask again. In system settings, open Permissions → Photos and videos and choose Always allow all; the albums appear when you come back. Photos are processed on this phone only and never uploaded.",
+   "openSettings": "Open system settings",
+   "selectMore": "Select more photos",
+   "storageRoot": "Phone storage"
+  },
+  "paused": {
+   "hot": "The phone is getting hot, so the analysis is paused; it picks up again once it cools down, and nothing analysed so far is lost.",
+   "battery": "The battery is below 15%, so the analysis is paused; it picks up again once the phone is charging, and nothing analysed so far is lost."
+  },
+  "mirrorSync": "Copying photos from “{{share}}” {{done}} / {{total}}…",
+  "settings": {
+   "analysisHow": "The app picks the model and the hardware for your phone: phones with 12 GB of memory or more and many cores use the more accurate large model, the others the faster standard one; when the phone's neural processor (NNAPI) gives the same answers as the CPU it is used. To use a more accurate model, download “High-quality analysis” under Downloaded models.",
+   "clipNpu": "Neural processor (NNAPI)",
+   "faces": "Faces and eyes",
+   "facesOn": "On-device face detection + MediaPipe",
+   "privacyBody": "Photos are processed on this phone only and are never uploaded.",
+   "projectMade": "Project created; open it under Cull.",
+   "modelsBody": "The models are downloaded to this phone only when needed and run fully offline afterwards: the same models and manifest as the Mac app."
+  }
+ },
+ "models": {
+  "ask": {
+   "detect": "Download the face detection model"
+  },
+  "body": {
+   "detect": "Finding the faces in photos on the phone needs a very small model first (about {{size}}); MediaPipe then tells closed eyes and the people apart. Downloaded once, then fully offline; photos are never uploaded.",
+   "bundle": "This needs a few models first (about {{size}} in all). The app picks the ones that suit this phone. They are downloaded once and everything runs offline afterwards; your photos are never uploaded.",
+   "faces": "Telling people apart (“these are the same person”) needs a recognition model first (about {{size}}). Downloaded once, then fully offline. Faces are only compared on this phone and never uploaded."
+  },
+  "name": {
+   "detect": "Face detection"
+  },
+  "desc": {
+   "detect": "Finds the faces in photos on the phone, for closed eyes and people",
+   "scenetext": "Writes a sentence for scenes the vocabulary cannot name, entirely on this phone"
+  }
+ },
+ "cull": {
+  "analyzing": "Analyzing on this phone",
+  "emptyBody": "Open a folder and {{brand}} scores every photo on this phone, groups similar bursts, and suggests the best of each. Your originals are never moved or modified.",
+  "readyBody": "Analysis decodes each photo, checks sharpness and exposure, scores it with on-device models, then groups similar shots. Everything runs on this phone and your originals stay untouched."
+ },
+ "searchset": {
+  "info": "The first time it is turned on, a search model is downloaded and the photos are indexed in the background (a few tens of milliseconds each). It all happens on this phone; photos are never uploaded."
+ },
+ "styles": {
+  "fromFolderInfo": "The photos in that folder count as “the kind I choose”, and your taste is learned on this phone from them, so you need not mark photos one by one. Only a description of each photo is kept, never the photo, and nothing is uploaded."
+ },
+ "picker": {
+  "local": "A folder on this phone…",
+  "localDesc": "Phone storage, an SD card or a cloud drive"
+ },
+ "settings": {
+  "analysisAutoDesc": "The app picks the model and the hardware that suit this phone; there is nothing to set.",
+  "eyeMethodDesc": "On the phone, MediaPipe is used: a small model Google trained that looks at the face closely and tells a laughing squint from an actual closed eye. The face position comes from the on-device face detector, and it all runs only on this phone.",
+  "backupInfo": "What is backed up is exactly what “my settings and taste” exports: the app settings and what each style has learned (vectors and decisions); no photos, projects or paths. About 20 seconds after a setting or a taste changes it is uploaded again; “Back up now” triggers that same upload by hand. The bucket keeps the latest copy plus one per day, only the most recent ones (how many is up to you). You create an R2 bucket in the Cloudflare dashboard yourself, with an API token that can only read and write that bucket; the secret is kept encrypted on this phone.",
+  "backupRemoveBody": "This only forgets the destination and its credentials on this phone; the backups in the bucket are kept.",
+  "nasInfo": "Connected with the app's own built-in SMB client; the password is kept encrypted on this phone. A project's photos are first copied into the app's own cache and analysed from there (the first opening waits for that; later only new photos are fetched); viewing and exporting use that copy. A NAS has no Trash: rejected photos are moved, on the share, to a \".FleetingGleam Recycle Bin\" folder at its root, by day, where they can be restored by hand. Removing a NAS also deletes the copies on the phone; the photos on the NAS are untouched.",
+  "nasRemember": "Remember the password (kept encrypted on this phone)",
+  "nasRemoveBody": "This forgets the NAS and its password on this phone and deletes the local mirror copies; the photos on the NAS are untouched. Projects made from it will not open until it is added again.",
+  "exportTasteDesc": "Save it as one file to import on another phone or on the Mac; a file from someone else can be imported too.",
+  "privacyBody": "Photos are processed on this phone only. Nothing is uploaded.",
+  "learnShort": "Learns your taste from what you keep and reject. Stays on this phone.",
+  "learnDesc": "Learns your taste on this phone from the photos you keep and reject by hand, and uses it to nudge scores. What it learns stays on this device, is never uploaded, and can be reset any time.",
+  "modelsBody": "The models used for analysis are downloaded to this phone when first needed and run entirely offline; they are the same models, from the same list, as on the Mac."
+ },
+ "organize": {
+  "showInFinder": "Show in Files",
+  "trashDesc": "{{count}} · can be restored from the system bin for 30 days",
+  "trashBody": "These photos will be moved to the system bin and disappear from this project. For 30 days they can be restored from the bin in your gallery or Files app.",
+  "trashRecover": "To get them back, open the bin in your gallery or Files app, select the photos and tap Restore."
+ }
+}

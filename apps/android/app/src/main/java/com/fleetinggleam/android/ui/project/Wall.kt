@@ -1,0 +1,468 @@
+package com.fleetinggleam.android.ui.project
+
+import android.graphics.RenderEffect
+import android.graphics.Shader
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.keyframes
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.asAndroidPath
+import androidx.compose.ui.graphics.asComposePath
+import androidx.compose.ui.graphics.asComposeRenderEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.PathParser
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import coil3.compose.AsyncImage
+import com.fleetinggleam.android.core.Photo
+import com.fleetinggleam.android.core.StageInfo
+import com.fleetinggleam.android.core.pct
+import com.fleetinggleam.android.core.t
+import com.fleetinggleam.android.ui.components.FgIcon
+import com.fleetinggleam.android.ui.theme.GoldEnd
+import com.fleetinggleam.android.ui.theme.GoldMid
+import com.fleetinggleam.android.ui.theme.GoldTop
+import com.fleetinggleam.android.ui.theme.LocalFg
+import com.fleetinggleam.android.ui.theme.Motion
+import com.fleetinggleam.android.ui.theme.Type
+import java.io.File
+
+// ---------------------------------------------------------------- 排版：两端一样的两种布局
+
+/** 照片墙上的一项：它的键（路径）和最终的宽高比（分析前从文件头读到，所以瓷砖从头到尾不变大小）。 */
+data class WallItem(val key: String, val ratio: Float)
+
+/** 一行：哪些项、行高。 */
+data class WallRow(val from: Int, val to: Int, val height: Float, val widths: List<Float>)
+
+const val GAP = 6f
+
+/** Justified rows: every row is as wide as the wall and every photo keeps its own aspect ratio, so nothing is cropped (the Mac's Wall.tsx). */
+fun justify(items: List<WallItem>, width: Float, target: Float): List<WallRow> {
+    val rows = mutableListOf<WallRow>()
+    var from = 0
+    fun close(to: Int, last: Boolean) {
+        if (to <= from) return
+        var s = 0f
+        for (i in from until to) s += items[i].ratio
+        var h = (width - GAP * (to - from - 1)) / s
+        if (last && h > target * 1.35f) h = target // a short last row keeps the natural height instead of stretching
+        rows.add(WallRow(from, to, h, (from until to).map { items[it].ratio * h }))
+        from = to
+    }
+    var sum = 0f
+    for (i in items.indices) {
+        sum += items[i].ratio
+        if ((width - GAP * (i - from)) / sum <= target) { close(i + 1, false); sum = 0f }
+    }
+    close(items.size, true)
+    return rows
+}
+
+/** Uniform square cells (photos are cropped to fill them). */
+fun grid(items: List<WallItem>, width: Float, cell: Float): List<WallRow> {
+    val cols = maxOf(2, Math.round(width / cell))
+    val size = (width - GAP * (cols - 1)) / cols
+    return items.indices.chunked(cols).map { idx -> WallRow(idx.first(), idx.last() + 1, size, idx.map { size }) }
+}
+
+/**
+ * 照片墙：按行排好，只挂上屏幕附近的行（LazyColumn），几百张和几千张一样快。`tile(index, width, height)` 画一张。
+ * 手机上目标行高 150dp（桌面端 200px）。
+ */
+@Composable
+fun Wall(
+    items: List<WallItem>,
+    layout: String,
+    state: LazyListState,
+    contentPadding: PaddingValues,
+    header: (@Composable () -> Unit)? = null,
+    tile: @Composable (index: Int, w: Dp, h: Dp) -> Unit,
+) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val density = LocalDensity.current
+        val pad = with(density) { (contentPadding.calculateLeftPadding(androidx.compose.ui.unit.LayoutDirection.Ltr) + contentPadding.calculateRightPadding(androidx.compose.ui.unit.LayoutDirection.Ltr)).value }
+        val width = maxWidth.value - pad
+        val rows = remember(items, width, layout) { if (width <= 0f) emptyList() else if (layout == "grid") grid(items, width, 110f) else justify(items, width, 150f) }
+        LazyColumn(state = state, contentPadding = contentPadding, verticalArrangement = Arrangement.spacedBy(GAP.dp), modifier = Modifier.fillMaxSize()) {
+            if (header != null) item(key = "head") { header() }
+            items(rows, key = { "${items.getOrNull(it.from)?.key}" + "#${it.to - it.from}" }) { r ->
+                Row(horizontalArrangement = Arrangement.spacedBy(GAP.dp)) {
+                    for (i in r.from until r.to) tile(i, r.widths[i - r.from].dp, r.height.dp)
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- 照片自己的记号：logo 里的四角星
+
+/** The app's own mark: the four-point gleam from the logo. Filled = keep, outline = maybe (24 视框，中心 12,12). */
+private const val STAR = "M12,2 Q13.7,10.3 22,12 Q13.7,13.7 12,22 Q10.3,13.7 2,12 Q10.3,10.3 12,2Z"
+
+@Composable
+fun Star(filled: Boolean, size: Dp = 20.dp, color: Color = Color.White, glow: Boolean = filled, draw: Float = 1f) {
+    val path = remember { PathParser().parsePathString(STAR).toPath() }
+    val gold = Brush.linearGradient(listOf(GoldTop, GoldMid, GoldEnd), start = Offset(0.2f * 24, 0f), end = Offset(0.8f * 24, 24f))
+    Canvas(Modifier.size(size)) {
+        val k = this.size.minDimension / 24f
+        scale(k, pivot = Offset.Zero) {
+            if (filled) {
+                if (glow) for (r in listOf(3.2f, 2.0f)) drawPath(path, GoldMid.copy(alpha = 0.18f), style = Stroke(width = r * 2, join = StrokeJoin.Round))
+                drawPath(path, gold)
+            } else {
+                // 空心星：描边沿路径"画出来"（`draw` 0..1）
+                val pm = android.graphics.PathMeasure(path.asAndroidPath(), true)
+                val dst = android.graphics.Path()
+                pm.getSegment(0f, pm.length * draw.coerceIn(0f, 1f), dst, true)
+                drawPath(dst.asComposePath(), color, style = Stroke(width = 1.6f, join = StrokeJoin.Round, cap = StrokeCap.Round))
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- 照片的入场：对焦
+
+/** 这次会话里已经出现过的图（换视图、滚回来时不再"对焦"一遍）。 */
+private val seen = HashSet<String>()
+
+/**
+ * "Focus pull": a new photo arrives soft, slightly over-exposed and a touch large, then racks into focus (DESIGN.md §10.1).
+ * `quick` (browsing finished photos) only fades in briefly. Missing thumbnails show as a quiet blank.
+ */
+@Composable
+fun FocusImage(path: String, modifier: Modifier = Modifier, quick: Boolean = false, scale: ContentScale = ContentScale.Crop) {
+    val c = LocalFg.current
+    val first = remember(path) { path !in seen }
+    val p = remember(path) { Animatable(if (first) 0f else 1f) }
+    var loaded by remember(path) { mutableStateOf(!first) }
+    var missing by remember(path) { mutableStateOf(false) }
+    LaunchedEffect(loaded) {
+        if (loaded && p.value < 1f) {
+            seen.add(path)
+            p.animateTo(1f, tween(if (quick) Motion.FAST else 950, easing = Motion.easeOut))
+        }
+    }
+    if (missing) { Box(modifier.background(c.surface2)); return }
+    val v = p.value
+    AsyncImage(
+        File(path), null,
+        modifier.graphicsLayer {
+            alpha = if (quick) v else (v * 1.9f).coerceAtMost(1f)
+            if (!quick && v < 1f) {
+                val s = 1.09f - 0.09f * v
+                scaleX = s; scaleY = s
+                val blur = 18f * (1f - v)
+                if (blur > 0.5f) renderEffect = RenderEffect.createBlurEffect(blur, blur, Shader.TileMode.CLAMP).asComposeRenderEffect()
+            }
+        },
+        contentScale = scale,
+        colorFilter = if (!quick && v < 1f) ColorFilter.colorMatrix(ColorMatrix().apply { val b = 1f + 0.55f * (1f - v); setToScale(b, b, b, 1f) }) else null,
+        onSuccess = { loaded = true },
+        onError = { missing = true },
+    )
+}
+
+// ---------------------------------------------------------------- 一张照片
+
+/** 照片额外的身份：RAW / HEIC 之类、实况或 HDR、长图（和桌面端 photoTags 一样的规则）。 */
+private val RAW_EXT = setOf("dng", "cr2", "cr3", "crw", "nef", "nrw", "arw", "srf", "sr2", "raf", "orf", "rw2", "pef", "srw", "x3f", "3fr", "erf", "kdc", "mef", "mos", "mrw", "raw", "rwl", "iiq", "fff", "dcr", "k25", "rwz")
+private val FORMAT_TAG = setOf("heic", "heif", "avif", "jxl", "tif", "tiff", "bmp", "gif")
+
+fun photoTags(p: Photo): List<Pair<String, String?>> {
+    val out = mutableListOf<Pair<String, String?>>()
+    val e = p.path.substringAfterLast('.', "").lowercase()
+    if (e in RAW_EXT) out.add("raw" to if (e == "dng") "RAW · DNG" else "RAW · ${e.uppercase()}")
+    else if (e in FORMAT_TAG) out.add("format" to if (e == "tif") "TIFF" else e.uppercase())
+    // Live and HDR are never both shown: a Live photo says "Live" (the more useful thing to know), otherwise HDR.
+    if (p.motion) out.add("motion" to null) else if (p.hdr) out.add("hdr" to null)
+    val r = p.ratio
+    if (r >= 2.2f || r <= 1f / 2.2f) out.add("long" to null)
+    return out
+}
+
+@Composable
+fun PhotoTags(p: Photo, modifier: Modifier = Modifier) {
+    val tags = photoTags(p)
+    if (tags.isEmpty()) return
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        tags.forEach { (id, text) ->
+            Row(Modifier.clip(RoundedCornerShape(5.dp)).background(Color(0xC7101014)).border(1.dp, Color(0x29FFFFFF), RoundedCornerShape(5.dp)).padding(horizontal = 6.dp, vertical = 1.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (id == "motion") Box(Modifier.size(5.dp).clip(CircleShape).background(Color.White).padding(end = 3.dp))
+                Text(text ?: t("tag.$id"), style = Type.monoSmall.copy(color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 10.sp), modifier = Modifier.padding(start = if (id == "motion") 4.dp else 0.dp))
+            }
+        }
+    }
+}
+
+/**
+ * One photo (the Mac's Tile.tsx). Before analysis finishes it is a "developing" tile: the real thumbnail comes into focus stage by stage, a ring
+ * shows the stage, a sweep passes over it; afterwards it is the finished photo. The same element is used throughout, so nothing jumps.
+ *
+ * Marks are made of light rather than badges: a kept photo is *lit* (gold gleam, warm halo), a maybe is a hollow gleam, a reject simply lets
+ * the light fall away (an aperture closes for a moment, then the photo recedes — never greyed out, DESIGN.md §9).
+ */
+@Composable
+fun Tile(
+    path: String,
+    w: Dp,
+    h: Dp,
+    photo: Photo?,
+    stage: StageInfo?,
+    state: String,
+    selected: Boolean,
+    reveal: Boolean,
+    dim: Boolean,
+    manual: Boolean,
+    showScore: Boolean,
+    index: Int,
+    interactive: Boolean,
+    onSelect: (String) -> Unit,
+    onOpen: (String) -> Unit,
+    onDecide: (String, String?) -> Unit,
+) {
+    val c = LocalFg.current
+    val src = remember { MutableInteractionSource() }
+    // effects play when the user *changes* a photo's mark, not every time a view is re-drawn
+    var prev by remember(path) { mutableStateOf(state) }
+    var changedTo by remember(path) { mutableStateOf<String?>(null) }
+    var changeN by remember(path) { mutableIntStateOf(0) }
+    LaunchedEffect(state) {
+        if (prev.isNotEmpty() && state.isNotEmpty() && prev != state) { changedTo = state; changeN++ }
+        prev = state
+    }
+    val recede by animateFloatAsState(if (state == "reject" && dim) 1f else 0f, tween(Motion.SLOW, easing = Motion.easeOut), label = "recede")
+    val shape = RoundedCornerShape(10.dp)
+    val kept = photo != null && state == "keep"
+    Box(
+        Modifier
+            .size(w, h)
+            .graphicsLayer {
+                // reject: smaller and lighter, keeps its colour
+                val s = 1f - 0.04f * recede
+                scaleX = s; scaleY = s
+                alpha = 1f - 0.38f * recede
+            }
+            .then(if (kept) Modifier.shadow(14.dp, shape, ambientColor = c.gleam, spotColor = c.gleam) else Modifier)
+            .clip(shape)
+            .background(c.surface)
+            .then(if (kept) Modifier.border(1.dp, c.gleam.copy(alpha = 0.55f), shape) else if (photo != null && state == "review") Modifier.border(1.dp, Color.White.copy(alpha = 0.2f), shape) else Modifier)
+            .combinedClickable(interactionSource = src, indication = null, enabled = interactive, onClick = { onSelect(path) }, onDoubleClick = { onSelect(path); onOpen(path) }, onLongClick = { onSelect(path); onOpen(path) }),
+    ) {
+        if (photo != null) {
+            FocusImage(photo.thumb, Modifier.fillMaxSize(), quick = interactive && !reveal)
+        } else {
+            Developing(path, stage)
+        }
+        if (photo != null) {
+            PhotoTags(photo, Modifier.align(Alignment.TopStart).padding(8.dp))
+            if (showScore || selected) Text(
+                "${pct(photo.score)}", style = Type.monoSmall.copy(color = Color.White),
+                modifier = Modifier.align(Alignment.BottomStart).padding(8.dp).clip(RoundedCornerShape(5.dp)).background(Color(0xA30E0E12)).border(1.dp, Color(0x2EFFFFFF), RoundedCornerShape(5.dp)).padding(horizontal = 6.dp, vertical = 1.dp),
+            )
+            Marks(state, changedTo, changeN, reveal, index, selected)
+            if (selected && interactive) {
+                FocusFrame()
+                Dock(state, manual, Modifier.align(Alignment.BottomCenter).padding(bottom = 9.dp), onKeep = { onDecide(path, if (state == "keep" && manual) null else "keep") }, onReject = { onDecide(path, if (state == "reject" && manual) null else "reject") }, onOpen = { onOpen(path) })
+            }
+        }
+    }
+}
+
+/** 分析中：缩略图随阶段从模糊到清楚，环形进度、阶段名、文件名，一道扫过的光；没开始的那些只有扫光和名字。 */
+@Composable
+private fun Developing(path: String, stage: StageInfo?) {
+    val c = LocalFg.current
+    val inf = rememberInfiniteTransition(label = "dev")
+    val sweep by inf.animateFloat(1.3f, -1.3f, infiniteRepeatable(tween(if (stage != null) 1600 else 2600, easing = LinearEasing)), label = "sweep")
+    val breathe by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(1200, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "breathe")
+    val pctv by animateFloatAsState((stage?.pct ?: 0) / 100f, tween(500, easing = Motion.easeOut), label = "pct")
+    Box(Modifier.fillMaxSize().then(if (stage != null) Modifier.border(1.dp + (3.dp * breathe), c.gleam.copy(alpha = 0.14f * breathe), RoundedCornerShape(10.dp)) else Modifier)) {
+        stage?.thumb?.let { th ->
+            val left = 1f - pctv
+            AsyncImage(File(th), null, Modifier.fillMaxSize().graphicsLayer {
+                val b = left * 20f
+                if (b > 0.5f) renderEffect = RenderEffect.createBlurEffect(b, b, Shader.TileMode.CLAMP).asComposeRenderEffect()
+            }, contentScale = ContentScale.Crop, colorFilter = ColorFilter.colorMatrix(ColorMatrix().apply { val k = 1f + left * 0.3f; setToScale(k, k, k, 1f) }))
+        }
+        Canvas(Modifier.fillMaxSize()) {
+            val x = size.width * sweep
+            drawRect(Brush.linearGradient(listOf(Color.Transparent, c.ink.copy(alpha = if (stage != null) 0.09f else 0.04f), Color.Transparent), start = Offset(x - size.width * 0.4f, 0f), end = Offset(x + size.width * 0.4f, size.height * 0.2f)))
+        }
+        val onPhoto = stage != null
+        if (stage != null) {
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color(0x59000000)), startY = 0f)))
+            Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Canvas(Modifier.size(44.dp)) {
+                    val sw = 3.dp.toPx()
+                    drawCircle(Color.White.copy(alpha = 0.28f), radius = size.minDimension / 2 - sw, style = Stroke(sw))
+                    drawArc(Color.White, -90f, 360f * pctv, false, topLeft = Offset(sw, sw), size = Size(size.width - 2 * sw, size.height - 2 * sw), style = Stroke(sw, cap = StrokeCap.Round))
+                }
+                Text(t("cull.stage.${stage.stage}").takeIf { !it.startsWith("cull.") } ?: stage.stage, style = Type.monoSmall.copy(color = Color.White.copy(alpha = 0.9f)))
+            }
+        }
+        Text(path.substringAfterLast('/'), style = Type.monoSmall.copy(color = if (onPhoto) Color.White.copy(alpha = 0.85f) else c.ash, fontSize = 10.5.sp), maxLines = 1, modifier = Modifier.align(Alignment.BottomStart).padding(8.dp))
+    }
+}
+
+/** 记号：保留是点亮的金星（再有一道横向的光和一团光晕），待复查是空心星，淘汰没有图标，只有一下收拢的光圈。 */
+@Composable
+private fun androidx.compose.foundation.layout.BoxScope.Marks(state: String, changedTo: String?, changeN: Int, reveal: Boolean, index: Int, selected: Boolean) {
+    val play = { s: String -> (changedTo == s && changeN > 0) || reveal }
+    val delayMs = if (reveal && changedTo == null) 300 + minOf(index, 40) * 55 else 0
+    if (state == "keep") {
+        val pop = remember(changeN, reveal) { Animatable(if (play("keep")) 0f else 1f) }
+        LaunchedEffect(changeN, reveal) { if (pop.value < 1f) { kotlinx.coroutines.delay(delayMs.toLong() + 50); pop.animateTo(1f, spring(dampingRatio = 0.39f, stiffness = 380f)) } }
+        Box(Modifier.align(Alignment.TopEnd).padding(9.dp).graphicsLayer {
+            val v = pop.value
+            scaleX = 0.1f + 0.9f * v; scaleY = scaleX; rotationZ = -110f * (1f - v); alpha = v.coerceIn(0f, 1f)
+        }) { Star(true, 20.dp) }
+        if (play("keep")) Flare(changeN, reveal, delayMs)
+    }
+    if (state == "review") {
+        val d = remember(changeN) { Animatable(if (changedTo == "review") 0f else 1f) }
+        LaunchedEffect(changeN) { if (d.value < 1f) d.animateTo(1f, tween(700, easing = Motion.easeOut)) }
+        Box(Modifier.align(Alignment.TopEnd).padding(9.dp)) { Star(false, 20.dp, color = Color.White.copy(alpha = 0.95f), draw = d.value) }
+    }
+    if (state == "reject" && changedTo == "reject" && changeN > 0) Iris(changeN)
+}
+
+/** 保留时的一道横向长光（像变形镜头的拉丝光）和星点处的一团光晕。 */
+@Composable
+private fun Flare(n: Int, reveal: Boolean, delayMs: Int) {
+    val a = remember(n, reveal) { Animatable(0f) }
+    LaunchedEffect(n, reveal) { kotlinx.coroutines.delay(delayMs.toLong()); a.animateTo(1f, tween(950, easing = Motion.easeOut)) }
+    Canvas(Modifier.fillMaxSize()) {
+        val v = a.value
+        if (v <= 0f || v >= 1f) return@Canvas
+        val y = 19.dp.toPx()
+        val w = size.width * 0.72f * (0.6f + 0.9f * v)
+        val x = -size.width * 0.85f + size.width * 2.45f * v
+        val alpha = if (v < 0.14f) v / 0.14f else 1f - (v - 0.14f) / 0.86f
+        drawRect(Brush.horizontalGradient(listOf(Color(0x00FFD678), Color(0xFFFFE9A6), Color.White, Color(0x00FFD678)), startX = x, endX = x + w), topLeft = Offset(x, y - 1.dp.toPx()), size = Size(w, 2.dp.toPx()), alpha = alpha)
+        val bloom = 0.2f + 8.8f * v
+        drawCircle(Brush.radialGradient(listOf(Color(0xF2FFE496), Color(0x00FFE496)), center = Offset(size.width - y, y), radius = 7.dp.toPx() * bloom), radius = 7.dp.toPx() * bloom, center = Offset(size.width - y, y), alpha = 0.95f * (1f - v))
+    }
+}
+
+/** 淘汰时：一圈暗角从外向里一收，像光圈合上，然后照片退后。 */
+@Composable
+private fun Iris(n: Int) {
+    val a = remember(n) { Animatable(0f) }
+    LaunchedEffect(n) { a.animateTo(1f, tween(750, easing = Motion.easeOut)) }
+    Canvas(Modifier.fillMaxSize()) {
+        val v = a.value
+        if (v >= 1f) return@Canvas
+        val alpha = if (v < 0.32f) v / 0.32f else 1f - (v - 0.32f) / 0.68f
+        val s = if (v < 0.32f) 1.55f - 0.55f * (v / 0.32f) else 1f - 0.1f * ((v - 0.32f) / 0.68f)
+        val r = size.maxDimension * 0.8f * s
+        drawRect(Brush.radialGradient(0.3f to Color(0x0006060A), 0.68f to Color(0xBD06060A), center = center, radius = r), alpha = alpha)
+    }
+}
+
+/** 选中：四个角的对焦框，锁定时从外往里一收。 */
+@Composable
+private fun FocusFrame() {
+    val a = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { a.animateTo(1f, spring(dampingRatio = 0.92f, stiffness = 380f)) }
+    Canvas(Modifier.fillMaxSize()) {
+        val inset = (-3f + 10f * a.value).dp.toPx()
+        val l = 16.dp.toPx()
+        val sw = 2.dp.toPx()
+        val col = Color.White.copy(alpha = a.value.coerceIn(0f, 1f))
+        val corners = listOf(Offset(inset, inset) to (1f to 1f), Offset(size.width - inset, inset) to (-1f to 1f), Offset(inset, size.height - inset) to (1f to -1f), Offset(size.width - inset, size.height - inset) to (-1f to -1f))
+        for ((p, d) in corners) {
+            drawLine(Color.Black.copy(alpha = 0.35f * a.value), p, Offset(p.x + l * d.first, p.y), sw + 2f, StrokeCap.Round)
+            drawLine(Color.Black.copy(alpha = 0.35f * a.value), p, Offset(p.x, p.y + l * d.second), sw + 2f, StrokeCap.Round)
+            drawLine(col, p, Offset(p.x + l * d.first, p.y), sw, StrokeCap.Round)
+            drawLine(col, p, Offset(p.x, p.y + l * d.second), sw, StrokeCap.Round)
+        }
+    }
+}
+
+/** 选中的照片下方的玻璃小坞：留下（金星）/ 淘汰（叉）/ 放大。再点一次已有的手动记号就交还系统的建议。 */
+@Composable
+private fun Dock(state: String, manual: Boolean, modifier: Modifier, onKeep: () -> Unit, onReject: () -> Unit, onOpen: () -> Unit) {
+    val c = LocalFg.current
+    val a = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { a.animateTo(1f, spring(dampingRatio = 0.8f, stiffness = 380f)) }
+    Row(
+        modifier.graphicsLayer { alpha = a.value; translationY = (1f - a.value) * 10.dp.toPx(); scaleX = 0.94f + 0.06f * a.value; scaleY = scaleX }
+            .clip(CircleShape).background(Color(0x8F101014)).border(1.dp, Color(0x2EFFFFFF), CircleShape).padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        DockBtn(on = state == "keep", tint = c.gleam, label = if (state == "keep" && manual) t("mark.clear") else t("mark.keepAct"), onClick = onKeep) { Star(true, 18.dp) }
+        DockBtn(on = state == "reject", tint = Color.White, label = if (state == "reject" && manual) t("mark.clear") else t("mark.rejectAct"), onClick = onReject) { FgIcon("M3 3l6 6M9 3L3 9", size = 13.dp, box = 12f, stroke = 1.7f, color = Color.White) }
+        DockBtn(on = false, tint = Color.White, label = t("inspector.zoomLabel"), onClick = onOpen) { FgIcon("M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5L9 7M2.5 13.5L7 9", size = 14.dp, stroke = 1.5f, color = Color.White) }
+    }
+}
+
+@Composable
+private fun DockBtn(on: Boolean, tint: Color, label: String, onClick: () -> Unit, icon: @Composable () -> Unit) {
+    Box(
+        Modifier.size(38.dp).clip(CircleShape).background(if (on) tint.copy(alpha = 0.26f) else Color.Transparent).clickable(onClick = onClick)
+            .then(Modifier.drawWithContent { drawContent() }),
+        contentAlignment = Alignment.Center,
+    ) { icon() }
+}

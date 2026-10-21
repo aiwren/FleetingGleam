@@ -1,19 +1,18 @@
-//! FleetingGleam 核心库给 Kotlin 的接口（UniFFI）。路线图阶段 B 第 1、2 步的入口：库版本与机器信息、列出一台 NAS 的共享、
-//! 模型包（状态 / 大小 / 下载 / 删除）、对一个本地文件夹做一次完整分析（分组、打分、取舍；有模型就用 CLIP 打分，有人脸包就找脸量眼睛）。
-//! 后面各步按功能对齐清单往这里加。
+//! FleetingGleam 核心库给 Kotlin 的接口（UniFFI）。
 //!
-//! 约定：路径都用 `String`（Kotlin 侧传应用私有目录或 SAF 解析出来的真实路径）；错误统一成 `FgError`，消息给界面直接显示。
+//! 和桌面端一样，全部应用流程在核心库的引擎里（`fg_core::engine`）。这里只做一件事：把引擎的方法按名字暴露出去——
+//! `FgEngine.call("probe_folder", "{\"dirs\": [...]}")` 对应桌面端的 `invoke("probe_folder", { dirs })`，方法名、参数名、返回的 JSON
+//! 都和 Tauri 命令一样（参数名用 snake_case）。引擎的进度事件经 `EventSink` 交给 Kotlin，事件名和载荷也和桌面端一样。
+//! 这样 Kotlin 的界面层可以照着桌面端的 TypeScript 一行行对过去，功能不会漏。
 
-use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
 
-use fg_core::analyze::{self, EyeMethod};
-use fg_core::decide::{self, PickMode};
-use fg_core::platform::SystemVision;
-use fg_core::scorer::{AiScorer, ClipScorer, Quality};
-use fg_core::{facepipe, faces, mediapipe, modelpacks, nas};
-use rayon::prelude::*;
+use base64::Engine as _;
+use fg_core::engine::{self, Engine, Paths, ScanArgs, SceneReq, TargetArgs};
+use serde::Deserialize;
+use serde_json::{json, Value};
 
 uniffi::setup_scaffolding!("fleetinggleam");
 
@@ -46,11 +45,37 @@ impl From<&str> for FgError {
     }
 }
 
-/// 应用启动时叫一次：告诉核心临时文件放哪（Android 上系统的临时目录应用写不了），以及系统的 HTTP 代理（`http://主机:端口`，没有就空）。
-#[uniffi::export]
-pub fn init(scratch_dir: String, proxy: Option<String>) {
-    fg_core::platform::set_scratch_dir(scratch_dir.into());
-    fg_core::platform::set_proxy(proxy);
+/// 引擎的事件出口，Kotlin 侧实现：`payload` 是 JSON 文本。会从后台线程调用。
+#[uniffi::export(foreign)]
+pub trait EventSink: Send + Sync {
+    fn on_event(&self, name: String, payload: String);
+}
+
+struct SinkEvents(Arc<dyn EventSink>);
+
+impl engine::Events for SinkEvents {
+    fn emit(&self, event: &str, payload: Value) {
+        self.0.on_event(event.to_string(), payload.to_string());
+    }
+}
+
+/// 建引擎要的目录与环境（应用启动时由 Kotlin 给出）。
+#[derive(Deserialize)]
+struct Config {
+    /// 应用私有的数据目录（`filesDir`）。
+    data: String,
+    /// 缩略图缓存（`cacheDir/thumbs`）。
+    thumbs: String,
+    /// 模型目录（`filesDir/models`）。
+    models: String,
+    /// 临时文件（`cacheDir/scratch`）：Android 上系统的临时目录应用写不了。
+    scratch: String,
+    /// 系统的 HTTP 代理（`http://主机:端口`），没有就不写。
+    #[serde(default)]
+    proxy: Option<String>,
+    /// 应用版本，写进"我的设置与喜好"。
+    #[serde(default)]
+    version: String,
 }
 
 /// 核心库的版本（与应用版本一致）。
@@ -59,202 +84,200 @@ pub fn core_version() -> String {
     fg_core::VERSION.to_string()
 }
 
-/// 这台机器的情况，界面据此选默认的分析档位。
-#[derive(uniffi::Record)]
-pub struct Machine {
-    pub memory_gb: u64,
-    pub cores: u32,
-    /// 这个平台的模型加速器："nnapi"、"coreml" 或 "cpu"。
-    pub accelerator: String,
+#[derive(uniffi::Object)]
+pub struct FgEngine {
+    engine: Arc<Engine>,
 }
 
 #[uniffi::export]
-pub fn machine_info() -> Machine {
-    Machine { memory_gb: fg_core::platform::physical_memory() >> 30, cores: std::thread::available_parallelism().map(|n| n.get() as u32).unwrap_or(1), accelerator: fg_core::onnx::accelerator().to_string() }
-}
+impl FgEngine {
+    /// 建引擎：注册 Android 的平台能力（人脸流水线作为系统视觉信号；没有系统图像解码器、没有 GPU 编码器、本机回收交给界面），
+    /// 启动后台的 NAS 连接与草稿修剪。整个进程只建一个。
+    #[uniffi::constructor]
+    pub fn new(config: String, sink: Arc<dyn EventSink>) -> Result<Arc<Self>, FgError> {
+        let c: Config = serde_json::from_str(&config).map_err(|e| format!("config: {e}"))?;
+        fg_core::platform::set_scratch_dir(PathBuf::from(&c.scratch));
+        fg_core::platform::set_proxy(c.proxy);
+        fg_core::platform::set_vision(Box::new(fg_core::facepipe::Factory));
+        let paths = Paths { data: c.data.into(), thumbs: c.thumbs.into(), models: PathBuf::from(&c.models), downloads: PathBuf::from(&c.models) };
+        let version = if c.version.is_empty() { fg_core::VERSION.to_string() } else { c.version };
+        let engine = Engine::new(paths, Box::new(SinkEvents(sink)), &version);
+        engine.start_background();
+        Ok(Arc::new(FgEngine { engine }))
+    }
 
-/// 排查联网问题用：用核心库同一套 HTTP 客户端（ureq + rustls）请求一个地址，返回状态码或错误；设置页"诊断"以后会用它。
-#[uniffi::export]
-pub fn net_probe(url: String) -> Result<u16, FgError> {
-    let agent = fg_core::platform::http_agent(std::time::Duration::from_secs(15), std::time::Duration::from_secs(15));
-    match agent.head(&url).call() {
-        Ok(r) => Ok(r.status()),
-        Err(ureq::Error::Status(code, _)) => Ok(code),
-        Err(e) => Err(format!("{e}").into()),
+    /// 调一个引擎方法：`method` 是桌面端的命令名，`args` 是参数的 JSON 对象（snake_case），返回结果的 JSON。阻塞，Kotlin 放到 IO 线程上调。
+    pub fn call(&self, method: String, args: String) -> Result<String, FgError> {
+        let a: Value = if args.trim().is_empty() { json!({}) } else { serde_json::from_str(&args).map_err(|e| format!("{method}: bad arguments: {e}"))? };
+        dispatch(&self.engine, &method, &a).map(|v| v.to_string()).map_err(FgError::from)
+    }
+
+    /// 改系统代理（用户在系统设置里换了代理，或换了网络）。
+    pub fn set_proxy(&self, proxy: Option<String>) {
+        fg_core::platform::set_proxy(proxy);
     }
 }
 
-// ---------------------------------------------------------------- NAS
+// ---------------------------------------------------------------- 参数
 
-/// NAS 连接池：整个进程一个，连接住在它自己的线程里（见核心库 nas.rs）。
-fn nas_pool() -> &'static nas::Pool {
-    static POOL: OnceLock<nas::Pool> = OnceLock::new();
-    POOL.get_or_init(nas::Pool::start)
+fn s(a: &Value, k: &str) -> Result<String, String> {
+    a.get(k).and_then(Value::as_str).map(str::to_string).ok_or_else(|| format!("missing argument `{k}`"))
 }
 
-/// "测试连接"：连上这台服务器，返回它的共享名；什么都不记。
-#[uniffi::export]
-pub fn nas_probe(host: String, user: String, password: String) -> Result<Vec<String>, FgError> {
-    let host = nas::check_host(&host)?;
-    Ok(nas_pool().probe(&host, user.trim(), &password)?)
+fn os(a: &Value, k: &str) -> Option<String> {
+    a.get(k).and_then(Value::as_str).map(str::to_string)
 }
 
-// ---------------------------------------------------------------- 模型包
-
-/// 一个模型包的状态：装没装、还要下载多少字节。
-#[derive(uniffi::Record)]
-pub struct PackStatus {
-    pub id: String,
-    pub installed: bool,
-    /// 还要下载的字节数（装好了是 0；清单读不到时也是 0）。
-    pub bytes: u64,
+fn b(a: &Value, k: &str) -> bool {
+    a.get(k).and_then(Value::as_bool).unwrap_or(false)
 }
 
-/// 全部模型包（与 Mac 端同一份清单、同样的 SHA-256 校验）。
-#[uniffi::export]
-pub fn packs_status(models_dir: String) -> Vec<PackStatus> {
-    let dir = Path::new(&models_dir);
-    modelpacks::PACKS
-        .iter()
-        .map(|p| {
-            let installed = modelpacks::installed(dir, p);
-            PackStatus { id: p.id.to_string(), installed, bytes: if installed { 0 } else { modelpacks::manifest_sizes(dir, p.id).unwrap_or(0) } }
-        })
-        .collect()
+fn ob(a: &Value, k: &str) -> Option<bool> {
+    a.get(k).and_then(Value::as_bool)
 }
 
-/// 下载进度，Kotlin 侧实现。
-#[uniffi::export(foreign)]
-pub trait DownloadProgress: Send + Sync {
-    fn on_progress(&self, pack: String, file: String, done: u64, total: u64);
+fn f(a: &Value, k: &str) -> f64 {
+    a.get(k).and_then(Value::as_f64).unwrap_or(0.0)
 }
 
-static DOWNLOAD_CANCEL: AtomicBool = AtomicBool::new(false);
-static DOWNLOAD_BUSY: Mutex<Option<String>> = Mutex::new(None);
+fn strings(a: &Value, k: &str) -> Vec<String> {
+    a.get(k).and_then(Value::as_array).map(|v| v.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default()
+}
 
-/// 下载一个包缺的文件（一次只能下一个包）；`pack_cancel` 可以中途停，下了一半的文件会删掉。
-#[uniffi::export]
-pub fn pack_download(models_dir: String, id: String, progress: Arc<dyn DownloadProgress>) -> Result<(), FgError> {
-    {
-        let mut busy = DOWNLOAD_BUSY.lock().unwrap_or_else(|e| e.into_inner());
-        if busy.is_some() {
-            return Err("another download is running".into());
+fn parse<T: serde::de::DeserializeOwned>(a: &Value, k: &str) -> Result<T, String> {
+    serde_json::from_value(a.get(k).cloned().unwrap_or(Value::Null)).map_err(|e| format!("argument `{k}`: {e}"))
+}
+
+fn out<T: serde::Serialize>(v: T) -> Result<Value, String> {
+    serde_json::to_value(v).map_err(|e| e.to_string())
+}
+
+/// 方法名 → 引擎方法。名字和参数与桌面端的 Tauri 命令一一对应（见 apps/desktop/src-tauri/src/lib.rs），另加几个 Android 用的：
+/// `taste_export_bytes` / `taste_import_bytes`（系统的文件选择器只给字节，没有路径）、`packs_status` 可以带上要下载的字节数。
+fn dispatch(e: &Arc<Engine>, method: &str, a: &Value) -> Result<Value, String> {
+    let dirs = || strings(a, "dirs");
+    match method {
+        // 探测、分析、取舍
+        "probe_folder" => out(e.probe_folder(&dirs(), os(a, "compute").as_deref(), os(a, "quality").as_deref())?),
+        "scan_project" => out(e.scan_project(ScanArgs {
+            key: s(a, "key")?,
+            dirs: dirs(),
+            compute: os(a, "compute"),
+            quality: os(a, "quality"),
+            learn: b(a, "learn"),
+            quiet: b(a, "quiet"),
+            style: os(a, "style"),
+            force: b(a, "force"),
+            eye_method: os(a, "eye_method"),
+        })?),
+        "scan_cancel" => {
+            e.scan_cancel();
+            Ok(Value::Null)
         }
-        *busy = Some(id.clone());
-        DOWNLOAD_CANCEL.store(false, Ordering::Relaxed);
+        "decide_photos" => {
+            let overrides: HashMap<String, String> = parse(a, "overrides").unwrap_or_default();
+            out(e.decide_photos(&s(a, "key")?, f(a, "keep_ratio") as f32, os(a, "pick_mode").as_deref(), b(a, "one_per_group"), &overrides)?)
+        }
+        // 项目文件
+        "projects_load" => out(e.projects_load()?),
+        "projects_save" => out(e.projects_save(&s(a, "json")?)?),
+        "projects_quarantine" => out(e.projects_quarantine()?),
+        // 我的设置与喜好
+        "taste_export" => out(e.taste_export(&s(a, "path")?, a.get("settings").cloned().unwrap_or(Value::Null))?),
+        "taste_import" => out(e.taste_import(&s(a, "path")?)?),
+        "taste_export_bytes" => {
+            let (bytes, summary) = e.taste_pack_bytes(a.get("settings").cloned().unwrap_or(Value::Null))?;
+            Ok(json!({ "base64": base64::engine::general_purpose::STANDARD.encode(bytes), "summary": summary }))
+        }
+        "taste_import_bytes" => {
+            let bytes = base64::engine::general_purpose::STANDARD.decode(s(a, "base64")?).map_err(|e| e.to_string())?;
+            out(e.taste_import_bytes(&bytes)?)
+        }
+        // 云备份
+        "backup_status" => out(e.backup_status()),
+        "backup_save_target" => out(e.backup_save_target(TargetArgs {
+            id: os(a, "id"),
+            name: os(a, "name").unwrap_or_default(),
+            kind: os(a, "kind").unwrap_or_else(|| "r2".into()),
+            account: s(a, "account")?,
+            bucket: s(a, "bucket")?,
+            access_key: s(a, "access_key")?,
+            secret: os(a, "secret"),
+        })?),
+        "backup_remove_target" => out(e.backup_remove_target(&s(a, "id")?)?),
+        "backup_set_options" => out(e.backup_set_options(ob(a, "enabled"), a.get("keep").and_then(Value::as_u64).map(|n| n as usize))?),
+        "backup_now" => out(e.backup_now(a.get("settings").cloned().unwrap_or(Value::Null))?),
+        "backup_restore" => out(e.backup_restore(&s(a, "id")?)?),
+        // NAS
+        "nas_list" => out(e.nas_list()),
+        "nas_probe" => out(e.nas_probe(&s(a, "host")?, &os(a, "user").unwrap_or_default(), &os(a, "password").unwrap_or_default(), os(a, "id").as_deref())?),
+        "nas_add" => out(e.nas_add(&os(a, "name").unwrap_or_default(), &s(a, "host")?, &os(a, "user").unwrap_or_default(), &os(a, "password").unwrap_or_default(), b(a, "remember"))?),
+        "nas_update" => out(e.nas_update(&s(a, "id")?, &os(a, "name").unwrap_or_default(), &s(a, "host")?, &os(a, "user").unwrap_or_default(), &os(a, "password").unwrap_or_default(), b(a, "remember"))?),
+        "nas_remove" => out(e.nas_remove(&s(a, "id")?)?),
+        "nas_connect" => out(e.nas_connect(&s(a, "id")?, os(a, "password").as_deref())?),
+        "nas_disconnect" => out(e.nas_disconnect(&s(a, "id")?)),
+        "nas_set_enabled" => out(e.nas_set_enabled(&s(a, "id")?, b(a, "enabled"))?),
+        "nas_ensure" => out(e.nas_ensure(&dirs())),
+        "nas_browse" => out(e.nas_browse(&s(a, "id")?, &os(a, "path").unwrap_or_default())?),
+        // 整理
+        "export_photos" => out(e.export_photos(&strings(a, "paths"), &s(a, "dest")?)?),
+        "trash_photos" => out(e.trash_photos(strings(a, "paths"))),
+        // 查看器
+        "preview_thumbs" => out(e.preview_thumbs(&strings(a, "paths"))),
+        "photo_info" => out(e.photo_info(&s(a, "path")?)),
+        "large_preview" => out(e.large_preview(&s(a, "path")?, b(a, "full"), b(a, "showable"))?),
+        "photo_detail" => out(e.photo_detail(&s(a, "path")?, f(a, "x"), f(a, "y"), f(a, "w"), f(a, "h"), f(a, "out_w") as u32)?),
+        "motion_clip" => out(e.motion_clip(&s(a, "path")?)?),
+        // 搜索与场景
+        "search_status" => out(e.search_status(&dirs())),
+        "search_index" => out(e.search_index(&dirs())?),
+        "search_photos" => out(e.search_photos(&dirs(), &s(a, "query")?)?),
+        "scene_text" => {
+            let scenes: Vec<SceneReq> = parse(a, "scenes")?;
+            out(e.scene_text(&scenes, b(a, "zh"), b(a, "caption"))?)
+        }
+        // 模型包与机器
+        "machine_info" => out(e.machine_info()),
+        "packs_status" => out(e.packs_status(b(a, "with_sizes"))),
+        "pack_size" => out(e.pack_size(&s(a, "id")?)?),
+        "pack_download" => out(e.pack_download(&s(a, "id")?)?),
+        "pack_cancel" => {
+            e.pack_cancel();
+            Ok(Value::Null)
+        }
+        "pack_remove" => out(e.pack_remove(&s(a, "id")?)?),
+        // 喜好与风格
+        "record_label" => out(e.record_label(&s(a, "path")?, ob(a, "label"), os(a, "style").as_deref())),
+        "prefs_info" => out(e.prefs_info(os(a, "style").as_deref())),
+        "prefs_reset" => out(e.prefs_reset(os(a, "style").as_deref())),
+        "styles_list" => out(e.styles_list()),
+        "style_create" => out(e.style_create(&s(a, "name")?)),
+        "style_rename" => out(e.style_rename(&s(a, "id")?, &s(a, "name")?)),
+        "style_delete" => out(e.style_delete(&s(a, "id")?)),
+        "style_set_default" => out(e.style_set_default(&s(a, "id")?)),
+        "learn_from_folder" => out(e.learn_from_folder(&s(a, "dir")?, os(a, "style").as_deref(), os(a, "compute").as_deref(), os(a, "quality").as_deref())?),
+        // 缓存
+        "cache_size" => out(e.cache_size()),
+        "clear_cache" => out(e.clear_cache()?),
+        other => Err(format!("unknown method `{other}`")),
     }
-    let r = modelpacks::download(Path::new(&models_dir), &id, &DOWNLOAD_CANCEL, &|p| progress.on_progress(p.pack, p.file, p.done, p.total));
-    *DOWNLOAD_BUSY.lock().unwrap_or_else(|e| e.into_inner()) = None;
-    Ok(r?)
-}
-
-#[uniffi::export]
-pub fn pack_cancel() {
-    DOWNLOAD_CANCEL.store(true, Ordering::Relaxed);
-}
-
-#[uniffi::export]
-pub fn pack_remove(models_dir: String, id: String) -> Result<(), FgError> {
-    Ok(modelpacks::remove(Path::new(&models_dir), &id)?)
-}
-
-// ---------------------------------------------------------------- 分析
-
-/// 分析进度，Kotlin 侧实现，每分析完一张叫一次。
-#[uniffi::export(foreign)]
-pub trait ScanProgress: Send + Sync {
-    fn on_photo(&self, done: u32, total: u32);
-}
-
-/// 一张照片的分析与取舍结果（界面要的那部分；完整的 `Photo` 在后面的步骤里才整个暴露）。
-#[derive(uniffi::Record)]
-pub struct PhotoVerdict {
-    pub path: String,
-    pub name: String,
-    /// 分析时写到 `cache_dir` 的 640 px 缩略图。
-    pub thumb: String,
-    pub width: u32,
-    pub height: u32,
-    pub score: f32,
-    pub sharp_score: f32,
-    pub expo_score: f32,
-    /// CLIP + 美学头，没有模型时为空。
-    pub clip_score: Option<f32>,
-    pub face_count: u32,
-    /// 最闭的那双眼的睁开程度（有人脸包时才有）。
-    pub eyes_open: Option<f32>,
-    pub group: u32,
-    pub group_best: bool,
-    /// `keep` / `review` / `reject`。
-    pub state: String,
-    pub flags: Vec<String>,
-}
-
-/// 一次分析用了什么：界面的"分析信息"。
-#[derive(uniffi::Record)]
-pub struct ScanInfo {
-    /// CLIP 跑在哪："cpu-int8"、"cpu-fp16"、"nnapi-fp16"……；没有模型时为空。
-    pub clip_backend: Option<String>,
-    pub clip_model: Option<String>,
-    /// 找脸与量眼睛的流水线（`detect` + `eyes` 包）是否在用。
-    pub faces: bool,
-    /// 人物识别（`faces` 包）是否在用。
-    pub people: bool,
-    pub photos: Vec<PhotoVerdict>,
-}
-
-/// 对一个文件夹做一次完整分析：列出照片、逐张分析（有模型就用 CLIP 打分；有 `detect` + `eyes` 包就找脸、量眼睛；有 `faces` 包就认人）、
-/// 分组打分、按保留比例取舍。`quality` 是 "fast" / "high" / "ultra"（没有对应的模型就退到有的那档）。
-/// 这是冒烟用的直通版本：不走分析缓存、不同步 NAS、不能取消；桌面端 `scan_project` 的完整流程在阶段 B 第 3 步搬进核心库后两端共用。
-#[uniffi::export]
-pub fn analyze_folder(dir: String, cache_dir: String, models_dir: String, quality: String, keep_ratio: f32, progress: Arc<dyn ScanProgress>) -> Result<ScanInfo, FgError> {
-    let cache_dir = Path::new(&cache_dir);
-    std::fs::create_dir_all(cache_dir).map_err(|e| format!("{}: {e}", cache_dir.display()))?;
-    let models = Path::new(&models_dir);
-    let files = fg_core::list_all(&[dir]);
-    if files.is_empty() {
-        return Err("no photos in that folder".into());
-    }
-    // 模型都是可选的：没下载就没有那项信号，分析照常进行
-    let scorer = ClipScorer::load(models, true, Quality::parse(Some(&quality))).map_err(|e| eprintln!("AI disabled: {e}")).ok();
-    let vision = if facepipe::available(models) { facepipe::FacePipeline::load(models).map_err(|e| eprintln!("faces disabled: {e}")).ok() } else { None };
-    let mp = if mediapipe::available(models) { mediapipe::MediapipeEyes::load(models).ok() } else { None };
-    let fe = if faces::available(models) { faces::FaceEmbedder::load(models).ok() } else { None };
-    let total = files.len() as u32;
-    let done = AtomicU32::new(0);
-    let mut photos: Vec<analyze::Photo> = files
-        .par_iter()
-        .filter_map(|p| {
-            let r = analyze::analyze(p, cache_dir, scorer.as_ref().map(|s| s as &dyn AiScorer), vision.as_ref().map(|v| v as &dyn SystemVision), EyeMethod::Mediapipe, mp.as_ref(), fe.as_ref(), &|_, _, _| {});
-            progress.on_photo(done.fetch_add(1, Ordering::Relaxed) + 1, total);
-            r.map_err(|e| eprintln!("skip: {e}")).ok()
-        })
-        .collect();
-    photos.sort_by(|a, b| a.path.cmp(&b.path));
-    analyze::group_and_score(&mut photos, None);
-    let verdicts = decide::decide(&photos, keep_ratio, PickMode::Best, false, &Default::default());
-    let out = photos
-        .into_iter()
-        .map(|p| {
-            let state = verdicts.get(&p.path).map(|d| match d.state { decide::State::Keep => "keep", decide::State::Review => "review", decide::State::Reject => "reject" }).unwrap_or_default().to_string();
-            PhotoVerdict { path: p.path, name: p.name, thumb: p.thumb, width: p.width, height: p.height, score: p.score, sharp_score: p.sharp_score, expo_score: p.expo_score, clip_score: p.clip_score, face_count: p.face_count, eyes_open: p.eyes_open, group: p.group as u32, group_best: p.group_best, state, flags: p.flags }
-        })
-        .collect();
-    Ok(ScanInfo { clip_backend: scorer.as_ref().map(|s| s.backend.to_string()), clip_model: scorer.as_ref().map(|s| s.model.to_string()), faces: vision.is_some(), people: fe.is_some(), photos: out })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
-    struct Quiet;
-    impl ScanProgress for Quiet {
-        fn on_photo(&self, _: u32, _: u32) {}
+    struct Collect(Mutex<Vec<String>>);
+    impl EventSink for Collect {
+        fn on_event(&self, name: String, _payload: String) {
+            self.0.lock().unwrap().push(name);
+        }
     }
 
-    /// 没有任何模型、没有任何平台信号时，一个文件夹也能分析出分组与取舍：这正是 Android 端第一次跑起来时的状态。
+    /// 没有任何模型、没有任何平台信号时，一个文件夹也能经 `call` 探测、分析、取舍：这正是 Android 端第一次跑起来时的状态。
     #[test]
-    fn a_folder_is_analysed_without_models_or_platform_signals() {
+    fn the_engine_is_reached_by_method_name() {
         let dir = std::env::temp_dir().join(format!("fg-android-smoke-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("photos")).unwrap();
@@ -263,16 +286,31 @@ mod tests {
             let img = if *blur > 0.0 { image::imageops::blur(&img, *blur) } else { img };
             img.save(dir.join("photos").join(format!("p{i}.jpg"))).unwrap();
         }
-        let models = dir.join("models").to_string_lossy().into_owned();
-        let out = analyze_folder(dir.join("photos").to_string_lossy().into_owned(), dir.join("cache").to_string_lossy().into_owned(), models.clone(), "fast".into(), 0.5, Arc::new(Quiet)).unwrap();
-        assert_eq!(out.photos.len(), 3);
-        assert!(out.photos.iter().all(|p| Path::new(&p.thumb).exists()));
-        assert!(out.photos.iter().any(|p| p.state == "keep"), "{:?}", out.photos.iter().map(|p| &p.state).collect::<Vec<_>>());
-        assert!(out.photos.iter().all(|p| p.clip_score.is_none()) && out.clip_backend.is_none() && !out.faces, "no models in that folder");
+        let p = |x: &str| dir.join(x).to_string_lossy().into_owned();
+        let config = json!({ "data": p("data"), "thumbs": p("thumbs"), "models": p("models"), "scratch": p("scratch"), "version": "test" }).to_string();
+        let sink = Arc::new(Collect(Mutex::new(Vec::new())));
+        let e = FgEngine::new(config, sink.clone()).unwrap();
+        let dirs = json!({ "dirs": [p("photos")] }).to_string();
+        let probe: Value = serde_json::from_str(&e.call("probe_folder".into(), dirs.clone()).unwrap()).unwrap();
+        assert_eq!(probe["uncached"], 3);
+        let photos: Value = serde_json::from_str(&e.call("scan_project".into(), json!({ "key": "k", "dirs": [p("photos")], "eye_method": "mediapipe" }).to_string()).unwrap()).unwrap();
+        assert_eq!(photos.as_array().unwrap().len(), 3);
+        assert!(sink.0.lock().unwrap().iter().any(|n| n == "scan-photo"));
+        let d: Value = serde_json::from_str(&e.call("decide_photos".into(), json!({ "key": "k", "keep_ratio": 1.0 }).to_string()).unwrap()).unwrap();
+        assert_eq!(d.as_object().unwrap().len(), 3);
+        // 本机照片的回收交给界面
+        let photo = p("photos/p0.jpg");
+        let t: Value = serde_json::from_str(&e.call("trash_photos".into(), json!({ "paths": [photo] }).to_string()).unwrap()).unwrap();
+        assert_eq!(t["deferred"].as_array().unwrap().len(), 1);
+        // 我的设置与喜好：字节往返
+        let x: Value = serde_json::from_str(&e.call("taste_export_bytes".into(), json!({ "settings": { "theme": "dark" } }).to_string()).unwrap()).unwrap();
+        let back: Value = serde_json::from_str(&e.call("taste_import_bytes".into(), json!({ "base64": x["base64"] }).to_string()).unwrap()).unwrap();
+        assert_eq!(back[1]["theme"], "dark");
         // 模型包：一个都没装，每个都说要下载多少
-        let packs = packs_status(models);
-        assert_eq!(packs.len(), modelpacks::PACKS.len());
-        assert!(packs.iter().all(|p| !p.installed && p.bytes > 0), "{:?}", packs.iter().map(|p| (p.id.clone(), p.bytes)).collect::<Vec<_>>());
+        let packs: Value = serde_json::from_str(&e.call("packs_status".into(), json!({ "with_sizes": true }).to_string()).unwrap()).unwrap();
+        assert!(packs.as_array().unwrap().iter().all(|p| p["installed"] == false && p["bytes"].as_u64().unwrap() > 0));
+        assert!(e.call("nope".into(), "{}".into()).is_err());
+        assert!(e.call("probe_folder".into(), "not json".into()).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

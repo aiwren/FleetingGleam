@@ -1,0 +1,84 @@
+package com.fleetinggleam.android.service
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.os.Build
+import android.os.IBinder
+import androidx.core.app.NotificationCompat
+import com.fleetinggleam.android.MainActivity
+import com.fleetinggleam.android.R
+import com.fleetinggleam.android.core.Core
+import com.fleetinggleam.android.core.Fg
+import com.fleetinggleam.android.core.Progress
+import com.fleetinggleam.android.core.Session
+import com.fleetinggleam.android.core.t
+
+/**
+ * 分析期间的前台服务：让系统知道应用在干活，用户切走也不会被停掉；通知栏里显示进度（和应用里的横幅同一个数），带一个"停止分析"。
+ * 分析本身在引擎里跑（Session 调 `scan_project`），这里只负责挂着与显示。
+ */
+class AnalysisService : Service() {
+    private var off: (() -> Unit)? = null
+    private var name = ""
+    private var lastShown = 0L
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_STOP) {
+            Session.stopScan()
+            return START_NOT_STICKY
+        }
+        name = intent?.getStringExtra(EXTRA_NAME) ?: name
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.createNotificationChannel(NotificationChannel(CHANNEL, t("cull.analyzing"), NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) })
+        val type = if (Build.VERSION.SDK_INT >= 35) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING else ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+        // 直接调系统的 startForeground：androidx 的 ServiceCompat 不认识 API 35 新加的 mediaProcessing，会把它屏蔽成"无类型"，系统随即拒绝
+        startForeground(ID, build(Progress()), type)
+        off?.invoke()
+        off = Core.listen("scan-progress") { raw ->
+            val p = runCatching { Fg.json.decodeFromString<Progress>(raw) }.getOrNull() ?: return@listen
+            // 一秒最多更新几次：通知栏刷新太勤系统会丢
+            val now = System.currentTimeMillis()
+            if (now - lastShown < 400 && p.done < p.total) return@listen
+            lastShown = now
+            nm.notify(ID, build(p))
+        }
+        return START_NOT_STICKY
+    }
+
+    private fun build(p: Progress): Notification {
+        val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_IMMUTABLE)
+        val stop = PendingIntent.getService(this, 1, Intent(this, AnalysisService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE)
+        return NotificationCompat.Builder(this, CHANNEL)
+            .setSmallIcon(R.drawable.ic_stat_gleam)
+            .setContentTitle(if (name.isNotEmpty()) "${t("cull.analyzing")} · $name" else t("cull.analyzing"))
+            .setContentText(if (p.total > 0) "${p.done} / ${p.total}" else t("cull.loadingModel"))
+            .setProgress(p.total.coerceAtLeast(0), p.done.coerceAtLeast(0), p.total == 0)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
+            .setContentIntent(open)
+            .addAction(0, t("cull.stop"), stop)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .build()
+    }
+
+    override fun onDestroy() {
+        off?.invoke()
+        off = null
+        super.onDestroy()
+    }
+
+    companion object {
+        const val EXTRA_NAME = "name"
+        const val ACTION_STOP = "com.fleetinggleam.android.STOP_SCAN"
+        private const val CHANNEL = "analysis"
+        private const val ID = 7
+    }
+}

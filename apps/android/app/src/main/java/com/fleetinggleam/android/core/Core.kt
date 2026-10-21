@@ -1,0 +1,111 @@
+package com.fleetinggleam.android.core
+
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.LinkProperties
+import android.net.Network
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import uniffi.fleetinggleam.EventSink
+import uniffi.fleetinggleam.FgEngine
+import uniffi.fleetinggleam.FgException
+import java.io.File
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
+
+/** 核心库报出来的错误：消息直接给界面显示（和桌面端 `invoke` 抛出的字符串一样）。 */
+class CoreException(message: String) : Exception(message)
+
+/**
+ * 核心库的引擎（packages/core/src/engine.rs），整个进程一个。用法和桌面端的 Tauri 一模一样：
+ * `Core.call("probe_folder", args("dirs" to dirs))` 就是 `invoke("probe_folder", { dirs })`，`Core.listen("scan-photo") { … }` 就是 `listen("scan-photo", …)`。
+ * 方法名、参数名（snake_case）、返回的 JSON、事件名与载荷都和桌面端一样，所以 Kotlin 这边照着 TypeScript 写，功能对得上。
+ */
+object Core {
+    @Volatile private var engine: FgEngine? = null
+    private val listeners = ConcurrentHashMap<String, CopyOnWriteArrayList<(String) -> Unit>>()
+
+    /** 引擎用的目录：数据（项目、风格、缓存、NAS 镜像……）、缩略图、模型、草稿。 */
+    lateinit var data: File; private set
+    lateinit var thumbs: File; private set
+    lateinit var models: File; private set
+    lateinit var scratch: File; private set
+
+    fun init(ctx: Context, version: String) {
+        if (engine != null) return
+        synchronized(this) {
+            if (engine != null) return
+            data = ctx.filesDir
+            thumbs = File(ctx.cacheDir, "thumbs")
+            models = File(ctx.filesDir, "models")
+            scratch = File(ctx.cacheDir, "scratch")
+            val cm = ctx.getSystemService(ConnectivityManager::class.java)
+            val config = args(
+                "data" to data.absolutePath, "thumbs" to thumbs.absolutePath, "models" to models.absolutePath, "scratch" to scratch.absolutePath,
+                "proxy" to proxyOf(cm?.getLinkProperties(cm.activeNetwork)), "version" to version,
+            )
+            val e = FgEngine(config.toString(), object : EventSink {
+                // 从核心库的线程上来：监听者自己负责把状态交给界面（StateFlow 是线程安全的）
+                override fun onEvent(name: String, payload: String) {
+                    listeners[name]?.forEach { runCatching { it(payload) } }
+                }
+            })
+            engine = e
+            // 换了网络（或用户在系统里改了代理）：模型下载与云备份跟着走新的代理
+            cm?.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
+                override fun onLinkPropertiesChanged(network: Network, lp: LinkProperties) { e.setProxy(proxyOf(lp)) }
+            })
+        }
+    }
+
+    /** 系统的 HTTP 代理（设置里配的，或模拟器的 -http-proxy），给核心库的联网用。 */
+    private fun proxyOf(lp: LinkProperties?): String? {
+        lp?.httpProxy?.let { p -> if (!p.host.isNullOrBlank() && p.port > 0) return "http://${p.host}:${p.port}" }
+        val host = System.getProperty("https.proxyHost")?.takeIf { it.isNotBlank() } ?: System.getProperty("http.proxyHost")?.takeIf { it.isNotBlank() } ?: return null
+        val port = System.getProperty("https.proxyPort") ?: System.getProperty("http.proxyPort") ?: "80"
+        return "http://$host:$port"
+    }
+
+    /** 调一个引擎方法，返回结果的 JSON 文本。在 IO 线程上跑（引擎的方法都是阻塞的）。 */
+    suspend fun call(method: String, args: JsonObject = JsonObject(emptyMap())): String = withContext(Dispatchers.IO) { callBlocking(method, args) }
+
+    fun callBlocking(method: String, args: JsonObject = JsonObject(emptyMap())): String {
+        val e = engine ?: throw CoreException("the engine is not ready")
+        try {
+            return e.call(method, args.toString())
+        } catch (x: FgException) {
+            throw CoreException(x.message ?: method)
+        }
+    }
+
+    /** 调一个方法并把结果解成 `T`。 */
+    suspend inline fun <reified T> get(method: String, args: JsonObject = JsonObject(emptyMap())): T = Fg.json.decodeFromString(call(method, args))
+
+    /** 监听一个事件（载荷是 JSON 文本）；返回取消监听的函数。回调在核心库的线程上。 */
+    fun listen(name: String, cb: (String) -> Unit): () -> Unit {
+        val list = listeners.getOrPut(name) { CopyOnWriteArrayList() }
+        list.add(cb)
+        return { list.remove(cb) }
+    }
+}
+
+/** 参数对象：`args("dirs" to listOf(...), "quiet" to true)`。null 的项写成 JSON 的 null。 */
+fun args(vararg pairs: Pair<String, Any?>): JsonObject = JsonObject(pairs.associate { (k, v) -> k to v.toJson() })
+
+fun Any?.toJson(): JsonElement = when (this) {
+    null -> JsonNull
+    is JsonElement -> this
+    is String -> JsonPrimitive(this)
+    is Boolean -> JsonPrimitive(this)
+    is Number -> JsonPrimitive(this)
+    is Enum<*> -> JsonPrimitive(name)
+    is Map<*, *> -> JsonObject(entries.associate { (k, v) -> k.toString() to v.toJson() })
+    is Iterable<*> -> JsonArray(map { it.toJson() })
+    is Array<*> -> JsonArray(map { it.toJson() })
+    else -> JsonPrimitive(toString())
+}

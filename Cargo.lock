@@ -1522,11 +1522,12 @@ dependencies = [
 name = "fleetinggleam-android"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "fleetinggleam-core",
  "image",
- "rayon",
+ "serde",
+ "serde_json",
  "uniffi",
- "ureq 2.12.1",
 ]
 
 [[package]]

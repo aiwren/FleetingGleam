@@ -4,6 +4,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 // 仓库根目录（Cargo 工作区的根）
@@ -31,7 +32,12 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // 用 R8 压缩与优化：Compose 在没优化的包里首帧很慢
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // 正式发布的签名由作者决定（见 ROADMAP 阶段 B 的假设）；在那之前用调试密钥签，好在真机上装 release 包测速度
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
     compileOptions {
@@ -100,7 +106,18 @@ val copyLibcxx by tasks.registering(Copy::class) {
     into(jniLibs.dir("arm64-v8a"))
 }
 
-tasks.named("preBuild") { dependsOn(uniffiBindgen, copyLibcxx) }
+// 4. 文案：桌面端的 zh-CN.ts / en.ts 导出成 assets/i18n/base.<语言>.json（两端一字不差地共用；没有 node 时用仓库里已导出的那份）
+val exportI18n by tasks.registering(Exec::class) {
+    description = "把桌面端的文案导出给 Android"
+    workingDir = rootProject.projectDir
+    environment("PATH", cargoPath + File.pathSeparator + "/opt/homebrew/bin:/usr/local/bin")
+    commandLine("node", "--experimental-strip-types", "--no-warnings", "scripts/export-i18n.mjs")
+    isIgnoreExitValue = true
+    inputs.dir(File(repoRoot, "apps/desktop/src/i18n"))
+    outputs.dir(layout.projectDirectory.dir("src/main/assets/i18n"))
+}
+
+tasks.named("preBuild") { dependsOn(uniffiBindgen, copyLibcxx, exportI18n) }
 
 dependencies {
     implementation("androidx.core:core-ktx:1.17.0")
@@ -109,6 +126,16 @@ dependencies {
     implementation("androidx.compose.foundation:foundation:1.9.3")
     implementation("androidx.compose.material3:material3:1.4.0")
     implementation("androidx.compose.ui:ui-tooling-preview:1.9.3")
+    implementation("androidx.compose.animation:animation:1.9.3")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.4")
+    implementation("androidx.lifecycle:lifecycle-process:2.9.4")
+    // 照片墙的缩略图：异步解码、内存与磁盘缓存、按显示尺寸缩小
+    implementation("io.coil-kt.coil3:coil-compose:3.3.0")
+    // 系统文件选择器选的文件夹（SAF）
+    implementation("androidx.documentfile:documentfile:1.1.0")
+    // 和核心库之间的 JSON（方法的参数与结果、事件载荷、projects.json）
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     // 悬浮标签栏的玻璃材质：对后面的内容做实时模糊（Android 12+；更早的系统退为半透明）
     implementation("dev.chrisbanes.haze:haze:1.6.10")
     implementation("dev.chrisbanes.haze:haze-materials:1.6.10")

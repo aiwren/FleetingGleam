@@ -120,9 +120,16 @@ Android 没有 Apple Vision，两端要一样就得两端用同样的东西：
    - **人脸**：没有系统人脸检测的平台用核心库自己的流水线 `facepipe.rs` 作为 `SystemVision`：UltraFace RFB-640（新包 `detect`，1.6 MB，MIT）找脸 → MediaPipe 网格（`eyes` 包）量眼睛、定出人物识别用的五个点（网格 33/133、362/263、1、61、291）→ `faces` 包认人。给出的 `VisionOut` 和 Apple Vision 一样，分析流水线不用区分。Mac 端照旧用 Vision（A4 未动；Mac 设置页不列 `detect`）。
    - 校准：UltraFace 的框比 Vision 的松，MediaPipe 对框敏感；在作者 80 张 Mac 端分析过的照片上对比（`facepipe::tests::agreement_with_apple_vision_on_a_real_cache`），框收到 0.85 后闭眼比例 17%（Mac 端 16%），人脸数 96% 一致。`VisionOut.aesthetic` 改为 `Option`：这条流水线给不出 Apple 的美学分，`sys_score` 为空，美学只剩 CLIP 头——两端分数一致仍要等 A4。
    - 偏离清单的地方（记下，未问）：检测器用的是 UltraFace 而不是 MediaPipe 的 BlazeFace——后者只有 TFLite，转 ONNX 要 tf2onnx（本机没有），而 UltraFace 有现成的 ONNX；以后换只动 `facepipe.rs` 的前处理和清单。QNN 没接：pyke 的预编译包只带 NNAPI，QNN 要 Qualcomm 的 SDK 与自己编 ONNX Runtime；NNAPI 在 Android 15 起被标为废弃，第 6 步做性能对比时再决定是否自己编带 XNNPACK / QNN 的 ONNX Runtime。
-   - 核心里 `std::env::temp_dir()` 已换成 `platform::scratch_dir()`，Android 启动时 `init(cacheDir/scratch, 代理)` 设置。核心所有联网（模型下载、云备份）改走 `platform::http_agent`，可带 HTTP 代理：Android 把系统的全局代理交给它（模拟器用 `-http-proxy http://10.0.2.2:7897` 走作者本机的 Clash，否则模拟器直连不到 Hugging Face）；Mac 端还没把系统代理交给核心，记为 A 阶段的小项。
+   - 核心里 `std::env::temp_dir()` 已换成 `platform::scratch_dir()`，Android 启动时 `init(cacheDir/scratch, 代理)` 设置。核心所有联网（模型下载、云备份）改走 `platform::http_agent`，可带 HTTP 代理：Android 把系统的全局代理交给它（模拟器用 `-http-proxy http://127.0.0.1:7897` 走作者本机的 Clash（这里写的是宿主机地址，`10.0.2.2` 不行；也不要在模拟器里设全局 `http_proxy`），否则模拟器直连不到 Hugging Face）；Mac 端还没把系统代理交给核心，记为 A 阶段的小项。
    - 还没验证的：在真机上 NNAPI 是否真的比 CPU 快（模拟器只有参考实现）；模拟器上只验证了下载 / 校验 / 加载和 CPU 推理。
-3. [ ] **应用骨架**（2 周）：相册权限与 MediaStore / SAF 读取、项目模型、设置页（含 NAS、备份、导入 Mac 的设置与喜好）、分析用前台服务 + 发热 / 充电策略。
+3. [x] **应用骨架**（完成 2026-10-21）：相册权限与 MediaStore / SAF 读取、项目模型、设置页（含 NAS、备份、导入 Mac 的设置与喜好）、分析用前台服务 + 发热 / 充电策略。
+   - 引擎：桌面端 `lib.rs` 里的全部应用流程（`scan_project` 的缓存命中 / NAS 同步 / 分批落盘 / 补测 / 取消，以及决定、项目存取、喜好、备份、NAS、整理、查看、搜索、模型、缓存）搬进 `packages/core/src/engine.rs`，事件经 `Events` trait 发出，事件名与载荷和桌面端前端监听的一字不差；桌面端只剩薄薄一层 Tauri 命令。Android 的 UniFFI 绑定只有一个入口 `FgEngine.call(方法名, JSON 参数)`，方法名与参数名和 Tauri 命令相同，Kotlin 侧照搬桌面端前端的逻辑（`core/` 下的 Session、Projects、Settings、Models、Strategy、Stores 分别对应 Culling.tsx、projects.ts、settings.ts、models.ts、strategy.ts、nas.ts / backup.ts / styles.ts）。
+   - 读照片：相册按 MediaStore 的 DATA 列归到文件夹（项目里存的是真实路径，和 Mac 一样）；系统选文件夹（SAF）时能换成 `/storage/...` 路径就直接读，换不了（网盘、SD 卡没权限）就复制进 `files/saf/<id>` 的镜像，打开项目时同步。权限：`READ_MEDIA_IMAGES` + Android 14 的"部分照片"（可再选更多），被永久拒绝时带用户去系统设置、回来自动刷新；通知权限只在第一次开始分析时问，不给也照样分析。不需要位置权限（核心库不读 GPS）。
+   - 前台服务：`AnalysisService`，类型 dataSync（Android 15 起 mediaProcessing）。注意 androidx 的 `ServiceCompat.startForeground` 会把 mediaProcessing 屏蔽成"无类型"导致崩溃，直接调系统的 `startForeground`。发热到 SEVERE 或电量 ≤15% 且没充电时暂停（`Scans.kt`），凉下来 / 接上电源 / ≥20% 自动接着分析。
+   - 界面：文案由 `scripts/export-i18n.mjs` 从桌面端的 zh-CN.ts / en.ts 导出（每次构建自动跑），Android 才有的与"电脑 → 手机"的改写放在 `assets/i18n/android.<语言>.json` 叠加；字体 Geist / Geist Mono（OFL，随应用打包），颜色、动效和 DESIGN.md 一致。设置页的行字号比正文小一号：Geist 没有中文字形，回落的系统黑体同字号看起来更大（作者反馈偏大）。
+   - 已在模拟器（API 36）上走通：相册 → 新建项目 → 准备页 → 前台服务分析（通知进度）→ 照片墙；SAF 选文件夹；项目移进回收站与恢复；设置各分区；导出 / 导入设置与喜好；深色模式。没验证的：真机上的发热 / 电量暂停（模拟器只能靠 adb 模拟）、NAS（作者的 NAS 密码不在这里输入）、R2 备份。
+   - 假设（没问过，先按默认做）：发布包先用调试密钥签名，正式签名和上架渠道由作者定；release 打开 R8（`proguard-rules.pro` 保留 JNA / UniFFI / kotlinx.serialization）；分析档位的阈值按手机放低（内存 ≥12 GB 且 ≥8 核才用高质量档）；同一个文件夹再建一次项目会得到第二个同名项目，和 Mac 端一致。
+   - 现在的选片界面（`ui/project/Culling.kt`）只是照片墙加选中小坞，第 4 步换成完整的。
 4. [ ] **选片界面**（4–6 周）：照片墙、单张、对比、检查器与理由、筛选面板、手势版 P / R / X 与撤销、搜索、风格与学习进度、HDR 与实况照片查看。
 5. [ ] **整理与 NAS**（2 周）：MediaStore / SAF 的移动与回收站（系统确认框）、导出保留照片；NAS 项目的镜像同步与回收。
 6. [ ] **一致性测试**：同一组照片两端跑，决策与分组必须一致，作为 CI 固定用例；设置与喜好文件两端互导。
