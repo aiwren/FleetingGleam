@@ -269,7 +269,7 @@ fun decideIn(cull: CullState, data: CullData, path: String, st: String?) {
 
 /** 分析好的项目：状态条、照片墙 / 单张 / 对比 / 场景页，底部一条液态玻璃工具栏。 */
 @Composable
-fun Culling(project: Project, cull: CullState, data: CullData, onOpenStyles: () -> Unit) {
+fun Culling(project: Project, cull: CullState, data: CullData, onOpenStyles: () -> Unit, onOrganize: () -> Unit) {
     val c = LocalFg.current
     val photos by Session.photos.collectAsState()
     val decisions by Session.decisions.collectAsState()
@@ -353,7 +353,7 @@ fun Culling(project: Project, cull: CullState, data: CullData, onOpenStyles: () 
                     }
                 }
             }
-            CullBar(cull, undoN, Modifier.align(Alignment.BottomCenter), onUndo = {
+            CullBar(cull, undoN, Modifier.align(Alignment.BottomCenter), onOrganize = onOrganize, onUndo = {
                 Session.undo()?.let { cull.select(it) }
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             })
@@ -469,7 +469,7 @@ fun FaceAvatar(photo: Photo, box: List<Float>, size: Dp) {
 
 /** 底部的液态玻璃工具栏：筛选、浏览方式、撤销。 */
 @Composable
-private fun CullBar(cull: CullState, undoN: Int, modifier: Modifier, onUndo: () -> Unit) {
+private fun CullBar(cull: CullState, undoN: Int, modifier: Modifier, onOrganize: () -> Unit, onUndo: () -> Unit) {
     val c = LocalFg.current
     Box(modifier.navigationBarsPadding().padding(bottom = 10.dp)) {
         GlassBox(shape = RoundedCornerShape(50)) {
@@ -478,6 +478,7 @@ private fun CullBar(cull: CullState, undoN: Int, modifier: Modifier, onUndo: () 
                     BarItem("M10 3L5 8l5 5", t("cull.backToPhotos")) { cull.sceneView = false }
                 } else {
                     BarItem(cull.layout.icon, t("cull.layout.${cull.layout.id}")) { cull.viewSheet = true }
+                    BarItem("M2.5 5.5h11M2.5 8h11M2.5 10.5h7", t("organize.button"), onClick = onOrganize)
                     BarItem(UNDO_ICON, t("android.cull.undo"), enabled = undoN > 0, onClick = onUndo)
                 }
             }

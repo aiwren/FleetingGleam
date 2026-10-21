@@ -72,25 +72,29 @@ val GeistMono = FontFamily(
     Font(R.font.geist_mono_medium, FontWeight.Medium),
 )
 
-/** 字号阶梯：桌面端 13px 的正文在手机上放大到 15sp，其余按比例。 */
+/**
+ * 字号阶梯（移动端，docs/android-ux.md 第 3 节）。中文回落到系统黑体，同字号比 Geist 显大，所以整体比桌面端放大的版本收一档：
+ * 正文 14、行标题 14、说明 12、数字 12；大标题只在根页（首页、设置）用。
+ */
 object Type {
-    val display = TextStyle(fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 30.sp, lineHeight = 36.sp, letterSpacing = (-0.03).em)
-    val title = TextStyle(fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 24.sp, lineHeight = 30.sp, letterSpacing = (-0.02).em)
-    val heading = TextStyle(fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 17.sp, lineHeight = 22.sp, letterSpacing = (-0.01).em)
-    val body = TextStyle(fontFamily = Geist, fontWeight = FontWeight.Normal, fontSize = 15.sp, lineHeight = 22.sp)
+    /** 根页的大标题（首页"项目"、设置）。 */
+    val largeTitle = TextStyle(fontFamily = Geist, fontWeight = FontWeight.Bold, fontSize = 28.sp, lineHeight = 34.sp, letterSpacing = (-0.02).em)
+    /** 空状态的品牌名。 */
+    val display = TextStyle(fontFamily = Geist, fontWeight = FontWeight.Bold, fontSize = 30.sp, lineHeight = 36.sp, letterSpacing = (-0.03).em)
+    val title = TextStyle(fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 20.sp, lineHeight = 26.sp, letterSpacing = (-0.01).em)
+    /** 推进页顶栏的标题。 */
+    val navTitle = TextStyle(fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, lineHeight = 21.sp)
+    val heading = TextStyle(fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, lineHeight = 21.sp)
+    val body = TextStyle(fontFamily = Geist, fontWeight = FontWeight.Normal, fontSize = 14.sp, lineHeight = 20.sp)
     val bodyStrong = body.copy(fontWeight = FontWeight.Medium)
-    val small = TextStyle(fontFamily = Geist, fontWeight = FontWeight.Normal, fontSize = 13.sp, lineHeight = 19.sp)
-    val label = TextStyle(fontFamily = Geist, fontWeight = FontWeight.Medium, fontSize = 14.sp, lineHeight = 18.sp)
-    /** 设置分组的小标题：大写、字距放开。 */
-    val overline = TextStyle(fontFamily = Geist, fontWeight = FontWeight.Medium, fontSize = 11.5.sp, letterSpacing = 0.06.em)
-    /**
-     * 设置行的标题与说明：比正文小一号。Geist 没有中文字形，中文回落到系统黑体，同样字号看起来比西文大，
-     * 满屏中文的设置页用正文字号会显得挤、显得大（作者 2026-10-21 反馈），所以单独收紧。
-     */
-    val rowTitle = TextStyle(fontFamily = Geist, fontWeight = FontWeight.Medium, fontSize = 14.sp, lineHeight = 19.sp)
-    val rowDesc = TextStyle(fontFamily = Geist, fontWeight = FontWeight.Normal, fontSize = 12.5.sp, lineHeight = 17.sp)
-    val mono = TextStyle(fontFamily = GeistMono, fontWeight = FontWeight.Normal, fontSize = 13.sp, lineHeight = 18.sp)
-    val monoSmall = mono.copy(fontSize = 11.5.sp, lineHeight = 15.sp)
+    val small = TextStyle(fontFamily = Geist, fontWeight = FontWeight.Normal, fontSize = 12.5.sp, lineHeight = 17.sp)
+    val label = TextStyle(fontFamily = Geist, fontWeight = FontWeight.Medium, fontSize = 13.5.sp, lineHeight = 18.sp)
+    /** 分组标题：灰、小一号；中文没有大小写，不加字距。 */
+    val overline = TextStyle(fontFamily = Geist, fontWeight = FontWeight.Medium, fontSize = 12.sp, lineHeight = 16.sp)
+    val rowTitle = TextStyle(fontFamily = Geist, fontWeight = FontWeight.Normal, fontSize = 14.5.sp, lineHeight = 19.sp)
+    val rowDesc = TextStyle(fontFamily = Geist, fontWeight = FontWeight.Normal, fontSize = 12.sp, lineHeight = 16.5.sp)
+    val mono = TextStyle(fontFamily = GeistMono, fontWeight = FontWeight.Normal, fontSize = 12.sp, lineHeight = 16.sp)
+    val monoSmall = mono.copy(fontSize = 11.sp, lineHeight = 14.sp)
 }
 
 /** 动效语言（DESIGN.md 第 10 节，和桌面端 src/motion.ts 一样的数）：expo-out 缓动、四个时长、四种弹簧。 */

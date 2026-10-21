@@ -36,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.layout.layout
 import com.fleetinggleam.android.core.I18n
 import com.fleetinggleam.android.core.Projects
 import com.fleetinggleam.android.core.StyleInfo
@@ -108,18 +109,15 @@ fun StylesScreen(from: String, onBack: () -> Unit) {
     LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 60.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Column {
-                Row(Modifier.clip(RoundedCornerShape(10.dp)).clickable(onClick = onBack).padding(horizontal = 6.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    FgIcon(Icons.BACK, size = 14.dp, box = 12f, stroke = 1.6f)
-                    Text(t(if (from == "settings") "styles.backToSettings" else "styles.backToProjects"), style = Type.rowDesc.copy(color = c.ash), modifier = Modifier.padding(start = 4.dp))
+                com.fleetinggleam.android.ui.components.NavBar(
+                    t("styles.title"), t(if (from == "settings") "settings.title" else "home.title"), onBack,
+                    Modifier.layout { m, cs -> val pl = m.measure(cs.copy(maxWidth = cs.maxWidth + 32.dp.roundToPx(), minWidth = 0)); layout(cs.maxWidth, pl.height) { pl.placeRelative(-16.dp.roundToPx(), 0) } },
+                ) {
+                    Box(Modifier.padding(end = 4.dp).size(32.dp).clip(CircleShape).background(c.ink).clickable { creating = true }, contentAlignment = Alignment.Center) { FgIcon(Icons.PLUS, size = 16.dp, box = 18f, stroke = 1.7f, color = c.onInk) }
                 }
-                Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.padding(top = 6.dp)) {
-                    Text(t("styles.title"), style = Type.title.copy(color = c.ink), modifier = Modifier.weight(1f))
-                    Text(t("styles.count", "count" to styles.size), style = Type.monoSmall.copy(color = c.ash))
-                }
-                Text(t("styles.pageDesc"), style = Type.rowDesc.copy(color = c.ash), modifier = Modifier.padding(top = 4.dp))
-                FgButton("+ " + t("styles.new"), { creating = true }, primary = true, modifier = Modifier.padding(top = 14.dp))
+                Text(t("styles.pageDesc") + " · " + t("styles.count", "count" to styles.size), style = Type.rowDesc.copy(color = c.ash), modifier = Modifier.padding(top = 2.dp, bottom = 4.dp))
                 if (styles.size > 1) {
-                    FgField(query, { query = it }, placeholder = t("styles.search"), modifier = Modifier.padding(top = 14.dp))
+                    FgField(query, { query = it }, placeholder = t("styles.search"), modifier = Modifier.padding(top = 10.dp))
                     Segmented(listOf("name" to t("styles.sortName"), "recent" to t("styles.sortRecent"), "usage" to t("styles.sortUsage")), sort, { sort = it }, block = true, modifier = Modifier.padding(top = 10.dp))
                 }
             }
@@ -136,12 +134,12 @@ fun StylesScreen(from: String, onBack: () -> Unit) {
             val hasData = s.info.labels + s.info.refs > 0
             var name by remember(s.id, s.name) { mutableStateOf(s.name) }
             var menu by remember { mutableStateOf(false) }
-            Column(Modifier.riseIn(i).animateItem().fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(c.panel).border(1.dp, c.line, RoundedCornerShape(16.dp)).padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(Modifier.riseIn(i).animateItem().fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.panel).padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Box(Modifier.size(34.dp).clip(CircleShape).background(c.surface2), contentAlignment = Alignment.Center) { Text(display(s).take(1).uppercase(), style = Type.bodyStrong.copy(color = c.ink)) }
                     FgField(name, { name = it }, placeholder = t("styles.defaultName"), modifier = Modifier.weight(1f), onDone = { name.trim().takeIf { it.isNotEmpty() && it != s.name }?.let { v -> scope.launch { Styles.rename(s.id, v) } } })
                     Box {
-                        Box(Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).clickable { menu = true }, contentAlignment = Alignment.Center) { FgIcon(Icons.MORE, size = 18.dp, stroke = 2.4f) }
+                        Box(Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).clickable { menu = true }, contentAlignment = Alignment.Center) { FgIcon(Icons.MORE, size = 18.dp, stroke = 1.5f) }
                         DropdownMenu(menu, { menu = false }, containerColor = c.canvas) {
                             if (!s.isDefault) DropdownMenuItem(text = { Text(t("styles.makeDefault"), style = Type.body.copy(color = c.ink)) }, onClick = { menu = false; scope.launch { Styles.setDefault(s.id) } })
                             if (hasData) DropdownMenuItem(text = { Text(t("styles.reset"), style = Type.body.copy(color = c.ink)) }, onClick = { menu = false; scope.launch { Styles.reset(s.id) } })
@@ -184,7 +182,7 @@ fun StylesScreen(from: String, onBack: () -> Unit) {
                 FgField(name, { if (it.length <= 40) name = it }, label = t("styles.newName"), placeholder = t("styles.newPlaceholder"))
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     I18n.list("styles.newExamples").forEach { x ->
-                        Text(x, style = Type.rowDesc.copy(color = c.ink), modifier = Modifier.clip(CircleShape).background(c.surface).border(1.dp, c.line, CircleShape).clickable { name = x }.padding(horizontal = 12.dp, vertical = 6.dp))
+                        Text(x, style = Type.rowDesc.copy(color = c.ink), modifier = Modifier.clip(CircleShape).background(c.surface).clickable { name = x }.padding(horizontal = 12.dp, vertical = 6.dp))
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {

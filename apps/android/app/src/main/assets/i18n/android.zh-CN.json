@@ -13,7 +13,15 @@
    "permissionBlocked": "读取照片的权限被关掉了，系统不会再弹出询问。请在系统设置的“权限 → 照片和视频”里选“始终允许全部”，回来后相册会自动出现。照片只在这台手机上处理，不会上传。",
    "openSettings": "去系统设置",
    "selectMore": "选择更多照片",
-   "storageRoot": "手机存储"
+   "storageRoot": "手机存储",
+   "permissionTitle": "让惊鸿看到你的照片",
+   "permissionLead": "接下来会请求读取照片的权限，用来列出手机上的相册。",
+   "promise1": "评分和分组只在这台手机上进行，不上传",
+   "promise2": "原图不会被移动或修改",
+   "promise3": "可以只给部分照片，随时能在系统设置里改",
+   "continue": "继续",
+   "folderInstead": "改为选一个文件夹",
+   "permissionBlockedTitle": "读取照片的权限被关掉了"
   },
   "paused": {
    "hot": "手机有点热，分析先停一下；凉下来会自动接着分析，已经分析的都留着。",
@@ -27,7 +35,10 @@
    "facesOn": "本机人脸检测 + MediaPipe",
    "privacyBody": "照片只在这台手机上处理，不会上传。",
    "projectMade": "已创建项目，到\"定格\"里打开。",
-   "modelsBody": "分析所用的模型只在需要时下载到这台手机，之后完全离线运行；和 Mac 端是同一批模型、同一份清单。"
+   "modelsBody": "分析所用的模型只在需要时下载到这台手机，之后完全离线运行；和 Mac 端是同一批模型、同一份清单。",
+   "modelsStorage": "模型与存储",
+   "on": "已开启",
+   "off": "未开启"
   },
   "cull": {
    "hint": "点一张照片选中，再点 ★ 留下、✕ 淘汰；单张模式里上推留下、下拉淘汰。点错了用下面的撤销。",
@@ -46,6 +57,9 @@
    "toAlbum": "导出保留的照片到相册",
    "toAlbumDesc": "复制 {{count}} 张到相册「{{where}}」，原图不动",
    "toFolder": "导出到一个文件夹…"
+  },
+  "tab": {
+   "photos": "照片"
   }
  },
  "models": {

@@ -37,6 +37,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.foundation.lazy.itemsIndexed
 import coil3.compose.AsyncImage
 import com.fleetinggleam.android.core.Listing
 import com.fleetinggleam.android.core.Media
@@ -89,8 +97,11 @@ fun FolderPicker() {
             busy = false
         }
     }
-    fun openAlbums(more: Boolean = false) {
-        source = "albums"; busy = true; noPermission = false
+    // 没有权限时先显示说明页（为什么要、给了以后会怎样），点"继续"才弹系统框；有权限就直接列相册
+    fun openAlbums(more: Boolean = false, ask: Boolean = false) {
+        source = "albums"; noPermission = false
+        if (!ask && !more && !(Media.hasPermission(ctx) || Media.partialOnly(ctx))) { noPermission = true; return }
+        busy = true
         scope.launch {
             if (!Pickers.mediaPermission(ctx, more)) { noPermission = true; busy = false; return@launch }
             albums = withContext(Dispatchers.IO) { runCatching { Media.albums(ctx) }.getOrDefault(emptyList()) }
@@ -116,68 +127,124 @@ fun FolderPicker() {
 
     val share = shares.firstOrNull { it.id == source }
     ModalBottomSheet(onDismissRequest = { Nas.answer(null) }, sheetState = sheet, containerColor = c.canvas, dragHandle = null) {
-        Column(Modifier.navigationBarsPadding().padding(horizontal = 20.dp).padding(top = 20.dp, bottom = 16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (source != null) Box(Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).clickable { source = null; listing = null; err = null }, contentAlignment = Alignment.Center) { FgIcon(Icons.BACK, size = 16.dp, box = 12f, stroke = 1.6f) }
-                Text(share?.name ?: if (source == "albums") t("android.picker.albums") else t("picker.title"), style = Type.heading.copy(color = c.ink), modifier = Modifier.padding(start = if (source != null) 4.dp else 0.dp))
+        val explaining = source == "albums" && noPermission
+        Column(Modifier.navigationBarsPadding().padding(horizontal = 16.dp).padding(top = 8.dp, bottom = 12.dp)) {
+            // 顶栏：‹ 返回上一层 · 标题 · 取消
+            Box(Modifier.fillMaxWidth().height(44.dp)) {
+                if (source != null) Row(Modifier.align(Alignment.CenterStart).clip(CircleShape).clickable { source = null; listing = null; err = null; noPermission = false }.padding(start = 2.dp, end = 10.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    FgIcon(Icons.BACK, size = 18.dp, box = 12f, stroke = 1.5f)
+                }
+                if (!explaining) Text(share?.name ?: if (source == "albums") t("android.picker.albums") else t("picker.title"), style = Type.navTitle.copy(color = c.ink), maxLines = 1, overflow = Ellipsis, modifier = Modifier.align(Alignment.Center).padding(horizontal = 72.dp))
+                Text(t("picker.cancel"), style = Type.rowTitle.copy(color = c.ink), modifier = Modifier.align(Alignment.CenterEnd).clip(CircleShape).clickable { Nas.answer(null) }.padding(horizontal = 10.dp, vertical = 8.dp))
             }
-            Spacer(Modifier.size(14.dp))
+            Spacer(Modifier.size(6.dp))
             when {
-                source == null -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Source(Icons.ALBUM, t("android.picker.albums"), t("android.picker.albumsDesc")) { openAlbums() }
+                source == null -> Column(Modifier.clip(RoundedCornerShape(14.dp)).background(c.panel)) {
+                    Source(Icons.ALBUM, t("android.picker.albums"), t("android.picker.albumsDesc"), first = true) { openAlbums() }
                     Source(Icons.FOLDER, t("android.picker.folder"), t("android.picker.folderDesc")) { pickSystemFolder() }
                     shares.filter { it.enabled }.forEach { s -> Source(Icons.NAS, s.name, s.host + if (s.connected) "" else " · ${t("settings.nasOffline")}") { enter(s, "") } }
                 }
-                source == "albums" -> Albums(albums, busy, noPermission, onRetry = { if (Pickers.mediaBlocked) Pickers.openAppSettings(ctx) else openAlbums() }, onMore = { openAlbums(more = true) }) { Nas.answer(it) }
+                explaining -> PermissionExplainer(
+                    blocked = Pickers.mediaBlocked,
+                    onContinue = { if (Pickers.mediaBlocked) Pickers.openAppSettings(ctx) else openAlbums(ask = true) },
+                    onFolderInstead = { pickSystemFolder() },
+                )
+                source == "albums" -> Albums(albums, busy, onMore = { openAlbums(more = true) }) { Nas.answer(it) }
                 share != null -> Browse(share, listing, busy, err, onEnter = { path -> enter(share, path) }, onChoose = { Nas.answer(it) })
             }
-            Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.End) { FgButton(t("picker.cancel"), { Nas.answer(null) }, small = true) }
         }
     }
 }
 
 @Composable
-private fun Source(icon: String, title: String, desc: String, onClick: () -> Unit) {
+private fun Source(icon: String, title: String, desc: String, first: Boolean = false, onClick: () -> Unit) {
     val c = LocalFg.current
-    Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.panel).border(1.dp, c.line, RoundedCornerShape(14.dp)).clickable(onClick = onClick).padding(16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        FgIcon(icon, size = 20.dp)
-        Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
-            Text(title, style = Type.bodyStrong.copy(color = c.ink), maxLines = 1, overflow = Ellipsis)
-            Text(desc, style = Type.small.copy(color = c.ash), maxLines = 2, overflow = Ellipsis)
+    Column {
+        if (!first) Box(Modifier.padding(start = 56.dp).fillMaxWidth().height(0.5.dp).background(c.line))
+        Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(28.dp).clip(RoundedCornerShape(8.dp)).background(c.ink), contentAlignment = Alignment.Center) { FgIcon(icon, size = 16.dp, stroke = 1.5f, color = c.onInk) }
+            Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                Text(title, style = Type.rowTitle.copy(color = c.ink), maxLines = 1, overflow = Ellipsis)
+                Text(desc, style = Type.rowDesc.copy(color = c.ash), maxLines = 2, overflow = Ellipsis)
+            }
+            FgIcon(Icons.CHEVRON, size = 14.dp, stroke = 1.6f, color = c.ash)
         }
-        FgIcon(Icons.CHEVRON, size = 16.dp, color = c.ash)
+    }
+}
+
+/**
+ * 授权说明页（作者 2026-10-21："授权界面好丑"）：一叠照片的插图、一句标题、三条承诺、整行的"继续"；
+ * 下面一个文字按钮"改为选一个文件夹"。被永久拒绝时标题和按钮换成去系统设置的说法。
+ */
+@Composable
+private fun PermissionExplainer(blocked: Boolean, onContinue: () -> Unit, onFolderInstead: () -> Unit) {
+    val c = LocalFg.current
+    Column(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        PhotoStack()
+        Text(t(if (blocked) "android.picker.permissionBlockedTitle" else "android.picker.permissionTitle"), style = Type.title.copy(color = c.ink), textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.padding(top = 22.dp))
+        Text(t(if (blocked) "android.picker.permissionBlocked" else "android.picker.permissionLead"), style = Type.body.copy(color = c.ash), textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.padding(top = 8.dp, start = 12.dp, end = 12.dp))
+        if (!blocked) Column(Modifier.fillMaxWidth().padding(top = 20.dp).clip(RoundedCornerShape(14.dp)).background(c.panel)) {
+            listOf(
+                Triple("M8 2.2L9.6 5.6l3.7.4-2.8 2.5.8 3.6L8 10.3l-3.3 1.8.8-3.6L2.7 6l3.7-.4z", "android.picker.promise1", true),
+                Triple("M3 4.5A1.5 1.5 0 014.5 3h7A1.5 1.5 0 0113 4.5v7a1.5 1.5 0 01-1.5 1.5h-7A1.5 1.5 0 013 11.5zM5.5 10l2-2.5 1.5 1.8 1-1.2 1.5 1.9", "android.picker.promise2", false),
+                Triple("M2.5 8a5.5 5.5 0 1111 0 5.5 5.5 0 01-11 0zM8 5v3l2 1.5", "android.picker.promise3", false),
+            ).forEach { (icon, key, first) ->
+                if (!first) Box(Modifier.padding(start = 52.dp).fillMaxWidth().height(0.5.dp).background(c.line))
+                Row(Modifier.padding(horizontal = 14.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(26.dp).clip(RoundedCornerShape(7.dp)).background(c.surface2), contentAlignment = Alignment.Center) { FgIcon(icon, size = 15.dp, stroke = 1.4f, color = c.ink) }
+                    Text(t(key), style = Type.rowDesc.copy(color = c.ink, fontSize = androidx.compose.ui.unit.TextUnit(13f, androidx.compose.ui.unit.TextUnitType.Sp)), modifier = Modifier.padding(start = 12.dp))
+                }
+            }
+        }
+        FgButton(t(if (blocked) "android.picker.openSettings" else "android.picker.continue"), onContinue, primary = true, small = false, modifier = Modifier.fillMaxWidth().padding(top = 20.dp))
+        Text(t("android.picker.folderInstead"), style = Type.label.copy(color = c.ash), modifier = Modifier.padding(top = 6.dp).clip(CircleShape).clickable(onClick = onFolderInstead).padding(horizontal = 14.dp, vertical = 10.dp))
+    }
+}
+
+/** 一叠斜着的照片（三张有渐变的小卡），右下角一粒金色的四角星——应用图标的意象。 */
+@Composable
+private fun PhotoStack() {
+    val c = LocalFg.current
+    Box(Modifier.size(132.dp, 104.dp), contentAlignment = Alignment.Center) {
+        listOf(Triple(-14f, 10.dp, 0.55f), Triple(8f, 4.dp, 0.75f), Triple(-2f, 0.dp, 1f)).forEachIndexed { i, (rot, dy, a) ->
+            Box(
+                Modifier.offset(y = dy).size(96.dp, 72.dp).graphicsLayer { rotationZ = rot; alpha = a }
+                    .shadow(if (i == 2) 10.dp else 4.dp, RoundedCornerShape(10.dp), ambientColor = Color.Black.copy(alpha = 0.25f), spotColor = Color.Black.copy(alpha = 0.3f))
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Brush.linearGradient(listOf(Color(0xFFBFD6EA), Color(0xFF7FA7CB), Color(0xFFE8C98A)))),
+            ) {
+                // 一点地平线和太阳，像张风景
+                Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(26.dp).background(Brush.verticalGradient(listOf(Color.Transparent, Color(0x667A9A4C), Color(0xCC5B7E3A)))))
+                Box(Modifier.align(Alignment.TopEnd).padding(top = 12.dp, end = 16.dp).size(14.dp).clip(CircleShape).background(Color(0xFFFFF1C8)))
+            }
+        }
+        Box(Modifier.align(Alignment.BottomEnd).padding(end = 6.dp, bottom = 2.dp)) { com.fleetinggleam.android.ui.project.Star(true, 30.dp, color = c.gleam) }
     }
 }
 
 @Composable
-private fun Albums(albums: List<Media.Album>?, busy: Boolean, noPermission: Boolean, onRetry: () -> Unit, onMore: () -> Unit, onPick: (String) -> Unit) {
+private fun Albums(albums: List<Media.Album>?, busy: Boolean, onMore: () -> Unit, onPick: (String) -> Unit) {
     val c = LocalFg.current
     val ctx = LocalContext.current
     when {
-        noPermission -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            val blocked = Pickers.mediaBlocked
-            Text(t(if (blocked) "android.picker.permissionBlocked" else "android.picker.permissionNeeded"), style = Type.body.copy(color = c.ash))
-            FgButton(t(if (blocked) "android.picker.openSettings" else "android.picker.grant"), onRetry, primary = true)
-        }
-        busy || albums == null -> Text(t("picker.loading"), style = Type.small.copy(color = c.ash))
-        albums.isEmpty() -> Text(t("android.picker.noAlbums"), style = Type.body.copy(color = c.ash))
+        busy || albums == null -> Text(t("picker.loading"), style = Type.small.copy(color = c.ash), modifier = Modifier.padding(16.dp))
+        albums.isEmpty() -> Text(t("android.picker.noAlbums"), style = Type.body.copy(color = c.ash), modifier = Modifier.padding(16.dp))
         else -> Column {
-            if (Media.partialOnly(ctx)) Row(Modifier.fillMaxWidth().padding(bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(t("android.picker.partial"), style = Type.small.copy(color = c.ash), modifier = Modifier.weight(1f).padding(end = 12.dp))
+            if (Media.partialOnly(ctx)) Row(Modifier.fillMaxWidth().padding(bottom = 10.dp).clip(RoundedCornerShape(12.dp)).background(c.panel).padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(t("android.picker.partial"), style = Type.rowDesc.copy(color = c.ash), modifier = Modifier.weight(1f).padding(end = 10.dp))
                 FgButton(t("android.picker.selectMore"), onMore, small = true)
             }
-            LazyColumn(Modifier.heightIn(max = 460.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(albums, key = { it.dir }) { a ->
-                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { onPick(a.dir) }.padding(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        AsyncImage(a.cover, null, Modifier.size(52.dp).clip(RoundedCornerShape(8.dp)).background(c.surface), contentScale = ContentScale.Crop)
+            LazyColumn(Modifier.heightIn(max = 480.dp).clip(RoundedCornerShape(14.dp)).background(c.panel)) {
+                itemsIndexed(albums, key = { _, a -> a.dir }) { i, a ->
+                    if (i > 0) Box(Modifier.padding(start = 72.dp).fillMaxWidth().height(0.5.dp).background(c.line))
+                    Row(Modifier.fillMaxWidth().clickable { onPick(a.dir) }.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        AsyncImage(a.cover, null, Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).background(c.surface), contentScale = ContentScale.Crop)
                         Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                            Text(a.name, style = Type.bodyStrong.copy(color = c.ink), maxLines = 1, overflow = Ellipsis)
-                            Text(a.dir, style = Type.monoSmall.copy(color = c.ash), maxLines = 1, overflow = Ellipsis)
+                            Text(a.name, style = Type.rowTitle.copy(color = c.ink), maxLines = 1, overflow = Ellipsis)
+                            Text(a.dir.removePrefix("/storage/emulated/0/"), style = Type.monoSmall.copy(color = c.ash), maxLines = 1, overflow = Ellipsis)
                         }
                         Text(t("android.picker.albumCount", "count" to a.count), style = Type.mono.copy(color = c.ash))
+                        FgIcon(Icons.CHEVRON, size = 14.dp, stroke = 1.6f, color = c.ash, modifier = Modifier.padding(start = 6.dp))
                     }
                 }
             }

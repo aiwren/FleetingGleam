@@ -13,7 +13,15 @@
    "permissionBlocked": "Access to photos is turned off and Android will not ask again. In system settings, open Permissions → Photos and videos and choose Always allow all; the albums appear when you come back. Photos are processed on this phone only and never uploaded.",
    "openSettings": "Open system settings",
    "selectMore": "Select more photos",
-   "storageRoot": "Phone storage"
+   "storageRoot": "Phone storage",
+   "permissionTitle": "Let FleetingGleam see your photos",
+   "permissionLead": "Next, Android will ask for permission to read photos, so the albums on this phone can be listed.",
+   "promise1": "Scoring and grouping happen on this phone only; nothing is uploaded",
+   "promise2": "Originals are never moved or modified",
+   "promise3": "You can allow only some photos, and change it any time in system settings",
+   "continue": "Continue",
+   "folderInstead": "Pick a folder instead",
+   "permissionBlockedTitle": "Photo access is turned off"
   },
   "paused": {
    "hot": "The phone is getting hot, so the analysis is paused; it picks up again once it cools down, and nothing analysed so far is lost.",
@@ -27,7 +35,10 @@
    "facesOn": "On-device face detection + MediaPipe",
    "privacyBody": "Photos are processed on this phone only and are never uploaded.",
    "projectMade": "Project created; open it under Cull.",
-   "modelsBody": "The models are downloaded to this phone only when needed and run fully offline afterwards: the same models and manifest as the Mac app."
+   "modelsBody": "The models are downloaded to this phone only when needed and run fully offline afterwards: the same models and manifest as the Mac app.",
+   "modelsStorage": "Models & storage",
+   "on": "On",
+   "off": "Off"
   },
   "cull": {
    "hint": "Tap a photo to select it, then ★ to keep or ✕ to reject; in Single view push up to keep and pull down to reject. Undo is in the bar below.",
@@ -46,6 +57,9 @@
    "toAlbum": "Export keepers to an album",
    "toAlbumDesc": "Copy {{count}} to the album \"{{where}}\"; originals untouched",
    "toFolder": "Export to a folder…"
+  },
+  "tab": {
+   "photos": "Photos"
   }
  },
  "models": {

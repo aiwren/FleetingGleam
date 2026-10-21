@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
@@ -36,7 +37,7 @@ fun <T> Select(value: T, options: List<Pair<T, String>>, onChange: (T) -> Unit, 
     var open by remember { mutableStateOf(false) }
     Box(modifier) {
         Row(
-            Modifier.graphicsLayer { alpha = if (enabled) 1f else 0.45f }.clip(RoundedCornerShape(10.dp)).background(c.surface).border(1.dp, c.line, RoundedCornerShape(10.dp))
+            Modifier.graphicsLayer { alpha = if (enabled) 1f else 0.4f }.clip(CircleShape).background(c.surface)
                 .clickable(enabled = enabled) { open = true }.padding(start = 12.dp, end = 8.dp, top = 9.dp, bottom = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {

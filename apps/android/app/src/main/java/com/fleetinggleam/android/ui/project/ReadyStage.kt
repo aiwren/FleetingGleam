@@ -118,7 +118,7 @@ fun ReadyStage(project: Project, count: Int, bytes: Long, etaSeconds: Int?, file
 @Composable
 private fun Card(i: Int, title: String, content: @Composable () -> Unit) {
     val c = LocalFg.current
-    Column(Modifier.riseIn(i, scaleFrom = 1f).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.panel).border(1.dp, c.line, RoundedCornerShape(14.dp)).padding(16.dp)) {
+    Column(Modifier.riseIn(i, scaleFrom = 1f).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.panel).padding(16.dp)) {
         Text(title.uppercase(), style = Type.overline.copy(color = c.ash), modifier = Modifier.padding(bottom = 10.dp))
         content()
     }
@@ -136,7 +136,7 @@ private fun LightTable(files: List<ProbeFile>, thumbs: Map<String, String>) {
     LaunchedEffect(tx, ty) { sx.animateTo(tx, spring(dampingRatio = 1.05f, stiffness = 90f)) }
     LaunchedEffect(tx, ty) { sy.animateTo(ty, spring(dampingRatio = 1.05f, stiffness = 90f)) }
     BoxWithConstraints(
-        Modifier.fillMaxWidth().aspectRatio(1.35f).clip(RoundedCornerShape(18.dp)).background(c.panel).border(1.dp, c.line, RoundedCornerShape(18.dp))
+        Modifier.fillMaxWidth().aspectRatio(1.35f).clip(RoundedCornerShape(18.dp)).background(c.panel)
             .pointerInput(Unit) {
                 detectDragGestures(onDragEnd = { tx = 0f; ty = 0f }, onDragCancel = { tx = 0f; ty = 0f }) { ch, _ ->
                     val x = ch.position.x / size.width; val y = ch.position.y / size.height

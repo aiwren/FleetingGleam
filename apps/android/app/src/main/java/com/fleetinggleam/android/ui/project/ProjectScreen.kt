@@ -103,26 +103,19 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
 
     Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
-        // ---- 工具栏（iOS 导航栏的样子）：左边"‹ 项目"，中间一行项目名（点一下改名），右边重新评估、整理、搜索、项目设置。
-        //      张数不在这里重复：下面的"全部 n"已经说了；分析中的进度在横幅里。
-        val density = androidx.compose.ui.platform.LocalDensity.current
-        var sideW by remember { mutableStateOf(88.dp) }
-        var leftW by remember { mutableStateOf(88.dp) }
-        Box(Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 8.dp)) {
-            Row(Modifier.align(Alignment.CenterStart).onGloballyPositioned { leftW = with(density) { it.size.width.toDp() } }.clip(RoundedCornerShape(10.dp)).clickable { Projects.setActive(null) }.padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                FgIcon(Icons.BACK, size = 14.dp, box = 12f, stroke = 1.6f)
-                Text(t("home.back"), style = Type.rowTitle.copy(color = c.ink), modifier = Modifier.padding(start = 2.dp))
-            }
-            Row(Modifier.align(Alignment.CenterEnd).onGloballyPositioned { sideW = with(density) { it.size.width.toDp() } }, verticalAlignment = Alignment.CenterVertically) {
-                if (phase == Phase.Done && settings.learn && project.learn != false && dirty > 0) FgButton(t("cull.reeval"), { Session.reevaluate() }, small = true, modifier = Modifier.padding(end = 4.dp))
-                if (phase == Phase.Done) OrganizeButton(project)
-                if (phase == Phase.Done && project.search != false) IconBtn(Icons.SEARCH, t("search.label"), { cull.searchOpen = !cull.searchOpen; if (!cull.searchOpen) cull.query = "" }, on = cull.searchOpen, plain = true)
-                IconBtn(Icons.SLIDERS, t("pset.settings"), { settingsOpen = true }, enabled = !scanning, plain = true)
-            }
-            // 居中的标题；右边按钮多时让出位置（最多占中间那一段）
-            Text(project.name, style = Type.heading.copy(color = c.ink), maxLines = 1, overflow = Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                modifier = Modifier.align(Alignment.Center).padding(horizontal = maxOf(leftW, sideW) + 4.dp).clip(RoundedCornerShape(8.dp)).clickable { renaming = true }.padding(horizontal = 6.dp, vertical = 4.dp))
+        // ---- 顶栏（iOS 导航栏）：‹ 项目 · 名字（点一下改名）· 搜索 · ⋯（项目设置、重新评估、风格）。"整理"在底部玻璃条上。
+        var organize by remember { mutableStateOf(false) }
+        com.fleetinggleam.android.ui.components.NavBar(project.name, t("home.title"), { Projects.setActive(null) }, onTitle = { renaming = true }) {
+            if (phase == Phase.Done && project.search != false) IconBtn(Icons.SEARCH, t("search.label"), { cull.searchOpen = !cull.searchOpen; if (!cull.searchOpen) cull.query = "" }, on = cull.searchOpen, plain = true)
+            val canReeval = phase == Phase.Done && settings.learn && project.learn != false && dirty > 0
+            com.fleetinggleam.android.ui.components.MenuButton(t("pset.settings"), buildList {
+                add(Triple(t("pset.settings"), !scanning) { settingsOpen = true })
+                add(Triple(t("cull.reeval"), canReeval) { Session.reevaluate() })
+                add(Triple(t("styles.title"), true, onOpenStyles))
+                add(Triple(t("bin.rename"), true) { renaming = true })
+            }, dot = canReeval)
         }
+        OrganizeDialogs(project, organize) { organize = false }
         Box(Modifier.fillMaxWidth().height(1.dp).background(c.line))
 
         // ---- 横幅：分析中（进度、预计、此刻在做哪张、停止），分析完的一行总结
@@ -175,7 +168,7 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
                 when (phase) {
                     Phase.Ready -> ReadyStage(project, uncached, bytes, eta, files.filter { !it.cached }, previews, onStart = start, onAddFolder = addFolder, onRemoveFolder = { Session.removeFolder(it) })
                     Phase.Scanning -> ScanningWall()
-                    Phase.Done -> Culling(project, cull, data, onOpenStyles)
+                    Phase.Done -> Culling(project, cull, data, onOpenStyles, onOrganize = { organize = true })
                     else -> {}
                 }
             }

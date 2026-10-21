@@ -37,6 +37,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.layout.layout
+import androidx.compose.runtime.saveable.rememberSaveable
 import com.fleetinggleam.android.core.Backup
 import com.fleetinggleam.android.core.BackupTarget
 import com.fleetinggleam.android.core.Core
@@ -110,6 +113,9 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
     var tasteMsg by remember { mutableStateOf<String?>(null) }
     val version = remember { runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "dev" }
     val list = rememberLazyListState()
+    /** 打开的分区（null = 根页的分级列表）。 */
+    var section by rememberSaveable { mutableStateOf<String?>(null) }
+    androidx.activity.compose.BackHandler(section != null) { section = null }
 
     LaunchedEffect(Unit) {
         Styles.refresh(); Nas.refresh(); Backup.refresh(); Models.refresh()
@@ -151,19 +157,29 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
     val sections = listOf("general" to t("settings.general"), "analysis" to t("settings.analysis"), "personal" to t("settings.personal"), "data" to t("settings.data"), "backup" to t("settings.backup"), "nas" to t("settings.nas"), "about" to t("settings.about"))
     // 设置页的按钮统一用小号（满屏的行，常规按钮显得大）
     androidx.compose.runtime.CompositionLocalProvider(com.fleetinggleam.android.ui.components.LocalSmallButtons provides true) {
-    LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), state = list, contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 130.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+    LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), state = list, contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 110.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item {
-            Column {
-                Text(t("settings.title"), style = Type.title.copy(color = c.ink), modifier = Modifier.padding(start = 4.dp, top = 8.dp))
-                Row(Modifier.padding(top = 14.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    sections.forEachIndexed { i, (_, label) ->
-                        Text(label, style = Type.rowDesc.copy(color = c.ink, fontWeight = FontWeight.Medium), modifier = Modifier.clip(CircleShape).background(c.surface).border(1.dp, c.line, CircleShape).clickable { scope.launch { list.animateScrollToItem(i + 1) } }.padding(horizontal = 12.dp, vertical = 6.dp))
-                    }
+            if (section == null) {
+                // 根页：大标题，下面一张分级列表（像 iOS 设置）
+                Text(t("settings.title"), style = Type.largeTitle.copy(color = c.ink), modifier = Modifier.padding(start = 4.dp, top = 10.dp, bottom = 12.dp))
+                val rows = listOf(
+                    Triple("general", Icons.SETTINGS, t("settings.general")) to (I18n.LANGS.firstOrNull { it.code == I18n.lang.value }?.label ?: t("nav.systemLang")),
+                    Triple("analysis", "M2 8h2.5l1.5-4 2 8 1.5-4H14", t("settings.analysis")) to (s.tier?.let { t(if (it == "ultra") "settings.qualityUltra" else if (it == "high") "settings.qualityHigh" else "settings.qualityFast") } ?: t("settings.auto")),
+                    Triple("personal", Icons.STYLE, t("settings.personal")) to (if (s.learn) t("android.settings.on") else t("android.settings.off")),
+                    Triple("data", "M2.5 4.5h11v3h-11zM2.5 8.5h11v3h-11zM4.5 6h.01M4.5 10h.01", t("android.settings.modelsStorage")) to "${packs.count { it.installed }} / ${packs.size}",
+                    Triple("backup", "M8 2.5v7M5 6.5l3 3 3-3M3 10.5v2a1 1 0 001 1h8a1 1 0 001-1v-2", t("settings.backup")) to (backup?.let { if (it.configured && it.enabled) t("android.settings.on") else t("android.settings.off") } ?: ""),
+                    Triple("nas", Icons.NAS, t("settings.nas")) to (if (shares.isEmpty()) "" else "${shares.size}"),
+                    Triple("about", Icons.INFO, t("settings.about")) to "v$version",
+                )
+                Column(Modifier.clip(RoundedCornerShape(14.dp)).background(c.panel)) {
+                    rows.forEachIndexed { i, (r, value) -> com.fleetinggleam.android.ui.components.NavRow(r.second, r.third, value, first = i == 0) { section = r.first } }
                 }
+            } else {
+                com.fleetinggleam.android.ui.components.NavBar(if (section == "data") t("android.settings.modelsStorage") else sections.firstOrNull { it.first == section }?.second ?: "", t("settings.title"), { section = null }, Modifier.layout { m, cs -> val pl = m.measure(cs.copy(maxWidth = cs.maxWidth + 32.dp.roundToPx(), minWidth = 0)); layout(cs.maxWidth, pl.height) { pl.placeRelative(-16.dp.roundToPx(), 0) } }.padding(bottom = 6.dp))
             }
         }
-        item {
-            SettingGroup(t("settings.general")) {
+        if (section == "general") item {
+            SettingGroup("") {
                 SettingRow(t("settings.language"), t("settings.languageDesc"), first = true) {
                     Select(I18n.pref(), listOf("system" to t("nav.systemLang")) + I18n.LANGS.map { it.code to it.label }, { I18n.setPref(it) })
                 }
@@ -172,8 +188,8 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                 })
             }
         }
-        item {
-            SettingGroup(t("settings.analysis")) {
+        if (section == "analysis") item {
+            SettingGroup("") {
                 val how = buildString {
                     append(t("android.settings.analysisHow")); append("\n\n"); append(t("settings.lastRun")); append("\n")
                     val i = info
@@ -189,8 +205,8 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                 }
             }
         }
-        item {
-            SettingGroup(t("settings.personal")) {
+        if (section == "personal") item {
+            SettingGroup("") {
                 SettingRow(t("settings.learn"), t("settings.learnShort"), info = "${t("settings.learnDesc")}\n\n$learnStatus", first = true, below = prefs?.let { p -> { LearnMeter(p) } }) {
                     FgSwitch(s.learn, { v -> Settings.set { it.copy(learn = v) } }, t("settings.learn"))
                 }
@@ -221,8 +237,8 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                 }
             }
         }
-        item {
-            SettingGroup(t("settings.data")) {
+        if (section == "data") item {
+            SettingGroup("") {
                 SettingRow(t("models.title"), t("models.titleDesc"), first = true)
                 packs.forEach { p ->
                     SettingRow(t("models.name.${p.id}"), "${if (p.installed) t("models.have") else t("models.none") + if (p.bytes > 0) " · " + fmtBytes(p.bytes) else ""} · ${t("models.desc.${p.id}")}") {
@@ -245,8 +261,8 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                 SettingRow(t("settings.privacy"), t("android.settings.privacyBody"))
             }
         }
-        item {
-            SettingGroup(t("settings.backup")) {
+        if (section == "backup") item {
+            SettingGroup("") {
                 SettingRow(t("settings.exportTaste"), tasteMsg ?: t("settings.exportTasteDesc"), info = t("settings.exportTasteInfo"), first = true, below = {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FgButton(t("settings.exportTasteBtn"), {
@@ -308,8 +324,8 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                 }
             }
         }
-        item {
-            SettingGroup(t("settings.nas")) {
+        if (section == "nas") item {
+            SettingGroup("") {
                 SettingRow(t("settings.nasTitle"), t("settings.nasDesc"), info = t("settings.nasInfo"), first = true) { FgButton(t("settings.nasAdd"), { nasForm = NasForm() }, small = true) }
                 shares.forEach { sh ->
                     SettingRow(sh.name, "${sh.host} · ${sh.user.ifEmpty { t("settings.nasGuest") }}" + (nasMsg?.takeIf { it.first == sh.id }?.let { " · ${it.second}" } ?: ""), below = {
@@ -326,8 +342,8 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                 }
             }
         }
-        item {
-            SettingGroup(t("settings.about")) {
+        if (section == "about") item {
+            SettingGroup("") {
                 SettingRow(t("brand.name"), if (I18n.lang.value == "en") null else t("brand.latin"), info = t("android.settings.modelsBody"), first = true) {
                     Text("v$version", style = Type.mono.copy(color = c.ash))
                 }

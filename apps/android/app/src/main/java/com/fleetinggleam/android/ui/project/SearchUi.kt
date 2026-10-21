@@ -77,21 +77,21 @@ fun SearchField(cull: CullState, modifier: Modifier = Modifier, placeholder: Str
     val fm = LocalFocusManager.current
     LaunchedEffect(Unit) { if (autoFocus) runCatching { focus.requestFocus() } }
     Row(
-        modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(12.dp)).background(c.surface).border(1.dp, c.line, RoundedCornerShape(12.dp)).padding(start = 10.dp, end = 6.dp),
+        modifier.fillMaxWidth().height(38.dp).clip(RoundedCornerShape(11.dp)).background(c.surface).padding(start = 8.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.size(26.dp), contentAlignment = Alignment.Center) {
-            FgIcon(Icons.SEARCH, size = 16.dp, color = c.ash)
+        Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+            FgIcon(Icons.SEARCH, size = 15.dp, color = c.ash)
             index.progress?.let { p ->
-                Canvas(Modifier.size(26.dp)) {
+                Canvas(Modifier.size(24.dp)) {
                     drawArc(c.ink, -90f, 360f * maxOf(0.04f, p), false, style = Stroke(1.6.dp.toPx(), cap = StrokeCap.Round))
                 }
             }
         }
         Box(Modifier.weight(1f).padding(horizontal = 8.dp)) {
-            if (cull.query.isEmpty()) Text(index.progress?.let { t("search.indexing", "pct" to Math.round(it * 100)) } ?: placeholder, style = Type.rowTitle.copy(color = c.ash), maxLines = 1)
+            if (cull.query.isEmpty()) Text(index.progress?.let { t("search.indexing", "pct" to Math.round(it * 100)) } ?: placeholder, style = Type.body.copy(color = c.ash), maxLines = 1)
             BasicTextField(
-                cull.query, { cull.query = it }, singleLine = true, textStyle = Type.rowTitle.copy(color = c.ink), cursorBrush = SolidColor(c.ink),
+                cull.query, { cull.query = it }, singleLine = true, textStyle = Type.body.copy(color = c.ink), cursorBrush = SolidColor(c.ink),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search), keyboardActions = KeyboardActions(onSearch = { fm.clearFocus() }),
                 modifier = Modifier.fillMaxWidth().focusRequester(focus).onFocusChanged { if (it.isFocused) scope.launch { ensureSearch { cull.searchRev++ } } },
             )

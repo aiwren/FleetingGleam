@@ -68,7 +68,7 @@ import com.fleetinggleam.android.ui.theme.Motion
 import com.fleetinggleam.android.ui.theme.Type
 
 /** 底部的两个页签（作者 2026-10-21：只有"照片"和"设置"；NAS、模型、备份都在设置里）。 */
-private enum class Tab(val label: String, val icon: String) { Cull("nav.cull", Icons.CULL), Settings("settings.title", Icons.SETTINGS) }
+private enum class Tab(val label: String, val icon: String) { Cull("android.tab.photos", Icons.CULL), Settings("settings.title", Icons.SETTINGS) }
 
 /**
  * 应用的外壳（桌面端 App.tsx 的手机版）：左侧栏换成浮在底部的液态玻璃标签栏；进了项目它让位给照片墙（像 iOS 推进详情页时那样）。
@@ -146,7 +146,7 @@ fun AppShell() {
 private fun FloatingTabBar(backdrop: com.kyant.backdrop.Backdrop, current: Tab, onSelect: (Tab) -> Unit) {
     val c = LocalFg.current
     val density = androidx.compose.ui.platform.LocalDensity.current
-    val itemW = 76.dp
+    val itemW = 74.dp
     val itemPx = with(density) { itemW.toPx() }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     // 胶囊的位置（像素）与"被拿起来"的程度
@@ -183,23 +183,25 @@ private fun FloatingTabBar(backdrop: com.kyant.backdrop.Backdrop, current: Tab, 
                 Modifier
                     .offset { androidx.compose.ui.unit.IntOffset(x.value.toInt(), 0) }
                     .graphicsLayer { val s = 1f + 0.12f * lift.value; scaleX = s; scaleY = s }
-                    .width(itemW).height(46.dp).clip(CircleShape)
-                    .background(c.ink.copy(alpha = 1f - 0.45f * lift.value)),
+                    .width(itemW).height(52.dp).clip(CircleShape)
+                    // iOS 26 的选中态：一块更亮 / 更深一点的玻璃，不是实心墨色
+                    .background((if (c.dark) Color.White.copy(alpha = 0.14f) else Color.Black.copy(alpha = 0.065f)).copy(alpha = (if (c.dark) 0.14f else 0.065f) * (1f + 0.6f * lift.value))),
             )
             Row(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
                 Tab.entries.forEachIndexed { i, tab ->
                     // 文字颜色跟着胶囊走：胶囊盖住多少，就反白多少
-                    val cover = (1f - kotlin.math.abs(x.value / itemPx - i)).coerceIn(0f, 1f) * (1f - 0.45f * lift.value)
-                    val fg = androidx.compose.ui.graphics.lerp(c.ink, c.onInk, cover)
+                    // 胶囊盖住多少，图标和字就从灰过渡到墨色多少
+                    val cover = (1f - kotlin.math.abs(x.value / itemPx - i)).coerceIn(0f, 1f)
+                    val fg = androidx.compose.ui.graphics.lerp(c.ash, c.ink, cover)
                     // iOS 的样子：图标在上、文字在下
                     androidx.compose.foundation.layout.Column(
-                        Modifier.width(itemW).height(46.dp).clip(CircleShape)
+                        Modifier.width(itemW).height(52.dp).clip(CircleShape)
                             .clickable(interactionSource = barSrc, indication = null) { onSelect(tab) },
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center,
                     ) {
-                        FgIcon(tab.icon, size = 19.dp, color = fg)
-                        Text(t(tab.label), style = Type.monoSmall.copy(fontFamily = com.fleetinggleam.android.ui.theme.Geist, color = fg, fontWeight = FontWeight.SemiBold, fontSize = androidx.compose.ui.unit.TextUnit(10f, androidx.compose.ui.unit.TextUnitType.Sp), lineHeight = androidx.compose.ui.unit.TextUnit(12f, androidx.compose.ui.unit.TextUnitType.Sp)), modifier = Modifier.padding(top = 1.dp), maxLines = 1)
+                        FgIcon(tab.icon, size = 22.dp, stroke = 1.5f, color = fg)
+                        Text(t(tab.label), style = Type.monoSmall.copy(fontFamily = com.fleetinggleam.android.ui.theme.Geist, color = fg, fontWeight = FontWeight.SemiBold, fontSize = androidx.compose.ui.unit.TextUnit(10f, androidx.compose.ui.unit.TextUnitType.Sp), lineHeight = androidx.compose.ui.unit.TextUnit(12f, androidx.compose.ui.unit.TextUnitType.Sp)), modifier = Modifier.padding(top = 2.dp), maxLines = 1)
                     }
                 }
             }

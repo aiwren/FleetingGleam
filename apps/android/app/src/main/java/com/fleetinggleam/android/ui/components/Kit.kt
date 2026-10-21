@@ -54,6 +54,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -114,7 +115,7 @@ object Icons {
     const val FILTERS = "M3.7 2.7h8.6a2 2 0 012 2v6.6a2 2 0 01-2 2H3.7a2 2 0 01-2-2V4.7a2 2 0 012-2zM6 3v10"
     const val INSPECTOR = "M3.7 2.7h8.6a2 2 0 012 2v6.6a2 2 0 01-2 2H3.7a2 2 0 01-2-2V4.7a2 2 0 012-2zM10 3v10"
     const val CLOSE = "M4 4l8 8M12 4l-8 8"
-    const val MORE = "M3.2 8h.01M8 8h.01M12.8 8h.01"
+    const val MORE = "M2.4 8a.8.8 0 1 0 1.6 0a.8.8 0 1 0-1.6 0M7.2 8a.8.8 0 1 0 1.6 0a.8.8 0 1 0-1.6 0M12 8a.8.8 0 1 0 1.6 0a.8.8 0 1 0-1.6 0"
     const val INFO = "M8 2a6 6 0 100 12A6 6 0 008 2zM6.4 6.2a1.7 1.7 0 013.2.6c0 1.1-1.6 1.4-1.6 2.4M8 11.4h.01"
     const val STYLE = "M8 2.2l1.6 3.4 3.7.4-2.8 2.5.8 3.6L8 10.3l-3.3 1.8.8-3.6L2.7 6l3.7-.4z"
 }
@@ -198,22 +199,22 @@ fun FgButton(
     val solid = primary || on
     val bg = if (solid) c.ink else c.surface
     val fg = if (solid) c.onInk else c.ink
-    val shape = RoundedCornerShape(if (small) 8.dp else 10.dp)
+    // 移动端：不描边、实心浅灰底；小号是 30dp 的胶囊（行内操作），常规 44dp、圆角 12（对话框底部、整行的主按钮）
+    val shape = if (small) CircleShape else RoundedCornerShape(12.dp)
+    val s by animateFloatAsState(if (pressed && enabled) 0.96f else 1f, Motion.tap(), label = "pressScale")
     Row(
         modifier
-            .offset(y = dy)
-            .graphicsLayer { alpha = if (enabled) 1f else 0.45f }
+            .graphicsLayer { alpha = if (enabled) 1f else 0.4f; scaleX = s; scaleY = s; translationY = dy.toPx() * 0f }
             .clip(shape)
             .background(bg)
-            .then(if (solid) Modifier else Modifier.border(1.dp, c.line, shape))
             .clickable(interactionSource = src, indication = null, enabled = enabled, role = Role.Button, onClick = onClick)
-            .heightIn(min = if (small) 34.dp else 42.dp)
-            .padding(horizontal = if (primary) 18.dp else if (small) 12.dp else 14.dp, vertical = if (small) 6.dp else 9.dp),
+            .heightIn(min = if (small) 30.dp else 44.dp)
+            .padding(horizontal = if (small) 12.dp else 18.dp, vertical = if (small) 5.dp else 10.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
     ) {
         leading?.invoke()
-        Text(text, style = (if (small) Type.small else Type.label).copy(color = fg, fontWeight = if (primary) FontWeight.SemiBold else FontWeight.Medium), maxLines = 1, overflow = Ellipsis)
+        Text(text, style = (if (small) Type.small else Type.label).copy(color = fg, fontWeight = if (solid) FontWeight.SemiBold else FontWeight.Medium), maxLines = 1, overflow = Ellipsis)
     }
 }
 
@@ -221,19 +222,17 @@ fun FgButton(
 @Composable
 fun IconBtn(d: String, label: String, onClick: () -> Unit, modifier: Modifier = Modifier, on: Boolean = false, enabled: Boolean = true, box: Float = 16f, plain: Boolean = false) {
     val c = LocalFg.current
-    val shape = RoundedCornerShape(10.dp)
     Box(
         modifier
             .size(40.dp)
-            .graphicsLayer { alpha = if (enabled) 1f else 0.45f }
-            .clip(shape)
+            .graphicsLayer { alpha = if (enabled) 1f else 0.4f }
+            .clip(CircleShape)
             .background(if (on) c.ink else if (plain) Color.Transparent else c.surface)
-            .then(if (on || plain) Modifier else Modifier.border(1.dp, c.line, shape))
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
     ) {
-        FgIcon(d, size = 18.dp, box = box, color = if (on) c.onInk else c.ink)
+        FgIcon(d, size = 20.dp, box = box, stroke = 1.5f, color = if (on) c.onInk else c.ink)
     }
 }
 
@@ -267,16 +266,15 @@ fun <T> Segmented(options: List<Pair<T, String>>, value: T, onChange: (T) -> Uni
             .then(if (block) Modifier.fillMaxWidth() else Modifier)
             .clip(RoundedCornerShape(10.dp))
             .background(c.surface)
-            .border(1.dp, c.line, RoundedCornerShape(10.dp))
             .padding(2.dp),
     ) {
         if (block) {
             val w = maxWidth / options.size
             val x by animateDpAsState(w * index, Motion.glide(), label = "seg")
-            Box(Modifier.offset(x = x).width(w).height(36.dp).clip(RoundedCornerShape(8.dp)).background(c.canvas).border(1.dp, c.line, RoundedCornerShape(8.dp)))
+            Box(Modifier.offset(x = x).width(w).height(30.dp).shadow(1.dp, RoundedCornerShape(8.dp)).clip(RoundedCornerShape(8.dp)).background(c.canvas))
             Row(Modifier.fillMaxWidth()) {
                 options.forEach { (v, label) ->
-                    Box(Modifier.weight(1f).height(36.dp).clip(RoundedCornerShape(8.dp)).clickable { onChange(v) }, contentAlignment = Alignment.Center) {
+                    Box(Modifier.weight(1f).height(30.dp).clip(RoundedCornerShape(8.dp)).clickable { onChange(v) }, contentAlignment = Alignment.Center) {
                         Text(label, style = Type.small.copy(color = if (v == value) c.ink else c.ash, fontWeight = FontWeight.Medium), maxLines = 1, overflow = Ellipsis)
                     }
                 }
@@ -286,8 +284,7 @@ fun <T> Segmented(options: List<Pair<T, String>>, value: T, onChange: (T) -> Uni
                 options.forEach { (v, label) ->
                     val sel = v == value
                     Box(
-                        Modifier.height(34.dp).clip(RoundedCornerShape(8.dp)).background(if (sel) c.canvas else Color.Transparent)
-                            .then(if (sel) Modifier.border(1.dp, c.line, RoundedCornerShape(8.dp)) else Modifier)
+                        Modifier.height(30.dp).then(if (sel) Modifier.shadow(1.dp, RoundedCornerShape(8.dp)) else Modifier).clip(RoundedCornerShape(8.dp)).background(if (sel) c.canvas else Color.Transparent)
                             .clickable { onChange(v) }.padding(horizontal = 12.dp),
                         contentAlignment = Alignment.Center,
                     ) {
@@ -304,13 +301,13 @@ fun <T> Segmented(options: List<Pair<T, String>>, value: T, onChange: (T) -> Uni
 fun Stepper(value: Int, onChange: (Int) -> Unit, label: String, min: Int = 1, max: Int = 1000, enabled: Boolean = true) {
     val c = LocalFg.current
     Row(
-        Modifier.graphicsLayer { alpha = if (enabled) 1f else 0.45f }.clip(RoundedCornerShape(10.dp)).background(c.surface).border(1.dp, c.line, RoundedCornerShape(10.dp))
+        Modifier.graphicsLayer { alpha = if (enabled) 1f else 0.4f }.clip(CircleShape).background(c.surface)
             .semantics { contentDescription = label },
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.size(36.dp).clickable(enabled = enabled && value > min) { onChange((value - 1).coerceIn(min, max)) }, contentAlignment = Alignment.Center) { FgIcon("M2.5 6h7", size = 14.dp, box = 12f, stroke = 1.6f) }
-        Text("$value", style = Type.mono.copy(color = c.ink), modifier = Modifier.widthIn(min = 36.dp).padding(horizontal = 4.dp))
-        Box(Modifier.size(36.dp).clickable(enabled = enabled && value < max) { onChange((value + 1).coerceIn(min, max)) }, contentAlignment = Alignment.Center) { FgIcon("M2.5 6h7M6 2.5v7", size = 14.dp, box = 12f, stroke = 1.6f) }
+        Box(Modifier.size(32.dp).clickable(enabled = enabled && value > min) { onChange((value - 1).coerceIn(min, max)) }, contentAlignment = Alignment.Center) { FgIcon("M2.5 6h7", size = 14.dp, box = 12f, stroke = 1.6f) }
+        Text("$value", style = Type.mono.copy(color = c.ink), textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.widthIn(min = 28.dp))
+        Box(Modifier.size(32.dp).clickable(enabled = enabled && value < max) { onChange((value + 1).coerceIn(min, max)) }, contentAlignment = Alignment.Center) { FgIcon("M2.5 6h7M6 2.5v7", size = 14.dp, box = 12f, stroke = 1.6f) }
     }
 }
 
@@ -320,8 +317,8 @@ fun Stepper(value: Int, onChange: (Int) -> Unit, label: String, min: Int = 1, ma
 fun SettingGroup(title: String, content: @Composable () -> Unit) {
     val c = LocalFg.current
     Column(Modifier.fillMaxWidth()) {
-        Text(title.uppercase(), style = Type.overline.copy(color = c.ash), modifier = Modifier.padding(start = 4.dp, bottom = 8.dp))
-        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.panel).border(1.dp, c.line, RoundedCornerShape(14.dp))) { content() }
+        if (title.isNotEmpty()) Text(title, style = Type.overline.copy(color = c.ash), modifier = Modifier.padding(start = 16.dp, bottom = 6.dp))
+        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.panel)) { content() }
     }
 }
 
@@ -330,8 +327,9 @@ fun SettingGroup(title: String, content: @Composable () -> Unit) {
 fun SettingRow(label: String, desc: String? = null, info: String? = null, first: Boolean = false, below: (@Composable () -> Unit)? = null, control: (@Composable RowScope.() -> Unit)? = null) {
     val c = LocalFg.current
     Column(Modifier.fillMaxWidth()) {
-        if (!first) Box(Modifier.fillMaxWidth().height(1.dp).background(c.line))
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        // 行与行之间一条从文字起头处开始的细线（iOS 分组列表的样子）
+        if (!first) Box(Modifier.padding(start = 16.dp).fillMaxWidth().height(0.5.dp).background(c.line))
+        Row(Modifier.fillMaxWidth().heightIn(min = 50.dp).padding(horizontal = 16.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(label, style = Type.rowTitle.copy(color = c.ink))
@@ -551,4 +549,56 @@ fun PageHead(title: String, subtitle: String? = null, modifier: Modifier = Modif
 }
 
 /** 内容区四边的留白（手机上 20dp，底部给悬浮标签栏让位）。 */
-val PagePadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 120.dp)
+val PagePadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 110.dp)
+
+// ---------------------------------------------------------------- 移动端的导航件（docs/android-ux.md）
+
+/** 分组列表里通往下一页的一行：左边一个小方块图标，标题，右边当前值和 ›。 */
+@Composable
+fun NavRow(icon: String, title: String, value: String? = null, first: Boolean = false, box: Float = 16f, onClick: () -> Unit) {
+    val c = LocalFg.current
+    Column(Modifier.fillMaxWidth()) {
+        if (!first) Box(Modifier.padding(start = 56.dp).fillMaxWidth().height(0.5.dp).background(c.line))
+        Row(Modifier.fillMaxWidth().clickable(onClick = onClick).heightIn(min = 52.dp).padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(28.dp).clip(RoundedCornerShape(8.dp)).background(c.ink), contentAlignment = Alignment.Center) { FgIcon(icon, size = 16.dp, box = box, stroke = 1.5f, color = c.onInk) }
+            Text(title, style = Type.rowTitle.copy(color = c.ink), modifier = Modifier.weight(1f).padding(start = 12.dp), maxLines = 1, overflow = Ellipsis)
+            if (value != null) Text(value, style = Type.small.copy(color = c.ash), maxLines = 1, overflow = Ellipsis, modifier = Modifier.padding(start = 8.dp).widthIn(max = 180.dp))
+            FgIcon(Icons.CHEVRON, size = 14.dp, stroke = 1.6f, color = c.ash, modifier = Modifier.padding(start = 6.dp))
+        }
+    }
+}
+
+/** 推进页的顶栏：左边 ‹ 和上一页的名字，中间这一页的标题，右边可放按钮。48dp 高。 */
+@Composable
+fun NavBar(title: String, back: String?, onBack: (() -> Unit)?, modifier: Modifier = Modifier, onTitle: (() -> Unit)? = null, trailing: (@Composable RowScope.() -> Unit)? = null) {
+    val c = LocalFg.current
+    Box(modifier.fillMaxWidth().height(48.dp).padding(horizontal = 6.dp)) {
+        if (onBack != null) Row(
+            Modifier.align(Alignment.CenterStart).clip(CircleShape).clickable(onClick = onBack).padding(start = 6.dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            FgIcon(Icons.BACK, size = 18.dp, box = 12f, stroke = 1.5f)
+            if (back != null) Text(back, style = Type.rowTitle.copy(color = c.ink), modifier = Modifier.padding(start = 2.dp), maxLines = 1)
+        }
+        Text(title, style = Type.navTitle.copy(color = c.ink), maxLines = 1, overflow = Ellipsis,
+            modifier = Modifier.align(Alignment.Center).padding(horizontal = 96.dp).clip(RoundedCornerShape(8.dp)).then(if (onTitle != null) Modifier.clickable(onClick = onTitle) else Modifier).padding(horizontal = 6.dp, vertical = 4.dp))
+        if (trailing != null) Row(Modifier.align(Alignment.CenterEnd), verticalAlignment = Alignment.CenterVertically, content = trailing)
+    }
+}
+
+/** ⋯ 按钮带一个下拉菜单；`items` 是 (文字, 是否可点, 动作)。`dot`：有新东西（比如偏好变了可以重新评估）。 */
+@Composable
+fun MenuButton(label: String, items: List<Triple<String, Boolean, () -> Unit>>, dot: Boolean = false) {
+    val c = LocalFg.current
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconBtn(Icons.MORE, label, { open = true }, plain = true)
+        if (dot) Box(Modifier.align(Alignment.TopEnd).padding(top = 9.dp, end = 9.dp).size(7.dp).clip(CircleShape).background(c.ink))
+        androidx.compose.material3.DropdownMenu(open, { open = false }, containerColor = c.canvas, shape = RoundedCornerShape(14.dp)) {
+            items.forEach { (text, enabled, action) ->
+                androidx.compose.material3.DropdownMenuItem({ Text(text, style = Type.rowTitle.copy(color = if (enabled) c.ink else c.ash)) }, onClick = { open = false; action() }, enabled = enabled,
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 0.dp), modifier = Modifier.heightIn(min = 40.dp))
+            }
+        }
+    }
+}

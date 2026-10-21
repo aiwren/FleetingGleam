@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -72,10 +73,10 @@ private sealed interface Dlg {
     data object Trash : Dlg
 }
 
-/** 整理（桌面端 Organize.tsx）：工具栏上一个按钮，打开后两件事——导出保留的、把淘汰的移走。 */
+/** 整理（桌面端 Organize.tsx）：从底部玻璃条的"整理"打开——导出保留的、把淘汰的移走。`open` 为真时显示菜单。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun OrganizeButton(project: Project) {
+fun OrganizeDialogs(project: Project, open: Boolean, onDismissMenu: () -> Unit) {
     val c = LocalFg.current
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -91,22 +92,23 @@ fun OrganizeButton(project: Project) {
     val rejectManual = rejectAll.filter { decisions[it.path]?.manual == true }
     val trashList = if (scopeAll) rejectAll else rejectManual
 
-    fun open(d: Dlg) { result = null; phase = "confirm"; progress = Progress(); dlg = d }
-    fun close() { val reload = phase == "done"; dlg = null; if (reload) Session.reload() }
+    fun open(d: Dlg) { result = null; phase = "confirm"; progress = Progress(); dlg = d; if (d != Dlg.Menu) onDismissMenu() }
+    fun close() { val reload = phase == "done"; dlg = null; onDismissMenu(); if (reload) Session.reload() }
 
-    FgButton(t("organize.button"), { open(Dlg.Menu) }, small = true, modifier = Modifier.padding(end = 4.dp))
+    androidx.compose.runtime.LaunchedEffect(open) { if (open) open(Dlg.Menu) }
 
     // ---- 两件事
     if (dlg == Dlg.Menu) {
         val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        ModalBottomSheet(onDismissRequest = { dlg = null }, sheetState = sheet, containerColor = c.canvas) {
-            Column(Modifier.navigationBarsPadding().padding(horizontal = 20.dp).padding(bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(t("organize.button"), style = Type.heading.copy(color = c.ink), modifier = Modifier.padding(bottom = 6.dp))
-                OrgItem(Icons.ALBUM, t("android.organize.toAlbum"), if (keep.isEmpty()) t("organize.none") else t("android.organize.toAlbumDesc", "count" to keep.size, "where" to "${t("brand.name")}/${project.name}"), keep.isNotEmpty()) {
+        ModalBottomSheet(onDismissRequest = { dlg = null; onDismissMenu() }, sheetState = sheet, containerColor = c.canvas) {
+            Column(Modifier.navigationBarsPadding().padding(horizontal = 16.dp).padding(bottom = 16.dp)) {
+                Text(t("organize.button"), style = Type.navTitle.copy(color = c.ink), modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                Column(Modifier.clip(RoundedCornerShape(14.dp)).background(c.panel)) {
+                OrgItem(Icons.ALBUM, t("android.organize.toAlbum"), if (keep.isEmpty()) t("organize.none") else t("android.organize.toAlbumDesc", "count" to keep.size, "where" to "${t("brand.name")}/${project.name}"), keep.isNotEmpty(), first = true) {
                     open(Dlg.Export(Dest.Path(Organize.albumDir(project.name).absolutePath, "${t("brand.name")}/${project.name}")))
                 }
                 OrgItem(Icons.FOLDER, t("android.organize.toFolder"), if (keep.isEmpty()) t("organize.none") else t("organize.exportDesc", "count" to keep.size), keep.isNotEmpty()) {
-                    dlg = null
+                    dlg = null; onDismissMenu()
                     scope.launch {
                         val uri = Pickers.openTree() ?: return@launch
                         val path = Media.treeToPath(uri)
@@ -115,6 +117,7 @@ fun OrganizeButton(project: Project) {
                 }
                 OrgItem(Icons.TRASH, t("organize.trashItem"), if (rejectAll.isEmpty()) t("organize.none") else t("organize.trashDesc", "count" to rejectAll.size), rejectAll.isNotEmpty(), box = 14f) {
                     scopeAll = rejectManual.isEmpty(); open(Dlg.Trash)
+                }
                 }
             }
         }
@@ -202,19 +205,21 @@ fun OrganizeButton(project: Project) {
 }
 
 @Composable
-private fun OrgItem(icon: String, title: String, desc: String, enabled: Boolean, box: Float = 16f, onClick: () -> Unit) {
+private fun OrgItem(icon: String, title: String, desc: String, enabled: Boolean, box: Float = 16f, first: Boolean = false, onClick: () -> Unit) {
     val c = LocalFg.current
-    Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.panel).border(1.dp, c.line, RoundedCornerShape(14.dp))
-            .graphicsLayer { alpha = if (enabled) 1f else 0.45f }.clickable(enabled = enabled, onClick = onClick).padding(16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        FgIcon(icon, size = 20.dp, box = box)
-        Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
-            Text(title, style = Type.rowTitle.copy(color = c.ink), maxLines = 1, overflow = Ellipsis)
-            Text(desc, style = Type.rowDesc.copy(color = c.ash), maxLines = 2, overflow = Ellipsis)
+    Column {
+        if (!first) Box(Modifier.padding(start = 56.dp).fillMaxWidth().height(0.5.dp).background(c.line))
+        Row(
+            Modifier.fillMaxWidth().graphicsLayer { alpha = if (enabled) 1f else 0.4f }.clickable(enabled = enabled, onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.size(28.dp).clip(RoundedCornerShape(8.dp)).background(c.ink), contentAlignment = Alignment.Center) { FgIcon(icon, size = 16.dp, box = box, stroke = 1.5f, color = c.onInk) }
+            Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                Text(title, style = Type.rowTitle.copy(color = c.ink), maxLines = 1, overflow = Ellipsis)
+                Text(desc, style = Type.rowDesc.copy(color = c.ash), maxLines = 2, overflow = Ellipsis)
+            }
+            FgIcon(Icons.CHEVRON, size = 14.dp, stroke = 1.6f, color = c.ash)
         }
-        FgIcon(Icons.CHEVRON, size = 16.dp, color = c.ash)
     }
 }
 

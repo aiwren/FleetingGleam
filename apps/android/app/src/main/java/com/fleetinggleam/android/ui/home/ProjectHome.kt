@@ -43,6 +43,10 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import coil3.compose.AsyncImage
 import com.fleetinggleam.android.core.Projects
 import com.fleetinggleam.android.core.Project
@@ -86,6 +90,7 @@ fun ProjectHome(onOpenStyles: () -> Unit) {
     var detailed by remember { mutableStateOf<Triple<String, String, String>?>(null) }
     LaunchedEffect(armed) { if (armed != null) { delay(3000); armed = null } }
     LaunchedEffect(view, bin.size) { if (view == "bin" && bin.isEmpty()) view = "projects" }
+    androidx.activity.compose.BackHandler(view == "bin") { view = "projects" }
 
     if (store.projects.isEmpty()) {
         EmptyState()
@@ -117,23 +122,34 @@ fun ProjectHome(onOpenStyles: () -> Unit) {
         modifier = Modifier.fillMaxSize().statusBarsPadding(),
         contentPadding = PagePadding,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
         item(span = { GridItemSpan(maxLineSpan) }) {
-            Column(Modifier.riseIn(0, scaleFrom = 1f).padding(top = 12.dp, bottom = 8.dp)) {
-                Text(t(if (view == "projects") "home.title" else "bin.tab"), style = Type.title.copy(color = c.ink))
-                Text(if (view == "projects") t("home.subtitle") else t("bin.hint", "days" to Projects.TRASH_DAYS), style = Type.small.copy(color = c.ash), modifier = Modifier.padding(top = 4.dp))
-                Row(Modifier.padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Segmented(
-                        listOf("projects" to t("home.title"), "bin" to t("bin.tab") + if (bin.isNotEmpty()) " · ${bin.size}" else ""),
-                        view, { if (it != "bin" || bin.isNotEmpty()) view = it },
-                    )
-                    Spacer(Modifier.weight(1f))
-                    if (view == "bin") FgButton(if (armed == "all") t("bin.emptyConfirm") else t("bin.emptyAll"), { if (armed == "all") { Projects.emptyTrash(); armed = null } else armed = "all" }, small = true, on = armed == "all")
-                    else FgButton(t("nav.styles"), onOpenStyles, small = true)
+            Column(Modifier.padding(bottom = 4.dp)) {
+                if (view == "projects") {
+                    // 根页：大标题"项目"，右上 ⋯（回收站、风格、手动新建）与 ＋（新建）
+                    Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(t("home.title"), style = Type.largeTitle.copy(color = c.ink), modifier = Modifier.weight(1f))
+                        com.fleetinggleam.android.ui.components.MenuButton(t("home.title"), listOf(
+                            Triple(t("home.newDetailed").trimEnd('→', ' '), true) { scope.launch { Actions.pickFolder()?.let { detailed = Triple(it, baseName(it), "") } } },
+                            Triple(t("nav.styles"), true, onOpenStyles),
+                            Triple(t("bin.tab") + if (bin.isNotEmpty()) " · ${bin.size}" else "", bin.isNotEmpty()) { view = "bin" },
+                        ))
+                        Box(
+                            Modifier.padding(start = 2.dp).size(36.dp).clip(CircleShape).background(c.ink).clickable { scope.launch { Actions.newProjectFromDialog() } }
+                                .semantics { contentDescription = t("home.new") },
+                            contentAlignment = Alignment.Center,
+                        ) { FgIcon(Icons.PLUS, size = 18.dp, box = 18f, stroke = 1.7f, color = c.onInk) }
+                    }
+                    if (index.available && allFolders.isNotEmpty())
+                        com.fleetinggleam.android.ui.project.SearchField(search, Modifier.padding(top = 12.dp), placeholder = t("search.globalPlaceholder"), autoFocus = false)
+                } else {
+                    // 回收站：推进页
+                    com.fleetinggleam.android.ui.components.NavBar(t("bin.tab"), t("home.title"), { view = "projects" }, Modifier.layout { m, cs -> val pl = m.measure(cs.copy(maxWidth = cs.maxWidth + 32.dp.roundToPx(), minWidth = 0)); layout(cs.maxWidth, pl.height) { pl.placeRelative(-16.dp.roundToPx(), 0) } }) {
+                        if (bin.isNotEmpty()) FgButton(if (armed == "all") t("bin.emptyConfirm") else t("bin.emptyAll"), { if (armed == "all") { Projects.emptyTrash(); armed = null } else armed = "all" }, small = true, on = armed == "all")
+                    }
+                    Text(t("bin.hint", "days" to Projects.TRASH_DAYS), style = Type.small.copy(color = c.ash), modifier = Modifier.padding(top = 4.dp, bottom = 4.dp))
                 }
-                if (view == "projects" && index.available && allFolders.isNotEmpty())
-                    com.fleetinggleam.android.ui.project.SearchField(search, Modifier.padding(top = 14.dp), placeholder = t("search.globalPlaceholder"), autoFocus = false)
                 if (status.saveError != null) Text(t("cull.saveFailed", "error" to status.saveError), style = Type.small.copy(color = c.ink), modifier = Modifier.padding(top = 12.dp))
                 if (status.loadError == "corrupt") Text(t("cull.loadCorrupt"), style = Type.small.copy(color = c.ink), modifier = Modifier.padding(top = 12.dp))
             }
@@ -174,14 +190,6 @@ fun ProjectHome(onOpenStyles: () -> Unit) {
                 onRename = { renaming = p },
                 onRestore = { Projects.restore(p.id) },
                 onPurge = { if (armed == p.id) { Projects.purge(p.id); armed = null } else armed = p.id },
-                modifier = Modifier.animateItem(),
-            )
-        }
-        if (view == "projects") item(key = "new") {
-            NewCard(
-                index = list.size,
-                onQuick = { scope.launch { Actions.newProjectFromDialog() } },
-                onDetailed = { scope.launch { Actions.pickFolder()?.let { detailed = Triple(it, baseName(it), "") } } },
                 modifier = Modifier.animateItem(),
             )
         }
@@ -245,36 +253,32 @@ fun FolderLine(path: String, modifier: Modifier = Modifier) {
 private fun ProjectCard(p: Project, inBin: Boolean, index: Int, armed: Boolean, onOpen: () -> Unit, onTrash: () -> Unit, onRename: () -> Unit, onRestore: () -> Unit, onPurge: () -> Unit, modifier: Modifier) {
     val c = LocalFg.current
     val src = rememberSource()
-    val shape = RoundedCornerShape(16.dp)
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    var menu by remember { mutableStateOf(false) }
+    // 像相册里的相簿：封面是主角，下面一行名字、一行张数；没有卡片底和描边。长按出菜单（重命名、移到回收站）
     Column(
         modifier
             .riseIn(index + 1)
-            .pressScale(src)
-            .clip(shape)
-            .background(c.panel)
-            .border(1.dp, c.line, shape)
-            .combinedClickable(interactionSource = src, indication = null, enabled = !inBin, onClick = onOpen, onLongClick = onRename)
-            .padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+            .pressScale(src, 0.97f)
+            .combinedClickable(interactionSource = src, indication = null, enabled = !inBin, onClick = onOpen, onLongClick = { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress); menu = true }),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Box {
             Cover(p.cover.orEmpty().take(4))
-            if (!inBin) {
-                Box(
-                    Modifier.align(Alignment.TopEnd).padding(6.dp).size(30.dp).clip(CircleShape).background(Color(0x8C101014)).clickable(onClick = onTrash),
-                    contentAlignment = Alignment.Center,
-                ) { FgIcon(Icons.TRASH, size = 15.dp, box = 14f, color = Color.White) }
+            androidx.compose.material3.DropdownMenu(menu, { menu = false }, containerColor = c.canvas, shape = RoundedCornerShape(14.dp)) {
+                androidx.compose.material3.DropdownMenuItem({ Text(t("bin.rename"), style = Type.rowTitle.copy(color = c.ink)) }, onClick = { menu = false; onRename() })
+                androidx.compose.material3.DropdownMenuItem({ Text(t("bin.toBin"), style = Type.rowTitle.copy(color = c.ink)) }, onClick = { menu = false; onTrash() })
             }
         }
-        Column(Modifier.padding(horizontal = 6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(p.name, style = Type.bodyStrong.copy(color = c.ink, fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = Ellipsis)
+        Column(Modifier.padding(horizontal = 2.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            Text(p.name, style = Type.rowTitle.copy(color = c.ink, fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = Ellipsis)
             Text(
                 if (inBin) t("bin.daysLeft", "n" to Projects.daysLeft(p), "count" to Projects.daysLeft(p))
-                else "${t("home.photos", "count" to p.count)} · ${t("home.folders", "count" to p.folders.size)}",
+                else t("home.photos", "count" to p.count) + if (p.folders.size > 1) " · ${t("home.folders", "count" to p.folders.size)}" else "",
                 style = Type.monoSmall.copy(color = c.ash), maxLines = 1,
             )
         }
-        if (inBin) Row(Modifier.padding(horizontal = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (inBin) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             FgButton(t("bin.restore"), onRestore, small = true)
             FgButton(if (armed) t("bin.purgeConfirm") else t("bin.purge"), onPurge, small = true, on = armed)
         }
@@ -285,11 +289,11 @@ private fun ProjectCard(p: Project, inBin: Boolean, index: Int, armed: Boolean, 
 @Composable
 private fun Cover(cover: List<String>) {
     val c = LocalFg.current
-    val shape = RoundedCornerShape(10.dp)
-    Box(Modifier.fillMaxWidth().aspectRatio(3f / 2f).clip(shape).background(c.surface), contentAlignment = Alignment.Center) {
+    val shape = RoundedCornerShape(14.dp)
+    Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(shape).background(c.surface), contentAlignment = Alignment.Center) {
         if (cover.isEmpty()) { Text(t("home.empty"), style = Type.small.copy(color = c.ash)); return@Box }
         val img: @Composable (String, Modifier) -> Unit = { path, m -> AsyncImage(File(path), null, m, contentScale = ContentScale.Crop) }
-        val gap = 3.dp
+        val gap = 2.dp
         when (cover.size) {
             1 -> img(cover[0], Modifier.fillMaxSize())
             2 -> Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(gap)) { cover.forEach { img(it, Modifier.weight(1f).fillMaxSize()) } }
@@ -301,27 +305,6 @@ private fun Cover(cover: List<String>) {
                 for (r in 0..1) Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gap)) { for (k in 0..1) img(cover[r * 2 + k], Modifier.weight(1f).fillMaxSize()) }
             }
         }
-    }
-}
-
-/** 新建项目：虚线框，一个大加号"新建项目"，下面一个"手动创建 →"（先选文件夹，再定名字和风格）。 */
-@Composable
-private fun NewCard(index: Int, onQuick: () -> Unit, onDetailed: () -> Unit, modifier: Modifier) {
-    val c = LocalFg.current
-    val src = rememberSource()
-    Column(
-        modifier.riseIn(index + 1).pressScale(src).fillMaxWidth().aspectRatio(3f / 2.55f)
-            .drawBehind {
-                drawRoundRect(c.line.copy(alpha = 0.6f), cornerRadius = CornerRadius(16.dp.toPx()), style = Stroke(1.5.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f))))
-            },
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Column(Modifier.clip(RoundedCornerShape(12.dp)).clickable(interactionSource = src, indication = null, onClick = onQuick).padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(Modifier.size(44.dp).clip(CircleShape).background(c.ink), contentAlignment = Alignment.Center) { FgIcon(Icons.PLUS, size = 20.dp, box = 18f, stroke = 1.6f, color = c.onInk) }
-            Text(t("home.new"), style = Type.bodyStrong.copy(color = c.ink), modifier = Modifier.padding(top = 10.dp))
-        }
-        Text(t("home.newDetailed"), style = Type.small.copy(color = c.ash), modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onDetailed).padding(horizontal = 10.dp, vertical = 6.dp))
     }
 }
 
