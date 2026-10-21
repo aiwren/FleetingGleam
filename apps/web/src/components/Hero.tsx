@@ -40,7 +40,7 @@ export default function Hero({ lang }: { lang: Lang }) {
               return (
                 <li key={s} className="flex items-center gap-3">
                   <span className={`grid size-7 shrink-0 place-items-center rounded-full border text-[12px] tabular-nums transition-all duration-500 ${on ? "border-transparent bg-gleam text-gleam-ink shadow-[0_0_14px_color-mix(in_srgb,var(--gleam)_55%,transparent)]" : "border-line text-ash"}`}>{i + 1}</span>
-                  <span className={`transition-colors duration-500 ${on ? "text-ink" : "text-ash/70"}`}>{s}</span>
+                  <span className={`transition-colors duration-500 ${on ? "text-ink" : "text-ash"}`}>{s}</span>
                 </li>
               );
             })}

@@ -2,10 +2,17 @@ import type { ReactNode } from "react";
 import { Outlet, createRootRoute, HeadContent, Scripts, useRouterState } from "@tanstack/react-router";
 import "@fontsource-variable/geist";
 import "../styles.css";
+import { SITE } from "../content";
 
 export const Route = createRootRoute({
   head: () => ({
-    meta: [{ charSet: "utf-8" }, { name: "viewport", content: "width=device-width, initial-scale=1" }, { name: "color-scheme", content: "dark light" }],
+    meta: [
+      { charSet: "utf-8" }, { name: "viewport", content: "width=device-width, initial-scale=1" }, { name: "color-scheme", content: "dark light" },
+      // the share card every page carries (title, description and url come from the page itself)
+      { property: "og:type", content: "website" }, { property: "og:site_name", content: "FleetingGleam" },
+      { property: "og:image", content: `${SITE}/og.png` }, { property: "og:image:width", content: "1200" }, { property: "og:image:height", content: "630" },
+      { name: "twitter:card", content: "summary_large_image" }, { name: "twitter:image", content: `${SITE}/og.png` },
+    ],
     links: [{ rel: "icon", type: "image/png", href: "/favicon.png" }],
   }),
   component: () => {

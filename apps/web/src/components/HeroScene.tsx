@@ -334,7 +334,7 @@ export default function HeroScene({ lang, children }: { lang: Lang; children: (p
                   <p className="mt-3 text-[12.5px] leading-snug text-ink/90">{c.scene.why}</p>
                 </motion.div>
 
-                <span className="absolute bottom-0 right-1 text-[11px] text-ash/70">{c.scene.sample}</span>
+                <span className="absolute bottom-0 right-1 text-[11px] text-ash">{c.scene.sample}</span>
               </div>
             </div>
           </div>

@@ -139,7 +139,7 @@ export class Motes {
     canvas.addEventListener("webglcontextlost", (e) => { e.preventDefault(); this.lost = true; this.stop(); });
   }
 
-  get ok() { return !!this.gl; }
+  get ok() { return !!this.gl && !this.lost; }
   get progress() { return this.P; }
 
   setPalette(p: Palette) { this.palette = p; }

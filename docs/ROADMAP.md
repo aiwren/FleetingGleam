@@ -39,8 +39,8 @@ Android 没有 Apple Vision，两端要一样就得两端用同样的东西：
 ### A5. 公开前的收尾（2–3 天，部分需要作者在 GitHub 上操作）
 
 - [ ] 发布 v0.1.0（现在是草稿）；上传 `models-v1`（极致档与 MediaPipe 眼睛包现在必然下载失败）；新手指南在上传前标注"暂不可用"。
-- [ ] 落地页：把"即将发布"换成下载按钮 + 系统要求；页头页脚加 GitHub 链接；隐私政策与协议改为如实说明模型来自 Hugging Face 与 GitHub Releases（不是"我们的模型服务器"）；填联系邮箱或指向 Issues；加 OG / canonical / hreflang / robots.txt；加 404 页；WebGL 上下文丢失后首屏卡死的修复；未激活文字对比度；减动效覆盖。
-- [ ] CHANGELOG 补上 v0.1.0 之后的三项修复；CI 加 `timeout-minutes`、三处版本号一致性校验、措辞统一为"ad-hoc 签名、未公证"、关掉 updater 产物；文档错字与过期措辞；bug 模板的 Intel 选项标注不支持；落地页依赖不再用 `latest`。
+- [x] 落地页（2026-10-21）：下载按钮 + 系统要求 + GitHub 入口都已写好，由 `apps/web/src/content.ts` 的 `release.available` 开关控制——**仓库公开并发布 Release 后把它改成 true 再部署**；隐私政策与协议如实说明模型来自 Hugging Face 与 GitHub Releases；OG 分享卡片 / canonical / hreflang / robots.txt / sitemap；404 页；WebGL 上下文丢失后走 DOM 路径；未激活文字对比度；减动效覆盖结尾区块；语言菜单角色。联系邮箱仍空（`legal.ts` 的 `CONTACT_EMAIL`），公开前填。
+- [x] CHANGELOG 补上修复；CI 与发布工作流加 `timeout-minutes`、三处版本号一致性校验、措辞统一为"ad-hoc 签名、未公证"、不再生成 updater 产物；文档错字与过期措辞；bug 模板的 Intel 选项标注不支持；落地页依赖固定版本。
 - [ ] 公开后：开启私下报告漏洞、Secret scanning、分支保护。
 
 ### A6. 前端（第二轮审查的前端部分，约 1 周）

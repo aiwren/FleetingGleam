@@ -1,5 +1,18 @@
 export type Lang = "en" | "zh";
 
+/** Where the site lives (absolute links in the share card, canonical and sitemap); change when a domain is bound. */
+export const SITE = "https://fleetinggleam.fleetinggleam-web.workers.dev";
+
+/**
+ * The release state the page shows. `available` is flipped to true once the repository is public and a Release is published:
+ * until then the download section says "coming soon" and no link points at GitHub, where a visitor would only find a 404.
+ */
+export const release = {
+  available: false,
+  repo: "https://github.com/lcopilot/FleetingGleam",
+  download: "https://github.com/lcopilot/FleetingGleam/releases/latest",
+};
+
 /** Everything the page says. Nothing here claims more than the app does today. */
 export const copy = {
   en: {
@@ -40,7 +53,12 @@ export const copy = {
       ],
     },
     honest: { title: "A score is a hint, not a verdict.", body: "It can tell you which frame is technically stronger. A good photograph is sometimes imperfect, like a sleeping child with closed eyes, so the decision stays yours." },
-    final: { title: "Be first to try it.", body: "The macOS version is being polished and the download will appear here. Windows follows.", label: "macOS version coming soon" },
+    final: {
+      title: "Be first to try it.", body: "The macOS version is being polished and the download will appear here. Windows follows.", label: "macOS version coming soon",
+      readyTitle: "Free, open source, yours to keep.", readyBody: "Download the macOS app, or read the source on GitHub. Your photos never leave your computer.",
+      download: "Download for macOS", source: "Source on GitHub",
+      req: "Needs a Mac with Apple Silicon (M-series) and macOS 15 or later. The build is not notarised yet: before the first launch, run `xattr -cr /Applications/FleetingGleam.app` once in Terminal.",
+    },
     footer: { rights: "© 2026 FleetingGleam contributors. Free software under the AGPL-3.0-or-later licence.", note: "Sample photos in screenshots are from Lorem Picsum, under the Unsplash license." },
   },
   zh: {
@@ -80,7 +98,12 @@ export const copy = {
       ],
     },
     honest: { title: "评分是参考，不是裁判。", body: "它能告诉你哪一张技术上更好。好照片有时并不完美，比如闭着眼睛睡着的孩子，所以决定始终在你手里。" },
-    final: { title: "第一时间试用。", body: "macOS 版正在打磨，发布后下载链接会放在这里，Windows 版随后推出。", label: "macOS 版即将发布" },
+    final: {
+      title: "第一时间试用。", body: "macOS 版正在打磨，发布后下载链接会放在这里，Windows 版随后推出。", label: "macOS 版即将发布",
+      readyTitle: "免费、开源、随你用。", readyBody: "下载 macOS 版，或者去 GitHub 看源码。照片始终不离开你的电脑。",
+      download: "下载 macOS 版", source: "GitHub 源码",
+      req: "需要 Apple Silicon（M 系列芯片）的 Mac 和 macOS 15 及以上。这个版本还没有经过苹果公证：第一次打开前，在「终端」里执行一次 `xattr -cr /Applications/FleetingGleam.app`。",
+    },
     footer: { rights: "© 2026 惊鸿 FleetingGleam 贡献者。以 AGPL-3.0-or-later 许可证开源。", note: "截图中的示例照片来自 Lorem Picsum，遵循 Unsplash 授权。" },
   },
 } as const;

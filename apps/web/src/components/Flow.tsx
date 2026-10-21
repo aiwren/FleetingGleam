@@ -16,7 +16,7 @@ function Step({ n, title, body, on, onEnter, onPick }: { n: number; title: strin
     <li ref={ref}>
       <button type="button" onClick={onPick} aria-current={on} className="flex w-full gap-4 py-4 text-left">
         <span className={`mt-0.5 grid size-8 shrink-0 place-items-center rounded-full border text-[13px] tabular-nums transition-colors duration-500 ${on ? "border-transparent bg-gleam text-gleam-ink" : "border-line text-ash"}`}>{n}</span>
-        <span className={`transition-opacity duration-500 ${on ? "opacity-100" : "opacity-45"}`}>
+        <span className={`transition-colors duration-500 ${on ? "text-ink" : "text-ash"}`}>
           <span className="block text-xl font-semibold tracking-tight">{title}</span>
           <span className="mt-1.5 block max-w-md text-ash">{body}</span>
         </span>

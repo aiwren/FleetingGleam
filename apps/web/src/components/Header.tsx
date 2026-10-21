@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { AnimatePresence, motion } from "motion/react";
-import { List, X } from "@phosphor-icons/react";
-import { copy, type Lang } from "../content";
+import { GithubLogo, List, X } from "@phosphor-icons/react";
+import { copy, release, type Lang } from "../content";
 import LangMenu from "./LangMenu";
 import ThemeToggle from "./ThemeToggle";
 
@@ -31,6 +31,9 @@ export default function Header({ lang, page }: { lang: Lang; page?: "privacy" | 
           {c.nav.map(([label, h]) => (
             <a key={h} href={href(h)} className="hidden rounded-full px-3.5 py-1.5 text-ash transition-colors hover:bg-surface hover:text-ink md:inline-block">{label}</a>
           ))}
+          {release.available && (
+            <a href={release.repo} aria-label="GitHub" className="hidden size-9 place-items-center rounded-full text-ash transition-colors hover:bg-surface hover:text-ink md:grid"><GithubLogo size={18} /></a>
+          )}
           <LangMenu lang={lang} page={page} />
           <ThemeToggle label={c.theme} />
           <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-label={c.menu}

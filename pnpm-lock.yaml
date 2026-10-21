@@ -75,10 +75,10 @@ importers:
         specifier: ^4.3.3
         version: 4.3.3(vite@8.3.0(@types/node@22.20.4)(jiti@2.7.0))
       '@tanstack/react-router':
-        specifier: latest
+        specifier: ^1.170.41
         version: 1.170.41(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@tanstack/react-start':
-        specifier: latest
+        specifier: ^1.168.60
         version: 1.168.60(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(rolldown@1.2.9)(vite@8.3.0(@types/node@22.20.4)(jiti@2.7.0))
       motion:
         specifier: ^13.4.0

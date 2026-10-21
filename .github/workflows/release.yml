@@ -20,17 +20,23 @@ jobs:
         include:
           - { runner: macos-15, target: aarch64-apple-darwin, label: Apple Silicon }
     runs-on: ${{ matrix.runner }}
+    # macOS runner 按 10 倍计费；一次正常构建约 15 分钟，挂死的任务不该烧满默认的 6 小时
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
-      - name: 校验标签与应用版本一致
+      - name: 校验标签与三处版本号一致
         run: |
           tag="${GITHUB_REF_NAME#v}"
           app=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
-          if [ "$tag" != "$app" ]; then
-            echo "::error::标签 $GITHUB_REF_NAME 与 tauri.conf.json 的版本 $app 不一致，请先修改版本号再打标签。"
-            exit 1
-          fi
+          pkg=$(node -p "require('./apps/desktop/package.json').version")
+          crate=$(sed -n 's/^version = "\(.*\)"/\1/p' apps/desktop/src-tauri/Cargo.toml | head -1)
+          for v in "$app" "$pkg" "$crate"; do
+            if [ "$tag" != "$v" ]; then
+              echo "::error::标签 $GITHUB_REF_NAME 与版本号不一致：tauri.conf.json=$app package.json=$pkg Cargo.toml=$crate。请先把三处改成同一个版本再打标签。"
+              exit 1
+            fi
+          done
 
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
@@ -72,7 +78,7 @@ jobs:
               printf '%s=%s\n' "$name" "$value" >> "$GITHUB_ENV"
             fi
           done
-          [ -z "$APPLE_CERTIFICATE" ] && echo "::warning::未设置 Apple 签名证书：这个安装包没有签名，首次打开会被 Gatekeeper 拦截。"
+          [ -z "$APPLE_CERTIFICATE" ] && echo "::warning::未设置 Apple 签名证书：这个安装包是 ad-hoc 签名、未经公证，首次打开前用户需要执行 xattr -cr（见 Release 说明）。"
           exit 0
 
       - uses: tauri-apps/tauri-action@v0
@@ -102,4 +108,6 @@ jobs:
             更新内容 / What's new: [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)
           # 先作为草稿，维护者检查安装包后再手动发布
           releaseDraft: true
+          # 没有自动更新功能：不生成 .app.tar.gz 与 latest.json，Release 里只有 .dmg，用户不会下错
+          includeUpdaterJson: false
           prerelease: ${{ contains(github.ref_name, '-') }}

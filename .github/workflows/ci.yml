@@ -19,6 +19,7 @@ jobs:
   web:
     name: 落地页（类型检查 + 构建）
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       # pnpm 版本取自根目录 package.json 的 packageManager 字段
@@ -35,6 +36,7 @@ jobs:
     name: 桌面端（前端构建 + Rust 检查，macOS）
     # 桌面端的原生部分用 swiftc 编译，只能在 macOS 上构建
     runs-on: macos-15
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

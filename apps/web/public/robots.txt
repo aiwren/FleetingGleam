@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://fleetinggleam.fleetinggleam-web.workers.dev/sitemap.xml

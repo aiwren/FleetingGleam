@@ -9,7 +9,7 @@ export default defineConfig({
   plugins: [
     tailwindcss(),
     // 页面全是静态内容，构建时直接生成 HTML，可以放在任何静态托管上（Cloudflare 等），不需要服务端运行时
-    tanstackStart({ prerender: { enabled: true, failOnError: true } }),
+    tanstackStart({ prerender: { enabled: true, failOnError: true } }),  // 每个静态路由都会预渲染，/404 也在内
     viteReact(),
   ],
 });

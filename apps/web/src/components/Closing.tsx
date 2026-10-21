@@ -1,12 +1,14 @@
-import { motion } from "motion/react";
-import { copy, type Lang } from "../content";
+import { motion, useReducedMotion } from "motion/react";
+import { copy, release, type Lang } from "../content";
 import Footer from "./Footer";
 
 const EASE = [0.16, 1, 0.3, 1] as const;
-const rise = { initial: { opacity: 0, y: 24 }, whileInView: { opacity: 1, y: 0 }, viewport: { once: true, amount: 0.4 }, transition: { duration: 0.8, ease: EASE } } as const;
 
 export default function Closing({ lang }: { lang: Lang }) {
   const c = copy[lang];
+  const reduce = useReducedMotion();
+  // the same rise as everywhere else; none at all for a reader who asked for less motion
+  const rise = reduce ? {} : ({ initial: { opacity: 0, y: 24 }, whileInView: { opacity: 1, y: 0 }, viewport: { once: true, amount: 0.4 }, transition: { duration: 0.8, ease: EASE } } as const);
   return (
     <>
       {/* A pause before the close: one statement, set large, with a hairline to mark it off rather than an empty column. */}
@@ -23,9 +25,19 @@ export default function Closing({ lang }: { lang: Lang }) {
           {/* A scrim keeps the words readable on any part of the photograph. */}
           <div aria-hidden className="absolute inset-0 -z-10 bg-gradient-to-r from-black/75 via-black/45 to-black/10" />
           <div className="px-7 py-20 text-white md:px-16 md:py-32">
-            <h2 className="max-w-xl text-[clamp(1.9rem,4.4vw,3.25rem)] font-semibold leading-[1.1] tracking-[-0.035em] text-balance">{c.final.title}</h2>
-            <p className="mt-5 max-w-lg text-lg text-white/80">{c.final.body}</p>
-            <span className="mt-9 inline-flex min-h-12 items-center whitespace-nowrap py-3 rounded-full border border-white/30 bg-black/35 px-6 font-medium backdrop-blur-md">{c.final.label}</span>
+            <h2 className="max-w-xl text-[clamp(1.9rem,4.4vw,3.25rem)] font-semibold leading-[1.1] tracking-[-0.035em] text-balance">{release.available ? c.final.readyTitle : c.final.title}</h2>
+            <p className="mt-5 max-w-lg text-lg text-white/80">{release.available ? c.final.readyBody : c.final.body}</p>
+            {release.available ? (
+              <>
+                <div className="mt-9 flex flex-wrap items-center gap-3">
+                  <a href={release.download} className="inline-flex min-h-12 items-center whitespace-nowrap rounded-full bg-white px-6 py-3 font-medium text-black transition-transform duration-150 active:translate-y-px">{c.final.download}</a>
+                  <a href={release.repo} className="inline-flex min-h-12 items-center whitespace-nowrap rounded-full border border-white/30 bg-black/35 px-6 py-3 font-medium backdrop-blur-md">{c.final.source}</a>
+                </div>
+                <p className="mt-5 max-w-lg text-sm text-white/70">{c.final.req}</p>
+              </>
+            ) : (
+              <span className="mt-9 inline-flex min-h-12 items-center whitespace-nowrap py-3 rounded-full border border-white/30 bg-black/35 px-6 font-medium backdrop-blur-md">{c.final.label}</span>
+            )}
           </div>
         </motion.div>
       </section>

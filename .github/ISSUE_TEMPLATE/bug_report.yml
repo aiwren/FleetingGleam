@@ -38,9 +38,9 @@ body:
       label: 系统与芯片
       options:
         - macOS 15 · Apple Silicon（M 系列）
-        - macOS 15 · Intel
+        - macOS 15 · Intel（暂不支持）
         - macOS 26 或更新 · Apple Silicon
-        - macOS 26 或更新 · Intel
+        - macOS 26 或更新 · Intel（暂不支持）
         - 其他
     validations:
       required: true

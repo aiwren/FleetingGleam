@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as R404RouteImport } from './routes/404'
 import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as TermsRouteImport } from './routes/terms'
 import { Route as ZhIndexRouteImport } from './routes/zh/index'
@@ -19,6 +20,11 @@ import { Route as ZhTermsRouteImport } from './routes/zh/terms'
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const R404Route = R404RouteImport.update({
+  id: '/404',
+  path: '/404',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PrivacyRoute = PrivacyRouteImport.update({
@@ -49,6 +55,7 @@ const ZhTermsRoute = ZhTermsRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/404': typeof R404Route
   '/privacy': typeof PrivacyRoute
   '/terms': typeof TermsRoute
   '/zh/privacy': typeof ZhPrivacyRoute
@@ -57,6 +64,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/404': typeof R404Route
   '/privacy': typeof PrivacyRoute
   '/terms': typeof TermsRoute
   '/zh/privacy': typeof ZhPrivacyRoute
@@ -66,6 +74,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/404': typeof R404Route
   '/privacy': typeof PrivacyRoute
   '/terms': typeof TermsRoute
   '/zh/privacy': typeof ZhPrivacyRoute
@@ -74,12 +83,14 @@ export interface FileRoutesById {
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/privacy' | '/terms' | '/zh/privacy' | '/zh/terms' | '/zh/'
+  fullPaths:
+    '/' | '/404' | '/privacy' | '/terms' | '/zh/privacy' | '/zh/terms' | '/zh/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/privacy' | '/terms' | '/zh/privacy' | '/zh/terms' | '/zh'
+  to: '/' | '/404' | '/privacy' | '/terms' | '/zh/privacy' | '/zh/terms' | '/zh'
   id:
     | '__root__'
     | '/'
+    | '/404'
     | '/privacy'
     | '/terms'
     | '/zh/privacy'
@@ -89,6 +100,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  R404Route: typeof R404Route
   PrivacyRoute: typeof PrivacyRoute
   TermsRoute: typeof TermsRoute
   ZhPrivacyRoute: typeof ZhPrivacyRoute
@@ -103,6 +115,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/404': {
+      id: '/404'
+      path: '/404'
+      fullPath: '/404'
+      preLoaderRoute: typeof R404RouteImport
       parentRoute: typeof rootRouteImport
     }
     '/privacy': {
@@ -145,6 +164,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  R404Route: R404Route,
   PrivacyRoute: PrivacyRoute,
   TermsRoute: TermsRoute,
   ZhPrivacyRoute: ZhPrivacyRoute,
