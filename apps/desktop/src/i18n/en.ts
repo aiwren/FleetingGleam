@@ -208,7 +208,7 @@ const en = {
     nasFailed: "Could not connect: {{error}}", nasGuest: "guest", nasConnected: "Connected", nasOffline: "Not connected", nasDisabled: "Turned off", nasEnabled: "Enabled", nasRemove: "Remove", nasNewProject: "New project from here…",
     nasRemoveTitle: "Remove \u201c{{name}}\u201d?", nasRemoveBody: "This forgets the NAS and its password on this computer and deletes the local mirror copies; the photos on the NAS are untouched. Projects made from it will not open until it is added again.", nasRemoveConfirm: "Remove",
     nasProjectMade: "Project \u201c{{name}}\u201d created; open it under Cull.",
-    exportTaste: "Manual backup", exportTasteDesc: "Save exactly what the automatic backup uploads as one file, to import on another computer or in the phone app; a file from someone else can be imported too.",
+    exportTaste: "Manual backup", exportTasteDesc: "Save it as one file to import on another computer or in the phone app; a file from someone else can be imported too.",
     exportTasteInfo: "The file holds the app settings and what each style has learned: every labelled photo only as its embedding and your decision, reference photos only as embeddings. No photos, file names or paths. Projects and the decisions on their photos are recorded by path and are not exported.",
     exportTasteBtn: "Export…", importTasteBtn: "Import…",
     exportTasteDone: "Exported {{styles}} styles, {{examples}} labels and {{refs}} reference photos.", exportTasteSkipped: "{{n}} labelled photos were not in the cache and were skipped.",

@@ -206,7 +206,7 @@ const zh = {
     nasFailed: "没连上：{{error}}", nasGuest: "访客", nasConnected: "已连接", nasOffline: "未连接", nasDisabled: "已停用", nasEnabled: "启用", nasRemove: "移除", nasNewProject: "从这里新建项目…",
     nasRemoveTitle: "移除「{{name}}」？", nasRemoveBody: "会从本机忘掉这台 NAS 和它的密码，并删除本机的镜像副本；NAS 上的照片不受影响。用它建的项目会打不开，重新添加后可以恢复。", nasRemoveConfirm: "移除",
     nasProjectMade: "已创建项目「{{name}}」，到「选片」里打开。",
-    exportTaste: "手动备份", exportTasteDesc: "把和自动备份完全相同的内容存成一个文件，换电脑或在手机端导入；也可以把别人的文件导进来。",
+    exportTaste: "手动备份", exportTasteDesc: "存成一个文件，换电脑或在手机端导入；也可以把别人的文件导进来。",
     exportTasteInfo: "文件里是应用设置和每个风格学到的内容：每张标注过的照片只带它的向量和你的决定，参考照片只带向量，不含照片、文件名和路径。项目和每张照片的取舍按路径记录，不会导出。",
     exportTasteBtn: "导出…", importTasteBtn: "导入…",
     exportTasteDone: "已导出 {{styles}} 个风格、{{examples}} 条标注、{{refs}} 张参考照片。", exportTasteSkipped: "有 {{n}} 条标注的照片没在缓存里，跳过了。",
