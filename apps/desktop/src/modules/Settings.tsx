@@ -393,6 +393,12 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
             </Group>
 
             <Group id="sec-backup" title={t("settings.backup")} index={4}>
+              <Row label={t("settings.exportTaste")} desc={tasteMsg ?? t("settings.exportTasteDesc")} info={<p className="ash">{t("settings.exportTasteInfo")}</p>}>
+                <span className="sctl-pair">
+                  <button className="btn" disabled={tasteBusy} onClick={exportTaste}>{t("settings.exportTasteBtn")}</button>
+                  <button className="btn" disabled={tasteBusy} onClick={importTaste}>{t("settings.importTasteBtn")}</button>
+                </span>
+              </Row>
               <Row label={t("settings.backupTitle")} desc={bkMsg ?? bkSummary()} info={<p className="ash">{t("settings.backupInfo")}</p>}>
                 <span className="sctl-pair">
                   {backup?.configured && <button className="btn" disabled={bkBusy !== null} onClick={bkNow}>{bkBusy === "now" ? t("settings.backupRunning") : t("settings.backupNow")}</button>}
@@ -402,12 +408,6 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
               </Row>
               <Row label={t("settings.backupKeep")} desc={t("settings.backupKeepHint")}>
                 <input className="title-input keep" type="number" min={1} max={1000} defaultValue={backup?.keep ?? 30} key={backup?.keep ?? 30} disabled={!backup?.configured} aria-label={t("settings.backupKeep")} onBlur={(e) => bkKeep(Number(e.target.value))} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
-              </Row>
-              <Row label={t("settings.exportTaste")} desc={tasteMsg ?? t("settings.exportTasteDesc")} info={<p className="ash">{t("settings.exportTasteInfo")}</p>}>
-                <span className="sctl-pair">
-                  <button className="btn" disabled={tasteBusy} onClick={exportTaste}>{t("settings.exportTasteBtn")}</button>
-                  <button className="btn" disabled={tasteBusy} onClick={importTaste}>{t("settings.importTasteBtn")}</button>
-                </span>
               </Row>
               <Row label={t("settings.backupTargets")} desc={t("settings.backupTargetsDesc")}>
                 <button className="btn" disabled={bkBusy !== null} onClick={bkAdd}>{t("settings.backupAddTarget")}</button>
