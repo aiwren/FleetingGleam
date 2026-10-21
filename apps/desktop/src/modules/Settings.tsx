@@ -170,7 +170,7 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
   const bkKeep = async (n: number) => { if (!backup || !(n >= 1)) return; try { await setBackupOptions({ keep: Math.round(n) }); } catch (e) { setBkMsg(String(e)); } };
   const bkNow = async () => {
     setBkBusy("now"); setBkMsg(null);
-    try { await backupNow(true); setBkMsg(t("settings.backupDone")); } catch (e) { setBkMsg(t("settings.backupFailed", { error: String(e) })); await refreshBackup(); }
+    try { await backupNow(); setBkMsg(t("settings.backupDone")); } catch (e) { setBkMsg(t("settings.backupFailed", { error: String(e) })); await refreshBackup(); }
     setBkBusy(null);
   };
   const bkRestoreFrom = async (tg: BackupTarget) => {

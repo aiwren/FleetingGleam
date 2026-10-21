@@ -10,10 +10,9 @@ use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-/// 备份对象在桶里的键：固定一份"最新"；自动备份按天在 `auto/` 下轮转（只留最近 `keep` 份），手动备份在 `manual/` 下永久保留。
+/// 备份对象在桶里的键：固定一份"最新"，另外按天在 `auto/` 下轮转一份（只留最近 `keep` 份）；"立即备份"走的也是这一套。
 pub const KEY_LATEST: &str = "fleetinggleam/taste.json";
 pub const KEY_AUTO: &str = "fleetinggleam/auto";
-pub const KEY_MANUAL: &str = "fleetinggleam/manual";
 /// 自动备份默认留这么多份。
 pub const DEFAULT_KEEP: usize = 30;
 
@@ -188,11 +187,7 @@ pub fn today() -> String {
     format!("{}-{}-{}", &d[..4], &d[4..6], &d[6..])
 }
 
-/// 现在的时刻，给手动备份起名：`2026-10-21T15-30-00Z`。
-pub fn now_stamp() -> String {
-    let (_, t) = utc_now();
-    format!("{}-{}-{}T{}-{}-{}Z", &t[..4], &t[4..6], &t[6..8], &t[9..11], &t[11..13], &t[13..15])
-}
+
 
 /// 路径里每一段按 RFC 3986 编码（`/` 保留），和 S3 对规范化 URI 的要求一致。
 fn encode_path(path: &str) -> String {
@@ -276,7 +271,7 @@ fn unescape_xml(s: &str) -> String {
     s.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'")
 }
 
-/// 自动备份只留最近 `keep` 份：键里带日期，字典序就是时间序，删掉靠前的。手动备份不在这个前缀下，不会被动。返回删掉的个数。
+/// 按天的那份只留最近 `keep` 份：键里带日期，字典序就是时间序，删掉靠前的。返回删掉的个数。
 pub fn prune_auto(cfg: &Target, secret: &str, keep: usize) -> Result<usize, String> {
     let keep = if keep == 0 { DEFAULT_KEEP } else { keep };
     let keys = list(cfg, secret, &format!("{KEY_AUTO}/"))?;
@@ -350,7 +345,6 @@ mod tests {
         assert_eq!(t.len(), 16);
         assert!(t.starts_with(&d) && t.ends_with('Z'));
         assert_eq!(today().len(), 10);
-        assert_eq!(now_stamp().len(), 20);
     }
 
     /// 对着真的桶：`FG_R2_ACCOUNT=… FG_R2_BUCKET=… FG_R2_KEY=… FG_R2_SECRET=… cargo test --lib r2::tests::a_real_bucket -- --ignored --nocapture`

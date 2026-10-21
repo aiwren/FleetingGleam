@@ -24,8 +24,8 @@ export async function saveTarget(p: { id?: string; name: string; kind: "r2"; acc
 export async function removeTarget(id: string) { set(await invoke<BackupStatus>("backup_remove_target", { id })); }
 /** 自动备份的开关和保留份数。 */
 export async function setBackupOptions(p: { enabled?: boolean; keep?: number }) { set(await invoke<BackupStatus>("backup_set_options", { enabled: p.enabled ?? null, keep: p.keep ?? null })); }
-/** `manual` = 人点的"立即备份"：副本永久保留；自动备份的副本按份数轮转。备份到每一个目标。 */
-export async function backupNow(manual = false) { set(await invoke<BackupStatus>("backup_now", { settings: getSettings(), manual })); }
+/** 备份一次到每一个目标；"立即备份"和自动触发走的是同一套。 */
+export async function backupNow() { set(await invoke<BackupStatus>("backup_now", { settings: getSettings() })); }
 export type TasteSummary = { styles: number; examples: number; refs: number; skipped: number };
 /** 从某个目标的最新备份恢复。 */
 export const restoreBackup = (id: string) => invoke<[TasteSummary, Record<string, unknown> | null]>("backup_restore", { id });

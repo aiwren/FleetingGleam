@@ -63,7 +63,7 @@ Android 没有 Apple Vision，两端要一样就得两端用同样的东西：
 
 ### A3b. 云备份（已完成 2026-10-21）
 
-设置 → 备份：把「我的设置与喜好」（和导出文件同一份内容）自动备份到用户自己的云存储，可以有多个备份目标、各有名字（`backup.json` 的 `targets`，目前只有 `r2` 一种；Secret 按目标 id 存钥匙串）。`src-tauri/src/r2.rs` 自己做 S3 SigV4 签名（PUT / GET / DELETE / ListObjectsV2），不引入 AWS SDK。设置或喜好变化后 20 秒静默再上传到每个目标（`src/backup.ts`）；桶里 `fleetinggleam/taste.json` 是最新一份，自动备份 `auto/<日期>.json` 只留最近 N 份（可设），手动备份 `manual/<时刻>.json` 永久保留；可从任一目标恢复。
+设置 → 备份：把「我的设置与喜好」（和导出文件同一份内容）自动备份到用户自己的云存储，可以有多个备份目标、各有名字（`backup.json` 的 `targets`，目前只有 `r2` 一种；Secret 按目标 id 存钥匙串）。`src-tauri/src/r2.rs` 自己做 S3 SigV4 签名（PUT / GET / DELETE / ListObjectsV2），不引入 AWS SDK。设置或喜好变化后 20 秒静默再上传到每个目标（`src/backup.ts`）；桶里 `fleetinggleam/taste.json` 是最新一份，`auto/<日期>.json` 只留最近 N 份（可设）；"立即备份"是手动触发同一次上传；可从任一目标恢复。
 - [x] 对着真的 R2 桶验证（用户 2026-10-21 在应用里配置并备份成功）。
 - [ ] 以后有账号系统时，桶和令牌由服务端代管，这里的设置页收起来。
 

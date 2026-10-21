@@ -770,26 +770,25 @@ async fn backup_set_options(app: AppHandle, enabled: Option<bool>, keep: Option<
     .map_err(|e| e.to_string())?
 }
 
-/// 备份一次到每个目标："最新"一份，再留一份副本。`manual` = 人点的"立即备份"，副本永久保留在 manual/ 下；否则是自动备份，
-/// 副本按天放在 auto/ 下并只留最近几份。哪个目标失败记在它自己的状态里；全都失败才算错。
+/// 备份一次到每个目标（自动触发和"立即备份"都是它）："最新"一份，再按天留一份副本并只留最近几份。
+/// 哪个目标失败记在它自己的状态里；全都失败才算错。
 #[tauri::command]
-async fn backup_now(app: AppHandle, settings: serde_json::Value, manual: Option<bool>) -> Result<BackupStatus, String> {
+async fn backup_now(app: AppHandle, settings: serde_json::Value) -> Result<BackupStatus, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let dir = data_dir(&app);
         let mut cfg = r2::load(&dir);
         if !cfg.configured() {
             return Err("cloud backup is not set up".to_string());
         }
-        let manual = manual.unwrap_or(false);
         let (bytes, _) = taste_pack_bytes(&app, settings)?;
-        let copy = if manual { format!("{}/{}.json", r2::KEY_MANUAL, r2::now_stamp()) } else { format!("{}/{}.json", r2::KEY_AUTO, r2::today()) };
+        let copy = format!("{}/{}.json", r2::KEY_AUTO, r2::today());
         let keep = cfg.keep();
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
         let mut failures = Vec::new();
         let total = cfg.targets.iter().filter(|t| t.configured()).count();
         for t in cfg.targets.iter_mut().filter(|t| t.configured()) {
             let r = target_secret(t)
-                .and_then(|secret| r2::put(t, &secret, r2::KEY_LATEST, &bytes).and_then(|_| r2::put(t, &secret, &copy, &bytes)).and_then(|_| if manual { Ok(()) } else { r2::prune_auto(t, &secret, keep).map(|_| ()) }));
+                .and_then(|secret| r2::put(t, &secret, r2::KEY_LATEST, &bytes).and_then(|_| r2::put(t, &secret, &copy, &bytes)).and_then(|_| r2::prune_auto(t, &secret, keep).map(|_| ())));
             match r {
                 Ok(()) => {
                     t.last_ok = now;
