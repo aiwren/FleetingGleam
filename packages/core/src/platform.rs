@@ -51,6 +51,40 @@ pub trait SystemVision: Send + Sync {
     fn analyze(&self, path: &Path) -> Option<VisionOut>;
 }
 
+/// 每次分析起一套系统视觉信号：桌面端是几个 Apple Vision 边车进程，Android 是核心库自己的人脸流水线（`facepipe::Factory`）。
+/// 这台机器、这套模型给不出就返回 None，分析照常进行，只是没有人脸与闭眼。
+pub trait VisionFactory: Send + Sync {
+    fn start(&self, model_dir: &Path, workers: usize, cpu_only: bool) -> Option<Box<dyn SystemVision>>;
+}
+
+/// 把一张本机照片放进系统的废纸篓（能找回）。`Ok(None)` 是进了废纸篓；`Ok(Some(位置))` 是这个卷没有废纸篓，
+/// 照片挪到了那里的回收文件夹（页面要告诉用户在哪）。Android 上进系统回收站要用户在系统确认框里点同意，核心做不了，
+/// 所以 Android 不注册它，由界面自己处理（见 `engine::TrashResult::deferred`）。
+pub trait LocalTrash: Send + Sync {
+    fn trash(&self, path: &Path) -> Result<Option<String>, String>;
+}
+
+static VISION: OnceLock<Box<dyn VisionFactory>> = OnceLock::new();
+static LOCAL_TRASH: OnceLock<Box<dyn LocalTrash>> = OnceLock::new();
+
+/// 宿主启动时注册系统视觉信号的工厂；只认第一次。
+pub fn set_vision(f: Box<dyn VisionFactory>) {
+    let _ = VISION.set(f);
+}
+
+pub fn vision() -> Option<&'static dyn VisionFactory> {
+    VISION.get().map(|b| b.as_ref())
+}
+
+/// 宿主启动时注册本机废纸篓；只认第一次。
+pub fn set_local_trash(t: Box<dyn LocalTrash>) {
+    let _ = LOCAL_TRASH.set(t);
+}
+
+pub fn local_trash() -> Option<&'static dyn LocalTrash> {
+    LOCAL_TRASH.get().map(|b| b.as_ref())
+}
+
 /// GPU 上的 CLIP 视觉编码器：输入按 CLIP 预处理好的 3 x 224 x 224 浮点，输出未归一化的向量。
 pub trait GpuEncoder: Send + Sync {
     fn embed(&self, pixels: &[f32]) -> Result<Vec<f32>, String>;

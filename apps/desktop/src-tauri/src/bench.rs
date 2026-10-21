@@ -293,4 +293,36 @@ mod tests {
         }
     }
 
+
+    /// 引擎在 Mac 上的完整一遍：注册 Apple Vision、ImageIO、Metal CLIP 与废纸篓后，用真模型分析开发用的示例照片，第二次全部走缓存。
+    /// `cargo test -p fleetinggleam --lib engine_with_macos_helpers -- --ignored --nocapture`（需要 models/ 与 bin/）。
+    #[test]
+    #[ignore = "needs models/ and bin/fg-vision, bin/fg-image"]
+    fn engine_with_macos_helpers() {
+        use fg_core::engine::{Engine, NoEvents, Paths, ScanArgs};
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        crate::imageio_macos::Helper::register(root.join("bin/fg-image"));
+        fg_core::platform::set_vision(Box::new(crate::vision::Factory { bin: root.join("bin/fg-vision") }));
+        fg_core::platform::set_gpu_clip(Box::new(crate::clipgpu::Factory));
+        let tmp = std::env::temp_dir().join(format!("fg-engine-mac-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let e = Engine::new(Paths { data: tmp.join("data"), thumbs: tmp.join("thumbs"), models: dev_models_dir(), downloads: dev_models_dir() }, Box::new(NoEvents), "test");
+        let dirs = vec![root.join("../public/dev-photos").to_string_lossy().into_owned()];
+        let args = ScanArgs { key: "dev".into(), dirs: dirs.clone(), quality: Some("fast".into()), eye_method: Some("vision".into()), ..Default::default() };
+        let t = std::time::Instant::now();
+        let photos = e.scan_project(args.clone()).expect("scan");
+        println!("{} photos in {:?}", photos.len(), t.elapsed());
+        assert!(!photos.is_empty());
+        assert!(photos.iter().all(|p| p.clip_score.is_some()), "CLIP ran on every photo");
+        assert!(photos.iter().any(|p| p.sys_score.is_some()), "Apple Vision answered");
+        for p in photos.iter().take(5) {
+            println!("  {:<10} score {:.2} clip {:?} sys {:?} faces {} kind {}", p.name, p.score, p.clip_score, p.sys_score, p.face_count, p.kind);
+        }
+        assert_eq!(e.probe_folder(&dirs, None, Some("fast")).unwrap().uncached, 0);
+        let t = std::time::Instant::now();
+        let again = e.scan_project(args).unwrap();
+        println!("again from the cache in {:?}", t.elapsed());
+        assert_eq!(again.len(), photos.len());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }

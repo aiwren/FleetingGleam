@@ -138,6 +138,17 @@ impl Vision {
     }
 }
 
+/// 注册给核心库的工厂：每次分析起几个 Apple Vision 边车（`bin/fg-vision`）；边车不在（没编过 `scripts/build-vision.sh`）就没有视觉信号。
+pub struct Factory {
+    pub bin: PathBuf,
+}
+
+impl fg_core::platform::VisionFactory for Factory {
+    fn start(&self, _model_dir: &Path, workers: usize, cpu_only: bool) -> Option<Box<dyn SystemVision>> {
+        Vision::start(&self.bin, workers, cpu_only).map(|v| Box::new(v) as Box<dyn SystemVision>)
+    }
+}
+
 impl SystemVision for Vision {
     fn analyze(&self, path: &Path) -> Option<VisionOut> {
         Vision::analyze(self, path)

@@ -127,6 +127,19 @@ impl FacePipeline {
     }
 }
 
+/// 注册给 `platform::set_vision` 的工厂：模型齐了（`detect` + `eyes` 包）就起一条流水线，否则没有视觉信号。
+/// 流水线本身线程安全（会话各自加锁），`workers` 用不上。
+pub struct Factory;
+
+impl crate::platform::VisionFactory for Factory {
+    fn start(&self, model_dir: &Path, _workers: usize, _cpu_only: bool) -> Option<Box<dyn SystemVision>> {
+        if !available(model_dir) {
+            return None;
+        }
+        FacePipeline::load(model_dir).map_err(|e| eprintln!("faces disabled: {e}")).ok().map(|p| Box::new(p) as Box<dyn SystemVision>)
+    }
+}
+
 impl SystemVision for FacePipeline {
     fn analyze(&self, path: &Path) -> Option<VisionOut> {
         let img = image::open(path).ok()?;
