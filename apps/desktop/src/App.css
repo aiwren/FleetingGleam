@@ -1243,3 +1243,19 @@ img { -webkit-user-drag: none; }
 .vnav-box { position: absolute; border: 1.5px solid #fff; border-radius: 2px; box-shadow: 0 0 0 100vmax rgba(0, 0, 0, .5); pointer-events: none; }
 .vnav.native { background: transparent; box-shadow: none; }
 .vnav.native img, .vnav.native .vnav-box { opacity: 0; box-shadow: none; border-color: transparent; }
+
+/* Learning meter: how far a taste is from being used and from its full say. Ink only: amber stays reserved for "keep". */
+.learn-meter { padding: 2px 16px 14px; max-width: 60ch; }
+.learn-meter.compact { padding: 8px 0 0; max-width: none; }
+.lm-track { position: relative; height: 3px; border-radius: 2px; background: var(--surface-2); margin: 12px 0 30px; }
+.lm-fill { display: block; height: 100%; border-radius: 2px; background: var(--ink); transition: width .35s var(--ease); }
+.lm-mark { position: absolute; top: -4px; width: 11px; height: 11px; margin-left: -5.5px; border-radius: 50%; box-sizing: border-box; background: var(--surface); border: 2px solid var(--line); }
+.lm-mark.on { background: var(--ink); border-color: var(--ink); }
+.lm-mark small { position: absolute; top: 14px; white-space: nowrap; font-size: 11px; line-height: 1.2; color: var(--ash); }
+.lm-mark.on small { color: var(--ink); }
+.lm-mark.pos-left small { left: -5px; }
+.lm-mark.pos-mid small { left: 50%; transform: translateX(-50%); }
+.lm-mark.pos-right small { right: -5px; }
+.lm-status { margin: 0; font-size: 12.5px; line-height: 1.5; }
+.learn-meter.compact .lm-track { margin: 8px 0 26px; }
+.learn-meter.compact .lm-status { font-size: 12px; }

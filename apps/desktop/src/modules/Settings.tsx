@@ -1,4 +1,5 @@
 import { PrefsInfo, bumpPrefsRevision, learnFromFolder, refreshStyles } from "../styles";
+import LearnMeter from "../components/LearnMeter";
 import { pickFolder, baseName } from "../projectActions";
 import { ensurePack, removePack, usePacks } from "../models";
 import { adopt, release } from "../strategy";
@@ -25,7 +26,7 @@ function Group({ id, title, index, children }: { id: string; title: string; inde
 }
 
 /** One setting: a title and a single plain sentence. Anything technical goes behind the "?". */
-function Row({ label, desc, children, info }: { label: string; desc?: string; children?: ReactNode; info?: ReactNode }) {
+function Row({ label, desc, children, info, below }: { label: string; desc?: string; children?: ReactNode; info?: ReactNode; below?: ReactNode }) {
   return (
     <div className="srow-wrap">
       <div className="srow">
@@ -35,6 +36,7 @@ function Row({ label, desc, children, info }: { label: string; desc?: string; ch
         </div>
         {children && <div className="sctl">{children}</div>}
       </div>
+      {below}
     </div>
   );
 }
@@ -98,7 +100,7 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
     try { await invoke("clear_cache"); setCache(0); setCleared(true); } catch { /* ignore */ }
   };
   const resetPrefs = async () => {
-    try { const v = await invoke<PrefsInfo>("prefs_reset"); setPrefs(v && typeof v === "object" ? v : { labels: 0, keeps: 0, refs: 0, refs_from: "", active: false }); setPrefsReset(true); bumpPrefsRevision(); } catch { /* ignore */ }
+    try { const v = await invoke<PrefsInfo>("prefs_reset"); setPrefs(v && typeof v === "object" ? v : null); setPrefsReset(true); bumpPrefsRevision(); } catch { /* ignore */ }
   };
 
   const packs = usePacks();
@@ -114,8 +116,7 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
     else invoke<PrefsInfo>("prefs_info").then(setPrefs).catch(() => {});
   };
   const clipLabel = !info ? "—" : info.clip === null ? t("settings.off") : info.clip.startsWith("gpu") || info.clip.startsWith("coreml") ? t("settings.clipGpu") : t("settings.clipCpu");
-  const learnStatus = !prefs || prefs.labels === 0 ? t("settings.learnNone")
-    : `${t("settings.learnStatus", { n: prefs.labels, k: prefs.keeps })} · ${prefs.active ? t("settings.learnActive") : t("settings.learnWarm")}`;
+  const learnStatus = !prefs || prefs.labels === 0 ? t("settings.learnNone") : t("settings.learnStatus", { n: prefs.labels, k: prefs.keeps });
 
   return (
     <div className="module" data-active={active}>
@@ -171,7 +172,8 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
 
             <Group id="sec-personal" title={t("settings.personal")} index={3}>
               <Row label={t("settings.learn")} desc={t("settings.learnShort")}
-                info={(<><p className="ash">{t("settings.learnDesc")}</p><p className="ash">{learnStatus}</p></>)}>
+                info={(<><p className="ash">{t("settings.learnDesc")}</p><p className="ash">{learnStatus}</p></>)}
+                below={prefs && <LearnMeter info={prefs} />}>
                 <button className="switch" role="switch" aria-checked={s.learn} aria-label={t("settings.learn")} onClick={() => setSettings({ learn: !s.learn })} />
               </Row>
               <Row label={t("styles.fromFolder")} desc={refFailed ? t("styles.failed") : prefs && prefs.refs > 0 ? `${t("styles.fromFolderDone", { count: prefs.refs })} · ${baseName(prefs.refs_from)}` : t("styles.fromFolderDesc")}

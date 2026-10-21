@@ -10,6 +10,13 @@ use serde::{Deserialize, Serialize};
 const SCALE: f32 = 16.0;
 /// Need at least this many examples of each class before the model is used.
 const MIN_PER_CLASS: usize = 3;
+/// The most the learned taste may move a score, once there is enough evidence.
+const MAX_STRENGTH: f32 = 0.35;
+
+/// How many training examples it takes for the blend to reach this strength (the inverse of `strength`).
+fn examples_for(strength: f32) -> usize {
+    ((strength - 0.08) * 300.0).ceil().max(0.0) as usize
+}
 
 /// A photo from a folder of past picks ("this is what I choose"): only its embedding is kept, never the picture.
 #[derive(Clone, Serialize, Deserialize)]
@@ -36,13 +43,25 @@ pub struct Prefs {
     path: PathBuf,
 }
 
+/// What the settings show about a taste: the counts, whether it is in use, and the marks on the way to its full say.
 #[derive(Serialize)]
 pub struct PrefsInfo {
     pub labels: usize,
     pub keeps: usize,
+    pub rejects: usize,
     pub refs: usize,
     pub refs_from: String,
     pub active: bool,
+    /// How many examples the current weights were trained on (0 while the taste is not in use).
+    pub trained: usize,
+    /// How much of a score the learned taste may move right now.
+    pub strength: f32,
+    pub max_strength: f32,
+    /// Keeps and rejects each needed before the taste is used at all.
+    pub min_per_class: usize,
+    /// Examples at which the strength passes half of its maximum, and at which it reaches it.
+    pub half_at: usize,
+    pub full_at: usize,
 }
 
 fn sigmoid(z: f32) -> f32 {
@@ -61,7 +80,21 @@ impl Prefs {
     }
 
     pub fn info(&self) -> PrefsInfo {
-        PrefsInfo { labels: self.labels.len(), keeps: self.labels.values().filter(|v| **v).count(), refs: self.refs.len(), refs_from: self.refs_from.clone(), active: self.active() }
+        let keeps = self.labels.values().filter(|v| **v).count();
+        PrefsInfo {
+            labels: self.labels.len(),
+            keeps,
+            rejects: self.labels.len() - keeps,
+            refs: self.refs.len(),
+            refs_from: self.refs_from.clone(),
+            active: self.active(),
+            trained: if self.active() { self.n } else { 0 },
+            strength: if self.active() { self.strength() } else { 0.0 },
+            max_strength: MAX_STRENGTH,
+            min_per_class: MIN_PER_CLASS,
+            half_at: examples_for(MAX_STRENGTH / 2.0),
+            full_at: examples_for(MAX_STRENGTH),
+        }
     }
 
     pub fn reset(&mut self) {
@@ -84,7 +117,7 @@ impl Prefs {
 
     /// How strongly the learned taste is blended into a score: grows with evidence, capped.
     pub fn strength(&self) -> f32 {
-        (0.08 + self.n as f32 / 300.0).min(0.35)
+        (0.08 + self.n as f32 / 300.0).min(MAX_STRENGTH)
     }
 
     /// Trains on the explicit keep / reject labels and on the reference photos. Reference photos only say what is chosen, so the "not chosen"
@@ -251,6 +284,22 @@ impl Styles {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_marks_match_the_strength_curve() {
+        // the settings draw marks at half_at / full_at; they must be where strength() actually gets there
+        let mut p = super::Prefs::default();
+        let (half, full) = (super::examples_for(super::MAX_STRENGTH / 2.0), super::examples_for(super::MAX_STRENGTH));
+        p.n = full;
+        assert_eq!(p.strength(), super::MAX_STRENGTH);
+        p.n = full - 1;
+        assert!(p.strength() < super::MAX_STRENGTH);
+        p.n = half;
+        assert!(p.strength() >= super::MAX_STRENGTH / 2.0);
+        p.n = half - 1;
+        assert!(p.strength() < super::MAX_STRENGTH / 2.0);
+        assert!(half > 2 * super::MIN_PER_CLASS && full > half);
+    }
+
     use super::*;
 
     fn unit(v: Vec<f32>) -> Vec<f32> {

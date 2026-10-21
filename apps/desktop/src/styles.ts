@@ -4,7 +4,11 @@ import { listen } from "@tauri-apps/api/event";
 import { currentTier } from "./strategy";
 
 /** One learned taste ("style"): its own labels, reference photos and model. Everything a project learns goes into the default one. */
-export type PrefsInfo = { labels: number; keeps: number; refs: number; refs_from: string; active: boolean };
+export type PrefsInfo = {
+  labels: number; keeps: number; rejects: number; refs: number; refs_from: string; active: boolean;
+  /** examples the weights were trained on (0 while not in use), how much it may move a score now, and the marks on the way: see prefs.rs */
+  trained: number; strength: number; max_strength: number; min_per_class: number; half_at: number; full_at: number;
+};
 export type StyleInfo = { id: string; name: string; is_default: boolean; info: PrefsInfo };
 
 let styles: StyleInfo[] = [];

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { AnimatePresence, motion } from "motion/react";
 import { pickFolder, baseName } from "../projectActions";
 import { StyleInfo, createStyle, deleteStyle, learnFromFolder, refreshStyles, renameStyle, resetStyle, setDefaultStyle, useStyles } from "../styles";
+import LearnMeter from "../components/LearnMeter";
 import { useProjects } from "../projects";
 import Modal from "../components/Modal";
 import SearchBox from "../components/SearchBox";
@@ -217,6 +218,7 @@ export default function Styles({ active, from, onBack }: { active: boolean; from
                         {created ? ` · ${t("styles.createdOn", { date: new Intl.DateTimeFormat(i18n.language, { dateStyle: "medium" }).format(created) })}` : ""}
                         {failed === s.id ? ` · ${t("styles.failed")}` : ""}
                       </p>
+                      <LearnMeter info={s.info} compact />
                       <div className="style-actions">
                         <button className="btn sm" disabled={!!busy} onClick={() => learn(s)}>
                           {busy?.id === s.id ? t("styles.learning", { pct: Math.round(busy.p * 100) }) : t("styles.learnFolder")}

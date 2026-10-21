@@ -75,6 +75,16 @@ const zh = {
   },
   searchset: { title: "照片搜索", desc: "用文字描述来找照片，比如“烟花”“两个人”“雨伞”。", info: "第一次开启需要下载一个搜索模型，并在后台为照片建立索引（每张只需几十毫秒）。全过程在本机完成，照片不会上传。", project: "在这个项目里启用搜索", projectDesc: "关闭后这个项目不建立搜索索引，也不显示搜索框。" },
   kind: { portrait: "人像", people: "人物场景", landscape: "风景", architecture: "建筑", food: "美食", animal: "动物", object: "物品", document: "文档", street: "街拍", night: "夜景", sport: "运动", macro: "微距", stage: "舞台演出", vehicle: "交通工具" },
+  meter: {
+    markStart: "开始生效", markHalf: "影响过半", markFull: "影响最大",
+    needBoth: "还差：保留 {{keep}} 张、淘汰 {{reject}} 张（各至少 {{min}} 张才会生效；参考照片算作保留）",
+    needKeep: "还差：保留 {{keep}} 张（淘汰已够 {{min}} 张）",
+    needReject: "还差：淘汰 {{reject}} 张（保留已够 {{min}} 张）",
+    pending: "数量够了，下一次分析时开始生效",
+    active: "已生效：现在最多改动一张照片评分的 {{pct}}%（上限 {{max}}%）",
+    toFull: "再积累 {{n}} 张就到最大影响",
+    aria: "学习进度 {{have}} / {{full}}",
+  },
   styles: {
     fromFolder: "从以前挑好的照片学习", fromFolderDesc: "选一个你过去挑好、交付过的文件夹，让它学会你喜欢的样子。",
     fromFolderDone: "已从 {{count}} 张参考照片学习",

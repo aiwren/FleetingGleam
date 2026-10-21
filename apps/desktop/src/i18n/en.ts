@@ -77,6 +77,16 @@ const en = {
   },
   searchset: { title: "Photo search", desc: "Find photos by describing them: \u201cfireworks\u201d, \u201ctwo people\u201d, \u201cumbrella\u201d.", info: "The first time it is turned on, a search model is downloaded and the photos are indexed in the background (a few tens of milliseconds each). It all happens on this computer; photos are never uploaded.", project: "Search in this project", projectDesc: "When off, this project is not indexed and has no search box." },
   kind: { portrait: "Portrait", people: "People", landscape: "Landscape", architecture: "Architecture", food: "Food", animal: "Animal", object: "Object", document: "Document", street: "Street", night: "Night", sport: "Sport", macro: "Macro", stage: "Stage", vehicle: "Vehicle" },
+  meter: {
+    markStart: "starts working", markHalf: "half strength", markFull: "full strength",
+    needBoth: "Still needed: {{keep}} kept, {{reject}} rejected (at least {{min}} of each before it is used; reference photos count as kept)",
+    needKeep: "Still needed: {{keep}} kept ({{min}} rejected already there)",
+    needReject: "Still needed: {{reject}} rejected ({{min}} kept already there)",
+    pending: "Enough examples; it starts working at the next analysis",
+    active: "In use: it may move a photo's score by up to {{pct}}% right now (ceiling {{max}}%)",
+    toFull: "{{n}} more to reach full strength",
+    aria: "Learning progress {{have}} of {{full}}",
+  },
   styles: {
     fromFolder: "Learn from photos I picked before", fromFolderDesc: "Choose a folder of past picks or deliveries and let it learn what you like.",
     fromFolderDone: "Learned from {{count}} reference photos",

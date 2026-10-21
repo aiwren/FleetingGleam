@@ -137,14 +137,20 @@ async function scan(dirs: string[], quiet: boolean): Promise<Photo[]> {
 
 let dialogCalls = 0;
 let labels = 0, keeps = 0;
-const prefsInfo = () => ({ labels, keeps, active: labels >= 6 && keeps >= 3 && labels - keeps >= 3 });
+/** The same shape prefs.rs sends: counts, whether the taste is in use, and the marks on the way to its full say. */
+const prefsOf = (labels: number, keeps: number, refs = 0, refs_from = "") => {
+  const active = keeps + refs >= 3 && labels - keeps >= 3;
+  const trained = active ? labels + refs * 2 : 0;
+  return { labels, keeps, rejects: labels - keeps, refs, refs_from, active, trained, strength: active ? Math.min(0.08 + trained / 300, 0.35) : 0, max_strength: 0.35, min_per_class: 3, half_at: 29, full_at: 81 };
+};
+const prefsInfo = () => prefsOf(labels, keeps);
 
-type MockStyle = { id: string; name: string; is_default: boolean; info: { labels: number; keeps: number; refs: number; refs_from: string; active: boolean } };
+type MockStyle = { id: string; name: string; is_default: boolean; info: ReturnType<typeof prefsOf> };
 const now = Date.now();
 const mockStyles: MockStyle[] = [
-  { id: "default", name: "", is_default: true, info: { labels: 34, keeps: 19, refs: 0, refs_from: "", active: true } },
-  { id: `s${now - 6 * 86400_000}`, name: "Street", is_default: false, info: { labels: 12, keeps: 7, refs: 40, refs_from: "/Users/me/Photos/Street", active: true } },
-  { id: `s${now - 1 * 86400_000}`, name: "Weddings", is_default: false, info: { labels: 2, keeps: 1, refs: 0, refs_from: "", active: false } },
+  { id: "default", name: "", is_default: true, info: prefsOf(34, 19) },
+  { id: `s${now - 6 * 86400_000}`, name: "Street", is_default: false, info: prefsOf(12, 7, 40, "/Users/me/Photos/Street") },
+  { id: `s${now - 1 * 86400_000}`, name: "Weddings", is_default: false, info: prefsOf(2, 1) },
 ];
 
 w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
@@ -248,7 +254,7 @@ w.__TAURI_INTERNALS__ = {
       // would not, so every mutator here returns a shallow copy to match that behavior.
       case "styles_list": return [...mockStyles];
       case "style_create": {
-        mockStyles.push({ id: `s${Date.now()}`, name: String(args.name ?? ""), is_default: false, info: { labels: 0, keeps: 0, refs: 0, refs_from: "", active: false } });
+        mockStyles.push({ id: `s${Date.now()}`, name: String(args.name ?? ""), is_default: false, info: prefsOf(0, 0) });
         return [...mockStyles];
       }
       case "style_rename": {
@@ -280,7 +286,7 @@ w.__TAURI_INTERNALS__ = {
       case "prefs_info": return prefsInfo();
       case "prefs_reset": {
         const s = mockStyles.find((x) => x.id === args.style);
-        if (s) { s.info = { labels: 0, keeps: 0, refs: 0, refs_from: "", active: false }; }
+        if (s) { s.info = prefsOf(0, 0); }
         else { labels = 0; keeps = 0; }
         return prefsInfo();
       }
