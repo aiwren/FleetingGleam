@@ -1,0 +1,230 @@
+package com.fleetinggleam.android.ui.project
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import coil3.compose.AsyncImage
+import com.fleetinggleam.android.core.Core
+import com.fleetinggleam.android.core.ExportResult
+import com.fleetinggleam.android.core.Fg
+import com.fleetinggleam.android.core.Media
+import com.fleetinggleam.android.core.Organize
+import com.fleetinggleam.android.core.Pickers
+import com.fleetinggleam.android.core.Progress
+import com.fleetinggleam.android.core.Project
+import com.fleetinggleam.android.core.Session
+import com.fleetinggleam.android.core.t
+import com.fleetinggleam.android.ui.components.FgButton
+import com.fleetinggleam.android.ui.components.FgDialog
+import com.fleetinggleam.android.ui.components.FgIcon
+import com.fleetinggleam.android.ui.components.Icons
+import com.fleetinggleam.android.ui.components.LiveBar
+import com.fleetinggleam.android.ui.theme.Ellipsis
+import com.fleetinggleam.android.ui.theme.LocalFg
+import com.fleetinggleam.android.ui.theme.Type
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+
+/** 导出到哪里：相册里的「惊鸿/项目名」，或系统里选的文件夹（能换成路径就用路径，换不出就按 Uri 逐张写）。 */
+private sealed interface Dest {
+    data class Path(val path: String, val label: String) : Dest
+    data class Tree(val uri: android.net.Uri, val label: String) : Dest
+}
+
+private sealed interface Dlg {
+    data object Menu : Dlg
+    data class Export(val dest: Dest) : Dlg
+    data object Trash : Dlg
+}
+
+/** 整理（桌面端 Organize.tsx）：工具栏上一个按钮，打开后两件事——导出保留的、把淘汰的移走。 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun OrganizeButton(project: Project) {
+    val c = LocalFg.current
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val photos by Session.photos.collectAsState()
+    val decisions by Session.decisions.collectAsState()
+    var dlg by remember { mutableStateOf<Dlg?>(null) }
+    var phase by remember { mutableStateOf("confirm") } // confirm | running | done
+    var progress by remember { mutableStateOf(Progress()) }
+    var result by remember { mutableStateOf<Triple<Int, Int, List<String>>?>(null) }
+    var scopeAll by remember { mutableStateOf(false) }
+    val keep = photos.filter { decisions[it.path]?.state == "keep" }
+    val rejectAll = photos.filter { decisions[it.path]?.state == "reject" }
+    val rejectManual = rejectAll.filter { decisions[it.path]?.manual == true }
+    val trashList = if (scopeAll) rejectAll else rejectManual
+
+    fun open(d: Dlg) { result = null; phase = "confirm"; progress = Progress(); dlg = d }
+    fun close() { val reload = phase == "done"; dlg = null; if (reload) Session.reload() }
+
+    FgButton(t("organize.button"), { open(Dlg.Menu) }, small = true, modifier = Modifier.padding(end = 4.dp))
+
+    // ---- 两件事
+    if (dlg == Dlg.Menu) {
+        val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(onDismissRequest = { dlg = null }, sheetState = sheet, containerColor = c.canvas) {
+            Column(Modifier.navigationBarsPadding().padding(horizontal = 20.dp).padding(bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(t("organize.button"), style = Type.heading.copy(color = c.ink), modifier = Modifier.padding(bottom = 6.dp))
+                OrgItem(Icons.ALBUM, t("android.organize.toAlbum"), if (keep.isEmpty()) t("organize.none") else t("android.organize.toAlbumDesc", "count" to keep.size, "where" to "${t("brand.name")}/${project.name}"), keep.isNotEmpty()) {
+                    open(Dlg.Export(Dest.Path(Organize.albumDir(project.name).absolutePath, "${t("brand.name")}/${project.name}")))
+                }
+                OrgItem(Icons.FOLDER, t("android.organize.toFolder"), if (keep.isEmpty()) t("organize.none") else t("organize.exportDesc", "count" to keep.size), keep.isNotEmpty()) {
+                    dlg = null
+                    scope.launch {
+                        val uri = Pickers.openTree() ?: return@launch
+                        val path = Media.treeToPath(uri)
+                        open(Dlg.Export(if (path != null && File(path).canWrite()) Dest.Path(path, path) else Dest.Tree(uri, androidx.documentfile.provider.DocumentFile.fromTreeUri(ctx, uri)?.name ?: uri.toString())))
+                    }
+                }
+                OrgItem(Icons.TRASH, t("organize.trashItem"), if (rejectAll.isEmpty()) t("organize.none") else t("organize.trashDesc", "count" to rejectAll.size), rejectAll.isNotEmpty(), box = 14f) {
+                    scopeAll = rejectManual.isEmpty(); open(Dlg.Trash)
+                }
+            }
+        }
+    }
+
+    // ---- 导出
+    (dlg as? Dlg.Export)?.let { d ->
+        DisposableEffect(Unit) {
+            val off = Core.listen("export-progress") { raw -> runCatching { Fg.json.decodeFromString<Progress>(raw) }.getOrNull()?.let { progress = it } }
+            onDispose { off() }
+        }
+        val label = when (val x = d.dest) { is Dest.Path -> x.label; is Dest.Tree -> x.label }
+        FgDialog(true, { if (phase != "running") close() }, t("organize.exportTitle"), locked = phase == "running", footer = {
+            if (phase == "done") FgButton(t("organize.done"), { close() }, primary = true, small = true)
+            else {
+                FgButton(t("organize.cancel"), { close() }, enabled = phase != "running", small = true)
+                FgButton(if (phase == "running") t("organize.exporting", "done" to progress.done, "total" to progress.total) else t("organize.exportGo"), {
+                    phase = "running"; progress = Progress(0, keep.size)
+                    scope.launch {
+                        val paths = keep.map { it.path }
+                        val r = runCatching {
+                            when (val x = d.dest) {
+                                is Dest.Path -> Organize.exportTo(ctx, paths, x.path)
+                                is Dest.Tree -> withContext(Dispatchers.IO) { Organize.exportToTree(ctx, paths, x.uri) { a, b -> progress = Progress(a, b) } }
+                            }
+                        }.getOrElse { ExportResult(0, paths.size, label) }
+                        result = Triple(r.copied, r.skipped, emptyList()); phase = "done"
+                    }
+                }, primary = true, small = true, enabled = phase != "running")
+            }
+        }) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (phase == "done") {
+                    val r = result
+                    Text(t("organize.exported", "count" to (r?.first ?: 0)) + if ((r?.second ?: 0) > 0) " · ${t("organize.exportedSkipped", "n" to r!!.second)}" else "", style = Type.body.copy(color = c.ink))
+                    Text(label, style = Type.monoSmall.copy(color = c.ash))
+                } else {
+                    Text(t("organize.exportBody", "count" to keep.size), style = Type.body.copy(color = c.ink))
+                    Text(label, style = Type.mono.copy(color = c.ink), modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(c.surface).padding(horizontal = 10.dp, vertical = 6.dp))
+                    Text(t("organize.exportSafe"), style = Type.rowDesc.copy(color = c.ash))
+                    if (phase == "running") LiveBar(if (progress.total > 0) progress.done.toFloat() / progress.total else 0f, Modifier.padding(top = 4.dp))
+                }
+            }
+        }
+    }
+
+    // ---- 移走淘汰的
+    if (dlg == Dlg.Trash) {
+        FgDialog(true, { if (phase != "running") close() }, t("organize.trashTitle"), locked = phase == "running", footer = {
+            if (phase == "done") FgButton(t("organize.done"), { close() }, primary = true, small = true)
+            else {
+                FgButton(t("organize.cancel"), { close() }, enabled = phase != "running", small = true)
+                FgButton(if (phase == "running") t("organize.trashing") else t("organize.trashGo", "count" to trashList.size), {
+                    phase = "running"
+                    scope.launch {
+                        val (out, gone) = runCatching { withContext(Dispatchers.IO) { Organize.trash(ctx, trashList.map { it.path }) { s -> withContext(Dispatchers.Main) { Pickers.confirm(s) } } } }
+                            .getOrElse { Organize.TrashOutcome(0, trashList.size, emptyList()) to emptyList() }
+                        Organize.forget(project.id, gone)
+                        if (out.cancelled && out.moved == 0) { phase = "confirm"; return@launch }
+                        result = Triple(out.moved, out.failed, out.bins); phase = "done"
+                    }
+                }, primary = true, small = true, enabled = phase != "running" && trashList.isNotEmpty())
+            }
+        }) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (phase == "done") {
+                    val r = result
+                    Text(t("organize.trashed", "count" to (r?.first ?: 0)), style = Type.body.copy(color = c.ink))
+                    if ((r?.second ?: 0) > 0) Text(t("organize.trashFailed", "n" to r!!.second), style = Type.rowDesc.copy(color = c.ash))
+                    if (!r?.third.isNullOrEmpty()) Text(t("organize.trashedToShare", "where" to r!!.third.joinToString(" · ")), style = Type.rowDesc.copy(color = c.ash))
+                    else Text(t("organize.trashRecover"), style = Type.rowDesc.copy(color = c.ash))
+                } else {
+                    Text(t("organize.trashBody"), style = Type.body.copy(color = c.ink))
+                    Radio(t("organize.scopeManual", "count" to rejectManual.size), !scopeAll, enabled = rejectManual.isNotEmpty()) { scopeAll = false }
+                    Radio(t("organize.scopeAll", "count" to rejectAll.size), scopeAll) { scopeAll = true }
+                    if (scopeAll && rejectAll.size > rejectManual.size) Text(t("organize.warnAll", "n" to rejectAll.size - rejectManual.size), style = Type.rowDesc.copy(color = c.ink, fontWeight = FontWeight.Medium))
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        trashList.take(8).forEach { p -> AsyncImage(File(p.thumb), null, Modifier.size(44.dp).clip(RoundedCornerShape(6.dp)), contentScale = ContentScale.Crop) }
+                        if (trashList.size > 8) Text("+${trashList.size - 8}", style = Type.mono.copy(color = c.ash), modifier = Modifier.padding(start = 4.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OrgItem(icon: String, title: String, desc: String, enabled: Boolean, box: Float = 16f, onClick: () -> Unit) {
+    val c = LocalFg.current
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.panel).border(1.dp, c.line, RoundedCornerShape(14.dp))
+            .graphicsLayer { alpha = if (enabled) 1f else 0.45f }.clickable(enabled = enabled, onClick = onClick).padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        FgIcon(icon, size = 20.dp, box = box)
+        Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
+            Text(title, style = Type.rowTitle.copy(color = c.ink), maxLines = 1, overflow = Ellipsis)
+            Text(desc, style = Type.rowDesc.copy(color = c.ash), maxLines = 2, overflow = Ellipsis)
+        }
+        FgIcon(Icons.CHEVRON, size = 16.dp, color = c.ash)
+    }
+}
+
+@Composable
+private fun Radio(text: String, on: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
+    val c = LocalFg.current
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).graphicsLayer { alpha = if (enabled) 1f else 0.45f }.clickable(enabled = enabled, onClick = onClick).padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(18.dp).clip(CircleShape).border(1.5.dp, if (on) c.ink else c.line, CircleShape), contentAlignment = Alignment.Center) {
+            if (on) Box(Modifier.size(9.dp).clip(CircleShape).background(c.ink))
+        }
+        Text(text, style = Type.rowTitle.copy(color = c.ink), modifier = Modifier.padding(start = 10.dp))
+    }
+}

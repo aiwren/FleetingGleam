@@ -105,7 +105,9 @@ object Media {
 
     /** 选了一个换算不出路径的文件夹：记下它（以后重启也能读，要先拿到持久的读权限），返回它在镜像里的路径。照片在第一次打开项目时复制。 */
     fun adoptTree(ctx: Context, uri: Uri): String {
-        runCatching { ctx.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        // 读写都要：淘汰的照片在原处移进回收文件夹（拿不到写权限就只读，回收时会说没能移动）
+        runCatching { ctx.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
+            .onFailure { runCatching { ctx.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } }
         val id = MessageDigest.getInstance("SHA-1").digest(uri.toString().toByteArray()).joinToString("") { "%02x".format(it) }.take(12)
         val name = DocumentFile.fromTreeUri(ctx, uri)?.name ?: id
         val list = mirrors(ctx).filter { it.id != id } + Mirror(id, uri.toString(), name)
@@ -156,6 +158,15 @@ object Media {
             // 原处已经没有的，从镜像里删掉
             root.walkBottomUp().filter { it.isFile && it.absolutePath !in keep && it.extension.lowercase() in IMAGE_EXT }.forEach { it.delete() }
         }
+    }
+
+    /** 镜像里的一个文件对应的原处文件夹与相对路径。 */
+    fun mirrorOf(ctx: Context, path: String): Pair<Mirror, String>? {
+        for (m in mirrors(ctx)) {
+            val root = mirrorDir(ctx, m.id).absolutePath + "/"
+            if (path.startsWith(root)) return m to path.removePrefix(root)
+        }
+        return null
     }
 
     /** 这个路径是不是镜像里的（这样的照片在原处回收，不进系统回收站）。 */

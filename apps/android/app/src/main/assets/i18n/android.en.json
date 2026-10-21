@@ -40,6 +40,11 @@
    "done": "{{name}} downloaded",
    "bundle": "the analysis models",
    "pill": "Downloading {{pct}}%"
+  },
+  "organize": {
+   "toAlbum": "Export keepers to an album",
+   "toAlbumDesc": "Copy {{count}} to the album \"{{where}}\"; originals untouched",
+   "toFolder": "Export to a folder…"
   }
  },
  "models": {
@@ -92,6 +97,10 @@
   "showInFinder": "Show in Files",
   "trashDesc": "{{count}} · can be restored from the system bin for 30 days",
   "trashBody": "These photos will be moved to the system bin and disappear from this project. For 30 days they can be restored from the bin in your gallery or Files app.",
-  "trashRecover": "To get them back, open the bin in your gallery or Files app, select the photos and tap Restore."
+  "trashRecover": "To get them back, open the bin in your gallery or Files app, select the photos and tap Restore.",
+  "trashItem": "Move rejected photos to the bin…",
+  "trashTitle": "Move to the bin",
+  "trashGo": "Move to the bin ({{count}})",
+  "trashed": "{{count}} moved to the bin"
  }
 }

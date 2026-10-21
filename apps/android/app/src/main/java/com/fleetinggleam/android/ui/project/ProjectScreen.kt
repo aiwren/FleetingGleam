@@ -116,6 +116,7 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
                 }
             }
             if (phase == Phase.Done && settings.learn && project.learn != false && dirty > 0) FgButton(t("cull.reeval"), { Session.reevaluate() }, small = true, modifier = Modifier.padding(end = 6.dp))
+            if (phase == Phase.Done) OrganizeButton(project)
             if (phase == Phase.Done && project.search != false) IconBtn(Icons.SEARCH, t("search.label"), { cull.searchOpen = !cull.searchOpen; if (!cull.searchOpen) cull.query = "" }, on = cull.searchOpen, plain = true)
             IconBtn(Icons.SLIDERS, t("pset.settings"), { settingsOpen = true }, enabled = !scanning, plain = true)
         }

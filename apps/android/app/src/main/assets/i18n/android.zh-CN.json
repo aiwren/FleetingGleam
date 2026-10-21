@@ -40,6 +40,11 @@
    "done": "{{name}}已下载好",
    "bundle": "分析所需的模型",
    "pill": "下载中 {{pct}}%"
+  },
+  "organize": {
+   "toAlbum": "导出保留的照片到相册",
+   "toAlbumDesc": "复制 {{count}} 张到相册「{{where}}」，原图不动",
+   "toFolder": "导出到一个文件夹…"
   }
  },
  "models": {
@@ -81,6 +86,10 @@
   "showInFinder": "在文件管理中显示",
   "trashDesc": "{{count}} 张 · 30 天内可在系统回收站找回",
   "trashBody": "这些照片会被移到系统回收站，并从这个项目里消失。30 天内可以在相册或文件管理的“回收站”里恢复。",
-  "trashRecover": "想找回的话，打开相册或文件管理的“回收站”，选中照片点“恢复”。"
+  "trashRecover": "想找回的话，打开相册或文件管理的“回收站”，选中照片点“恢复”。",
+  "trashItem": "把淘汰的照片移到回收站…",
+  "trashTitle": "移到回收站",
+  "trashGo": "移到回收站（{{count}} 张）",
+  "trashed": "已移到回收站 {{count}} 张"
  }
 }

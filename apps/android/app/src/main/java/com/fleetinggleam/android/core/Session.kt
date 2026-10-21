@@ -194,7 +194,10 @@ object Session {
                 "learn" to (Settings.value.learn && project.learn != false), "quiet" to quiet, "force" to force, "eye_method" to Strategy.eyeMethodNow(),
             ))
             if (tok != token) return
+            // 进项目时取舍已清空；照片和上次一模一样时 StateFlow 不会再发一次，得自己重算
+            val same = photos.value == res
             photos.value = res
+            if (same) redecide()
             phase.value = Phase.Done
             dirty.value = 0
             Projects.update(project.id) { it.copy(cover = res.sortedByDescending { p -> p.score }.take(4).map { p -> p.thumb }) }
