@@ -18,27 +18,37 @@ func fail(_ msg: String) -> Never {
     exit(1)
 }
 
-func keychainQuery(server: String, account: String) -> [String: Any] {
-    [kSecClass as String: kSecClassInternetPassword, kSecAttrServer as String: server, kSecAttrAccount as String: account]
+/// The Keychain protocol a share address means, so a password saved for the NAS's web page (http) is never taken for its SMB share.
+func protocolOf(_ url: URL) -> CFString {
+    switch url.scheme?.lowercased() {
+    case "smb", "cifs": return kSecAttrProtocolSMB
+    case "afp": return kSecAttrProtocolAFP
+    case "nfs": return kSecAttrProtocolSMB   // NFS carries no password; the key only has to be consistent, and Security has no NFS constant
+    case "https": return kSecAttrProtocolHTTPS
+    default: return kSecAttrProtocolHTTP
+    }
 }
-func keychainGet(server: String, account: String) -> String? {
-    var q = keychainQuery(server: server, account: account)
+func keychainQuery(server: String, account: String, proto: CFString) -> [String: Any] {
+    [kSecClass as String: kSecClassInternetPassword, kSecAttrServer as String: server, kSecAttrAccount as String: account, kSecAttrProtocol as String: proto]
+}
+func keychainGet(server: String, account: String, proto: CFString) -> String? {
+    var q = keychainQuery(server: server, account: account, proto: proto)
     q[kSecReturnData as String] = true
     q[kSecMatchLimit as String] = kSecMatchLimitOne
     var item: CFTypeRef?
     guard SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return nil }
     return String(data: data, encoding: .utf8)
 }
-func keychainSet(server: String, account: String, password: String) {
-    SecItemDelete(keychainQuery(server: server, account: account) as CFDictionary)
-    var q = keychainQuery(server: server, account: account)
+func keychainSet(server: String, account: String, proto: CFString, password: String) {
+    SecItemDelete(keychainQuery(server: server, account: account, proto: proto) as CFDictionary)
+    var q = keychainQuery(server: server, account: account, proto: proto)
     q[kSecValueData as String] = password.data(using: .utf8)
     q[kSecAttrLabel as String] = "FleetingGleam · \(server)"
     q[kSecAttrDescription as String] = "Network share password"
     SecItemAdd(q as CFDictionary, nil)
 }
-func keychainDelete(server: String, account: String) {
-    SecItemDelete(keychainQuery(server: server, account: account) as CFDictionary)
+func keychainDelete(server: String, account: String, proto: CFString) {
+    SecItemDelete(keychainQuery(server: server, account: account, proto: proto) as CFDictionary)
 }
 
 let args = CommandLine.arguments
@@ -51,7 +61,7 @@ case "mount":
     let user: String? = args.count > 4 && !args[4].hasPrefix("--") ? args[4] : nil
     var password: String? = nil
     if args.contains("--stdin-password") { password = readLine() }
-    if password == nil, let u = user { password = keychainGet(server: host, account: u) }
+    if password == nil, let u = user { password = keychainGet(server: host, account: u, proto: protocolOf(url)) }
     try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     // the keys are the CFSTR values of NetFS.h (kNetFSAllowLoopbackKey, kNetFSUseGuestKey, kNetFSMountAtMountDirKey, kNetFSSoftMountKey)
     let open = NSMutableDictionary()
@@ -63,10 +73,17 @@ case "mount":
     var mountpoints: Unmanaged<CFArray>? = nil
     let rc = NetFSMountURLSync(url as CFURL, dir as CFURL, user as CFString?, password as CFString?, open, mount, &mountpoints)
     if rc != 0 {
-        let why = rc == 13 ? "wrong user name or password" : rc == 2 ? "no such share on that server" : rc == 65 || rc == 64 ? "the server cannot be reached" : String(cString: strerror(rc))
+        // errno values from the local side; NTSTATUS values (negative) from the server
+        let why: String
+        switch rc {
+        case 13, -1073741715, -1073741790: why = "wrong user name or password"            // EACCES, STATUS_LOGON_FAILURE, STATUS_ACCESS_DENIED
+        case 2, -1073741620, -1073741275: why = "no such share on that server"           // ENOENT, STATUS_BAD_NETWORK_NAME, STATUS_NOT_FOUND
+        case 64, 65, 60, 61: why = "the server cannot be reached"                          // EHOSTDOWN, EHOSTUNREACH, ETIMEDOUT, ECONNREFUSED
+        default: why = rc > 0 ? String(cString: strerror(rc)) : "the server refused the connection"
+        }
         fail("\(why) (\(rc))")
     }
-    if args.contains("--save"), let u = user, let p = password { keychainSet(server: host, account: u, password: p) }
+    if args.contains("--save"), let u = user, let p = password { keychainSet(server: host, account: u, proto: protocolOf(url), password: p) }
     emit(["ok": true, "mountpoint": dir.path])
 
 case "unmount":
@@ -84,8 +101,10 @@ case "unmount":
     emit(["ok": true])
 
 case "forget":
-    guard args.count >= 4 else { fail("usage: fg-mount forget <host> <user>") }
-    keychainDelete(server: args[2], account: args[3])
+    // forget <url-or-host> <user>: the protocol comes from the address when one is given
+    guard args.count >= 4 else { fail("usage: fg-mount forget <url> <user>") }
+    let url = URL(string: args[2])
+    keychainDelete(server: url?.host ?? args[2], account: args[3], proto: url.map(protocolOf) ?? kSecAttrProtocolSMB)
     emit(["ok": true])
 
 default:

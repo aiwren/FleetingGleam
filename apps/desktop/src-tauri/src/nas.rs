@@ -179,7 +179,7 @@ pub fn unmount(bin: &Path, data_dir: &Path, s: &Share) -> Result<(), String> {
 
 pub fn forget(bin: &Path, s: &Share) {
     if !s.user.is_empty() {
-        let _ = helper(bin, &["forget", host_of(&s.url), &s.user], None);
+        let _ = helper(bin, &["forget", &s.url, &s.user], None);
     }
 }
 
@@ -247,6 +247,42 @@ mod tests {
         let (root, fstype) = volume_of(&std::env::temp_dir()).expect("statfs works on the temp dir");
         assert!(root.is_absolute());
         assert!(!is_network_fs(&fstype), "{fstype}");
+    }
+
+    /// Against a real share, with its password already in the Keychain:
+    /// `FG_NAS_URL=smb://host/share FG_NAS_USER=me cargo test --lib nas::tests::a_real_share -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn a_real_share_is_mounted_used_and_released() {
+        let Ok(url) = std::env::var("FG_NAS_URL") else { return };
+        let user = std::env::var("FG_NAS_USER").unwrap_or_default();
+        let bin = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("bin/fg-mount");
+        let data = std::env::temp_dir().join(format!("fg_nas_real_{}", std::process::id()));
+        let s = Share { id: "t1".into(), name: "test".into(), url: check_url(&url).unwrap(), user };
+        let dir = mount(&bin, &data, &s, None, false).expect("mount with the password from the Keychain");
+        assert!(is_mounted(&dir), "mounted at its own folder");
+        let (root, fstype) = volume_of(&dir).unwrap();
+        println!("mounted {} as {fstype}", root.display());
+        assert!(is_network_fs(&fstype) && root == dir);
+        println!("{} entries at the root of the share", std::fs::read_dir(&dir).unwrap().count());
+        assert_eq!(mount(&bin, &data, &s, None, false).unwrap(), dir, "mounting again is a no-op");
+        // a test photo of our own goes to the recycle folder the way a rejected one would, then everything is cleaned up
+        let test_dir = dir.join("FleetingGleam-test");
+        std::fs::create_dir_all(&test_dir).unwrap();
+        let photo = test_dir.join("IMG_TEST.jpg");
+        image::RgbImage::from_fn(64, 64, |x, y| image::Rgb([(x * 4) as u8, (y * 4) as u8, 128])).save(&photo).unwrap();
+        let target = network_bin_target(&root, &photo);
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::rename(&photo, &target).unwrap();
+        assert!(target.exists() && !photo.exists(), "moved into {}", target.display());
+        println!("recycled to {}", target.display());
+        std::fs::remove_file(&target).unwrap();
+        let _ = std::fs::remove_dir(target.parent().unwrap());
+        let _ = std::fs::remove_dir(target.parent().unwrap().parent().unwrap());
+        let _ = std::fs::remove_dir(&test_dir);
+        unmount(&bin, &data, &s).unwrap();
+        assert!(!is_mounted(&dir), "released");
+        let _ = std::fs::remove_dir_all(&data);
     }
 
     #[test]
