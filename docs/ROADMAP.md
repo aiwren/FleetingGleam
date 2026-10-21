@@ -2,6 +2,29 @@
 
 目标顺序：**先把 macOS 端完善并公开，再做 Android 端，且两端选片结果一致。** 本文是执行顺序与范围的约定，细节以各阶段的提交为准；完成一项就在这里打勾。
 
+## 当前进度与交接（2026-10-21 晚）
+
+给接手的人（或新会话里的 AI）看的一段。记忆与审查清单在 `docs/REVIEW-2026-10-21.md`，本文其余部分是计划本身。
+
+**已完成并推送：** A1 全部；A2（导出 / 导入）；A5 的代码部分；A6 的 8/10；学习进度条。
+
+**正在进行：NAS 改为应用内直连的纯 Rust SMB 客户端（替换 NetFS 方案）。**
+- 原因：作者要求 Mac 与 Android 共用一份实现，系统挂载只有 Mac 有。
+- 已做：`smb2 = "0.34"`（纯 Rust，MIT/Apache，SMB 2/3 签名加密、NTLM/Kerberos、列共享 / 列目录 / stat / 流式读 / 重命名 / 删除）已加入 `apps/desktop/src-tauri/Cargo.toml`；试探程序 `src-tauri/examples/smbspike.rs` 已编译，由作者在自己终端里带密码运行：
+  `FG_NAS_HOST=192.168.1.9 FG_NAS_USER=me FG_NAS_PASSWORD='…' cargo run --example smbspike`（作者的 NAS；密码不进仓库、不进对话）。
+- 下一步：试探通过后，做 `Source` 接口（本地文件夹 / SMB 共享：列目录、读文件、重命名、建目录、删除），NAS 项目的原图通过客户端流式拉到本地缓存再分析，整理操作经客户端在共享上执行；凭据 Mac 存钥匙串、Android 存 Keystore；然后**删掉** `vision/fg-mount.swift`、`nas.rs` 里的挂载 / 卸载部分与设置页对系统挂载的依赖，只留一条路径。
+- 账号与网页端的区别：这台 NAS 钥匙串里只有 5005 端口 http 的密码，SMB 的要单独存（若仍走钥匙串）。
+
+**等作者在 GitHub 上操作：** 发布草稿 Release v0.1.0；上传 `models-v1`（RELEASING.md）；填 `apps/web/src/legal.ts` 的 `CONTACT_EMAIL`；仓库设为公开；之后把 `apps/web/src/content.ts` 的 `release.available` 改为 true 并 `wrangler deploy`（落地页这次的改动尚未部署，作者未确认）。
+
+**待作者拍板：** A4（Apple 美学分蒸馏 + 人脸统一 MediaPipe）会改变 Mac 端分数，开始前要明确同意。Dependabot 的 glib 告警只能在 GitHub 上标"不适用"（Tauri 2.12 仍用 gtk 0.18）。
+
+**未做的小项：** A6 剩两条（设置页按当前项目的风格显示学习状态、CSS 死类清理与 mock 的取消 / stale / 保存失败路径）；两轮审查里的 P2。
+
+**本机环境（不在仓库里）：** 模型对比的工作区 `../FleetingGleam-bakeoff/`（1.7 GB，可删；`work/labels_*.jsonl` 是作者的 68 对判断）；`~/.cache/huggingface` 里 Q-ReAlign Lite / Pro 等权重约 30 GB，可删；codebase-memory-mcp 已注册为本项目的本机 MCP（新会话里 `/mcp` 可见，第一次让 AI "索引这个项目"）。
+
+**接着做时怎么开口：** "继续 FleetingGleam 路线图里『当前进度与交接』的下一步" 即可；所有上下文都在本文、REVIEW-2026-10-21.md 和自动记忆里。
+
 ## 阶段 A：macOS 端完善
 
 ### A1. 正确性与数据安全（第二轮审查的后端部分，约 1 周；清单见 [REVIEW-2026-10-21.md](REVIEW-2026-10-21.md)）

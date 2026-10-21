@@ -20,6 +20,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+# 纯 Rust 的 SMB2/3 客户端：应用自己连 NAS，Mac 与 Android 共用一份实现（不依赖系统挂载）
+smb2 = "0.34"
 tauri = { version = "2", features = ["protocol-asset", "macos-private-api"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
@@ -59,3 +61,6 @@ overflow-checks = false
 
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
