@@ -6,15 +6,15 @@
 
 ### A1. 正确性与数据安全（第二轮审查的后端部分，约 1 周；清单见 [REVIEW-2026-10-21.md](REVIEW-2026-10-21.md)）
 
-- [ ] 旧扫描仍可能在最后一刻覆盖新项目的决策表：写 `last_photos` 前在锁内再查一次任务号。
-- [ ] 两个 Swift 边车（fg-vision、fg-image）没有超时：读管道改读线程 + 超时，超时 kill 并重启该进程、该照片按"无信号"处理；含换行的文件名拒发（按行分帧会错位）。
-- [ ] release 的 CSP 没有 `media-src`，实况照片打包后没画面：补 `media-src 'self' asset: http://asset.localhost`。
-- [ ] `projects.json` / `styles.json` / `analysis-cache.json` 写入前 fsync；读到有内容但解析失败时先改名备份再新建，前端不再把它当"首次运行"。
-- [ ] 分批落盘条件 `>=100 张 且 >=30 s` 改为"或"，小项目和慢格式中途退出不再一张没存。
-- [ ] `analyze()` 与 `measure_eyes()` 对"有脸但没一只眼可量"的记法统一，避免第二次打开时每张这类照片多跑一次 Vision。
-- [ ] 全尺寸查看器返回原路径前先校验 assetProtocol 白名单，不通过走渲染副本；`<img>` 加 onError 回退。
-- [ ] 被保留上限截掉的好照片换文案（"好照片，超出保留上限"），不再说"处于边界"。
-- [ ] `record_label` 去抖、重训在锁外算、`refs` 向量改紧凑编码；`assign_people` 合并循环改并查集、先剔除单脸簇；`search_photos` 不再在锁内克隆全部向量；`imageio.rs` 的开发机路径只进 debug 构建。
+- [x] 旧扫描仍可能在最后一刻覆盖新项目的决策表：写 `last_photos` 前在锁内再查一次任务号。
+- [x] 两个 Swift 边车（fg-vision、fg-image）没有超时：读管道改读线程 + 超时，超时 kill 并重启该进程、该照片按"无信号"处理；含换行的文件名拒发（按行分帧会错位）。
+- [x] release 的 CSP 没有 `media-src`，实况照片打包后没画面：补 `media-src 'self' asset: http://asset.localhost`。
+- [x] `projects.json` / `styles.json` / `analysis-cache.json` 写入前 fsync；读到有内容但解析失败时先改名备份再新建，前端不再把它当"首次运行"。
+- [x] 分批落盘条件 `>=100 张 且 >=30 s` 改为"或"，小项目和慢格式中途退出不再一张没存。
+- [x] `analyze()` 与 `measure_eyes()` 对"有脸但没一只眼可量"的记法统一，避免第二次打开时每张这类照片多跑一次 Vision。
+- [x] 全尺寸查看器返回原路径前先校验 assetProtocol 白名单，不通过走渲染副本；`<img>` 加 onError 回退。
+- [x] 被保留上限截掉的好照片换文案（"好照片，超出保留上限"），不再说"处于边界"。
+- [x] `record_label` 去抖、重训在锁外算、`refs` 向量改紧凑编码；`assign_people` 合并循环改并查集、先剔除单脸簇；`search_photos` 不再在锁内克隆全部向量；`imageio.rs` 的开发机路径只进 debug 构建。
 
 ### A2. 设置与喜好的导出 / 导入（2–3 天）
 
@@ -45,14 +45,14 @@ Android 没有 Apple Vision，两端要一样就得两端用同样的东西：
 
 ### A6. 前端（第二轮审查的前端部分，约 1 周）
 
-- [ ] 对比视图按 `manual` 判定，能真正"确认"系统建议；撤销栈随项目切换清空、`decide` 校验路径属于当前项目。
-- [ ] 快捷键统一门控：模块 active、无对话框、无查看器时才响应；对比视图不再全局劫持 Tab；瓷砖焦点可见。
-- [ ] en 的 `bin.confirmTitle/confirmBody` 归位；列表连接用 `Intl.ListFormat`；理由改列表渲染；加 zh / en 键集合一致性测试。
-- [ ] "清除缓存"后项目重新探测、缩略图缺失有占位；确认文案说明"所有项目需重新分析"。
-- [ ] `projects.ts` 区分首次 / 解析失败 / 读错误，只有无 `__TAURI_INTERNALS__` 时才退回 localStorage。
-- [ ] 备注与保留上限滑块防抖提交，persist 合并连续改动。
+- [x] 对比视图按 `manual` 判定，能真正"确认"系统建议；撤销栈随项目切换清空、`decide` 校验路径属于当前项目。
+- [x] 快捷键统一门控：模块 active、无对话框、无查看器时才响应；对比视图不再全局劫持 Tab；瓷砖焦点可见。
+- [x] en 的 `bin.confirmTitle/confirmBody` 归位；列表连接用 `Intl.ListFormat`；理由改列表渲染；加 zh / en 键集合一致性测试。
+- [x] "清除缓存"后项目重新探测、缩略图缺失有占位；确认文案说明"所有项目需重新分析"。
+- [x] `projects.ts` 区分首次 / 解析失败 / 读错误，只有无 `__TAURI_INTERNALS__` 时才退回 localStorage。
+- [x] 备注与保留上限滑块防抖提交，persist 合并连续改动。
 - [ ] 学习状态按当前项目的风格读取与重置；"重新评估"只在模型生效或更新时出现；工具栏显示本项目的风格。
-- [ ] 颜色回归 DESIGN：开关 / 进度 / 选中态用墨色，对话框警告不用琥珀，danger 不用红色。
+- [x] 颜色回归 DESIGN：开关 / 进度 / 选中态用墨色，对话框警告不用琥珀，danger 不用红色。
 - [ ] 清理 App.css 死类；mock 能走到取消 / stale / 保存失败路径。
 - [ ] 其余 P2：停止分析后重新探测；⌘O 时序；无文件夹的空面板；场景画廊窗口化；光台不回退原图。
 

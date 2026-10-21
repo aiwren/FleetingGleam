@@ -493,7 +493,7 @@ html[data-mock] .sidebar-wrap { background: var(--panel); }
 .loading { text-align: center; }
 .switch { position: relative; width: 38px; height: 22px; padding: 0; border: 0; border-radius: 11px; background: var(--surface-2); transition: background .25s; flex: none; }
 .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: var(--ash); transition: transform .3s var(--ease-out), background .2s; }
-.switch[aria-checked="true"] { background: var(--gleam); }
+.switch[aria-checked="true"] { background: var(--ink); }
 .switch[aria-checked="true"]::after { transform: translateX(16px); background: #fff; }
 
 .nav-inner > svg { flex: none; }
@@ -724,7 +724,7 @@ html[data-mock] .sidebar-wrap { background: var(--panel); }
 .modal-body { display: grid; gap: 10px; }
 .modal-body p { margin: 0; line-height: 1.6; }
 .modal-body .small { font-size: 12.5px; }
-.modal-body .warn { color: var(--ink); background: color-mix(in srgb, var(--gleam) 20%, transparent); border-radius: 8px; padding: 8px 10px; }
+.modal-body .warn { color: var(--ink); font-weight: 550; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
 .modal-body .dest { padding: 8px 10px; border-radius: 8px; background: var(--surface); word-break: break-all; font-size: 12px; }
 .modal-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 .opts { display: grid; gap: 6px; }
@@ -843,7 +843,7 @@ html[data-mock] .sidebar-wrap { background: var(--panel); }
 .sreasons { margin: 0; padding-left: 16px; font-size: 12.5px; color: var(--ash); display: grid; gap: 4px; }
 .mbars { display: grid; gap: 8px; }
 .mbar { display: grid; grid-template-columns: 74px 1fr 26px; align-items: center; gap: 8px; font-size: 12px; color: var(--ash); }
-.mbar i { height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; } .mbar b { display: block; height: 100%; border-radius: 3px; background: var(--gleam); }
+.mbar i { height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; } .mbar b { display: block; height: 100%; border-radius: 3px; background: var(--ink); }
 .mbar em { font-style: normal; text-align: right; color: var(--ink); }
 .strip { display: flex; gap: 6px; padding: 10px 16px 16px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; position: relative; z-index: 1; }
 .strip::-webkit-scrollbar { display: none; }
@@ -880,11 +880,11 @@ html[data-mock] .sidebar-wrap { background: var(--panel); }
 .vmgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .vmgrid button { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: transparent; color: var(--ink); font-size: 12.5px; transition: background .15s, border-color .15s; }
 .vmgrid button:hover, .vmlist button:hover { background: var(--surface-2); }
-.vmgrid button.on { border-color: var(--gleam); background: color-mix(in srgb, var(--gleam) 12%, transparent); }
+.vmgrid button.on { border-color: var(--ink); background: color-mix(in srgb, var(--ink) 12%, transparent); }
 .vmlist { display: grid; gap: 2px; }
 .vmlist button { display: flex; align-items: center; gap: 9px; padding: 6px 8px; border: 0; border-radius: 7px; background: transparent; color: var(--ink); font-size: 12.5px; text-align: left; }
 .vmlist i { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--ash); }
-.vmlist button.on i { border-color: var(--gleam); background: var(--gleam); }
+.vmlist button.on i { border-color: var(--ink); background: var(--ink); }
 @container tb (max-width: 1020px) { .segmented:not(.block) .cnt { display: none; } .vmlabel { display: none; } }
 @container tb (max-width: 820px) { .toolbar-title > .mono, .toolbar-title > .ash { display: none; } .reeval { font-size: 0; padding: 0; width: 26px; height: 26px; position: relative; } .reeval::after { content: "↻"; font-size: 14px; } }
 
@@ -900,7 +900,7 @@ html[data-mock] .sidebar-wrap { background: var(--panel); }
 .sthumb:hover { opacity: .9; transform: scale(1); }
 .sthumb.cur { opacity: 1; transform: scale(1.1); z-index: 1; }
 .sthumb.reject:not(.cur) { opacity: .3; }
-.sind { position: absolute; left: 50%; bottom: -9px; width: 16px; height: 3px; margin-left: -8px; border-radius: 2px; background: var(--gleam); box-shadow: 0 0 10px color-mix(in srgb, var(--gleam) 70%, transparent); }
+.sind { position: absolute; left: 50%; bottom: -9px; width: 16px; height: 3px; margin-left: -8px; border-radius: 2px; background: var(--ink); }
 .sdot { position: absolute; right: 3px; top: 3px; }
 /* the four-point mark on a light button: deeper amber with a fine edge, so it reads on any surface */
 .sbtn .star.filled path, .cmp-tag .star.filled path { fill: #E7A21F; stroke: #B87308; stroke-width: .9; }
@@ -958,8 +958,8 @@ html[data-mock] .sidebar-wrap { background: var(--panel); }
 .cmp2-bottom { position: absolute; left: 0; right: 0; bottom: 10px; display: flex; justify-content: center; gap: 14px; font-size: 12px; pointer-events: none; }
 .cmp2-fit.reject .cmp2-img { opacity: .78; }
 @media (max-width: 1150px) { .cmp2-bottom .ash { display: none; } }
-.btn.danger { background: #c8473d; border-color: transparent; color: #fff; }
-.btn.danger:hover { background: #b83d34; }
+.btn.danger { background: var(--ink); border-color: transparent; color: var(--on-ink); }
+.btn.danger:hover { background: var(--ink); opacity: .86; }
 
 /* The focus frame: four corners that glide from photo to photo */
 .selframe { position: absolute; z-index: 8; pointer-events: none; }
@@ -1002,7 +1002,7 @@ html[data-mock] .sidebar-wrap { background: var(--panel); }
 .cmp2-rail button { width: 34px; height: 24px; padding: 0; border: 0; border-radius: 5px; overflow: hidden; opacity: .55; transition: opacity .2s, transform .25s var(--ease-out); }
 .cmp2-rail button img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .cmp2-rail button:hover { opacity: 1; transform: translateY(-2px); }
-.cmp2-rail button.on { opacity: 1; box-shadow: 0 0 0 1.5px var(--gleam); }
+.cmp2-rail button.on { opacity: 1; box-shadow: 0 0 0 1.5px var(--ink); }
 .cmp2 { padding-bottom: 48px; }
 
 /* Compare: no frames. The chosen photo is lifted and lit; the others step back. */
@@ -1048,7 +1048,7 @@ html[data-mock] .sidebar-wrap { background: var(--panel); }
 .sbox:hover, .sbox:focus-within { border-color: color-mix(in srgb, var(--ink) 30%, var(--line)); }
 .sbox-ico { position: relative; flex: none; width: 32px; height: 100%; display: grid; place-items: center; color: var(--ash); }
 .sbox:focus-within .sbox-ico, .sbox.open .sbox-ico { color: var(--ink); }
-.sbox-ring { position: absolute; left: 3px; top: 2px; color: var(--gleam); }
+.sbox-ring { position: absolute; left: 3px; top: 2px; color: var(--ink); }
 .sbox-ring circle { stroke: var(--gleam); transition: stroke-dashoffset .4s var(--ease-out); }
 .sbox input { flex: 1; min-width: 0; width: 100%; border: 0; outline: 0; background: transparent; color: inherit; font: inherit; font-size: 13px; }
 .sbox input::placeholder { color: var(--ash); }
@@ -1071,7 +1071,7 @@ html[data-mock] .sidebar-wrap { background: var(--panel); }
 .mlist { margin: 10px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; font-size: 13px; }
 .mlist li { display: flex; justify-content: space-between; gap: 16px; padding: 7px 10px; border-radius: 8px; background: var(--surface); }
 .mbar2 { height: 6px; border-radius: 3px; overflow: hidden; background: var(--line); }
-.mbar2 i { display: block; height: 100%; border-radius: 3px; background: var(--gleam); transition: width .2s linear; }
+.mbar2 i { display: block; height: 100%; border-radius: 3px; background: var(--ink); transition: width .2s linear; }
 .ktag { margin-left: 8px; padding: 1px 8px; border-radius: 999px; font-family: inherit; font-size: 11px; color: var(--ink); background: color-mix(in srgb, var(--ink) 8%, transparent); vertical-align: 1px; }
 
 /* selection styles (advanced) */
@@ -1104,8 +1104,8 @@ html[data-mock] .sidebar-wrap { background: var(--panel); }
 .style-actions .btn.ghost:hover { color: var(--ink); border-color: var(--line); }
 .style-menu { position: relative; margin-left: auto; }
 .style-menu-panel { right: 0; width: 168px; }
-.style-menu-panel .vmlist button.danger { color: #c8473d; }
-.style-menu-panel .vmlist button.danger:hover { background: color-mix(in srgb, #c8473d 12%, transparent); }
+.style-menu-panel .vmlist button.danger { color: var(--ink); }
+.style-menu-panel .vmlist button.danger:hover { background: color-mix(in srgb, var(--ink) 12%, transparent); }
 .style-empty { display: grid; gap: 4px; padding: 40px 4px; text-align: center; }
 
 .scene-gallery { padding: 8px 24px 40px; }
