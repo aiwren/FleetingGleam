@@ -398,6 +398,16 @@ fun StatusStrip(cull: CullState, data: CullData, padded: Boolean = true) {
                 Text("${data.status[id] ?: 0}", style = Type.monoSmall.copy(color = if (on) c.onInk.copy(alpha = 0.7f) else c.ash, fontSize = androidx.compose.ui.unit.TextUnit(11f, androidx.compose.ui.unit.TextUnitType.Sp)), modifier = Modifier.padding(start = 5.dp))
             }
         }
+        // 人物与场景的筛选：状态已经在这一排上了，所以这里只放一个入口（项目里有人物或不止一个场景时才有）
+        if ((data.people.isNotEmpty() || data.scenes.size > 1) && cull.personFilter == null && cull.sceneFilter == null) {
+            Row(
+                Modifier.clip(CircleShape).background(c.surface).border(1.dp, c.line, CircleShape).clickable { cull.filterSheet = true }.padding(horizontal = 10.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                FgIcon(com.fleetinggleam.android.ui.components.Icons.FILTERS, size = 12.dp, color = c.ink)
+                Text(t(if (data.people.isNotEmpty()) "android.cull.peopleScenes" else "cull.scenes"), style = Type.rowDesc.copy(color = c.ink, fontWeight = FontWeight.Medium, fontSize = androidx.compose.ui.unit.TextUnit(12f, androidx.compose.ui.unit.TextUnitType.Sp)), modifier = Modifier.padding(start = 4.dp))
+            }
+        }
         cull.personFilter?.let { id ->
             data.people.firstOrNull { it.person == id }?.let { p ->
                 FilterChip(onClear = { cull.personFilter = null }) { FaceAvatar(p.photo, p.box, 22.dp); Text(t("cull.people"), style = Type.rowDesc.copy(color = c.ink), modifier = Modifier.padding(start = 6.dp)) }
@@ -467,7 +477,6 @@ private fun CullBar(cull: CullState, undoN: Int, modifier: Modifier, onUndo: () 
                 if (cull.sceneView) {
                     BarItem("M10 3L5 8l5 5", t("cull.backToPhotos")) { cull.sceneView = false }
                 } else {
-                    BarItem(com.fleetinggleam.android.ui.components.Icons.FILTERS, t("cull.filters"), dot = cull.filtered || cull.mode != "all") { cull.filterSheet = true }
                     BarItem(cull.layout.icon, t("cull.layout.${cull.layout.id}")) { cull.viewSheet = true }
                     BarItem(UNDO_ICON, t("android.cull.undo"), enabled = undoN > 0, onClick = onUndo)
                 }

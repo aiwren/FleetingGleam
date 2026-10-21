@@ -31,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -102,26 +103,25 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
 
     Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
-        // ---- 工具栏：← 项目 · 名字 · 数量；右边：重新评估、项目设置
-        Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Row(Modifier.clip(RoundedCornerShape(10.dp)).clickable { Projects.setActive(null) }.padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        // ---- 工具栏（iOS 导航栏的样子）：左边"‹ 项目"，中间一行项目名（点一下改名），右边重新评估、整理、搜索、项目设置。
+        //      张数不在这里重复：下面的"全部 n"已经说了；分析中的进度在横幅里。
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        var sideW by remember { mutableStateOf(88.dp) }
+        var leftW by remember { mutableStateOf(88.dp) }
+        Box(Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 8.dp)) {
+            Row(Modifier.align(Alignment.CenterStart).onGloballyPositioned { leftW = with(density) { it.size.width.toDp() } }.clip(RoundedCornerShape(10.dp)).clickable { Projects.setActive(null) }.padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 FgIcon(Icons.BACK, size = 14.dp, box = 12f, stroke = 1.6f)
-                Text(t("home.back"), style = Type.small.copy(color = c.ash), modifier = Modifier.padding(start = 4.dp))
+                Text(t("home.back"), style = Type.rowTitle.copy(color = c.ink), modifier = Modifier.padding(start = 2.dp))
             }
-            Column(Modifier.weight(1f).padding(start = 4.dp).clickable { renaming = true }) {
-                Text(project.name, style = Type.heading.copy(color = c.ink), maxLines = 1, overflow = Ellipsis)
-                when {
-                    phase == Phase.Done -> Text(t("cull.photoCount", "count" to photos.size), style = Type.monoSmall.copy(color = c.ash))
-                    scanning -> Text("${progress.done} / ${progress.total}", style = Type.monoSmall.copy(color = c.ash))
-                }
+            Row(Modifier.align(Alignment.CenterEnd).onGloballyPositioned { sideW = with(density) { it.size.width.toDp() } }, verticalAlignment = Alignment.CenterVertically) {
+                if (phase == Phase.Done && settings.learn && project.learn != false && dirty > 0) FgButton(t("cull.reeval"), { Session.reevaluate() }, small = true, modifier = Modifier.padding(end = 4.dp))
+                if (phase == Phase.Done) OrganizeButton(project)
+                if (phase == Phase.Done && project.search != false) IconBtn(Icons.SEARCH, t("search.label"), { cull.searchOpen = !cull.searchOpen; if (!cull.searchOpen) cull.query = "" }, on = cull.searchOpen, plain = true)
+                IconBtn(Icons.SLIDERS, t("pset.settings"), { settingsOpen = true }, enabled = !scanning, plain = true)
             }
-            if (phase == Phase.Done && settings.learn && project.learn != false && dirty > 0) FgButton(t("cull.reeval"), { Session.reevaluate() }, small = true, modifier = Modifier.padding(end = 6.dp))
-            if (phase == Phase.Done) OrganizeButton(project)
-            if (phase == Phase.Done && project.search != false) IconBtn(Icons.SEARCH, t("search.label"), { cull.searchOpen = !cull.searchOpen; if (!cull.searchOpen) cull.query = "" }, on = cull.searchOpen, plain = true)
-            IconBtn(Icons.SLIDERS, t("pset.settings"), { settingsOpen = true }, enabled = !scanning, plain = true)
-        }
-        AnimatedVisibility(phase == Phase.Done && cull.searchOpen, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
-            SearchField(cull, Modifier.padding(start = 12.dp, end = 12.dp, bottom = 8.dp))
+            // 居中的标题；右边按钮多时让出位置（最多占中间那一段）
+            Text(project.name, style = Type.heading.copy(color = c.ink), maxLines = 1, overflow = Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.align(Alignment.Center).padding(horizontal = maxOf(leftW, sideW) + 4.dp).clip(RoundedCornerShape(8.dp)).clickable { renaming = true }.padding(horizontal = 6.dp, vertical = 4.dp))
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(c.line))
 

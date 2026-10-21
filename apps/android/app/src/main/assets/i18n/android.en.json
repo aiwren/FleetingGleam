@@ -31,7 +31,8 @@
   },
   "cull": {
    "hint": "Tap a photo to select it, then ★ to keep or ✕ to reject; in Single view push up to keep and pull down to reject. Undo is in the bar below.",
-   "undo": "Undo"
+   "undo": "Undo",
+   "peopleScenes": "People & scenes"
   },
   "models": {
    "background": "Download in background",
