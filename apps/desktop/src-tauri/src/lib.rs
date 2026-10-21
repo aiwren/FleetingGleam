@@ -23,6 +23,7 @@ mod vision;
 mod taste;
 mod nas;
 mod r2;
+mod secrets;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -703,12 +704,12 @@ fn backup_status_of(dir: &Path) -> BackupStatus {
         configured: c.configured(),
         enabled: c.enabled,
         keep: c.keep(),
-        targets: c.targets.iter().map(|t| TargetStatus { id: t.id.clone(), name: t.name.clone(), kind: t.kind.clone(), account: t.account.clone(), bucket: t.bucket.clone(), access_key: t.access_key.clone(), has_secret: r2::saved_secret(&t.id).is_some(), last_ok: t.last_ok, last_error: t.last_error.clone() }).collect(),
+        targets: c.targets.iter().map(|t| TargetStatus { id: t.id.clone(), name: t.name.clone(), kind: t.kind.clone(), account: t.account.clone(), bucket: t.bucket.clone(), access_key: t.access_key.clone(), has_secret: r2::saved_secret(dir, &t.id).is_some(), last_ok: t.last_ok, last_error: t.last_error.clone() }).collect(),
     }
 }
 
-fn target_secret(t: &r2::Target) -> Result<String, String> {
-    r2::saved_secret(&t.id).ok_or_else(|| format!("the Secret Access Key of \"{}\" is not in the Keychain: enter it again in Settings", t.name))
+fn target_secret(dir: &Path, t: &r2::Target) -> Result<String, String> {
+    r2::saved_secret(dir, &t.id).ok_or_else(|| format!("the Secret Access Key of \"{}\" is missing: enter it again in Settings", t.name))
 }
 
 #[tauri::command]
@@ -736,10 +737,10 @@ async fn backup_save_target(app: AppHandle, id: Option<String>, name: String, ki
         }
         let secret = match secret.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
             Some(s) => s.to_string(),
-            None => r2::saved_secret(&id).ok_or("the Secret Access Key is needed")?,
+            None => r2::saved_secret(&dir, &id).ok_or("the Secret Access Key is needed")?,
         };
         r2::check(&t, &secret)?;
-        r2::remember_secret(&id, &secret)?;
+        r2::remember_secret(&dir, &id, &secret)?;
         match cfg.targets.iter_mut().find(|x| x.id == id) {
             Some(slot) => *slot = t,
             None => cfg.targets.push(t),
@@ -758,7 +759,7 @@ async fn backup_remove_target(app: AppHandle, id: String) -> Result<BackupStatus
         let dir = data_dir(&app);
         let mut cfg = r2::load(&dir);
         cfg.targets.retain(|t| t.id != id);
-        r2::forget_secret(&id);
+        r2::forget_secret(&dir, &id);
         r2::save(&dir, &cfg)?;
         Ok(backup_status_of(&dir))
     })
@@ -802,7 +803,7 @@ async fn backup_now(app: AppHandle, settings: serde_json::Value) -> Result<Backu
         let mut failures = Vec::new();
         let total = cfg.targets.iter().filter(|t| t.configured()).count();
         for t in cfg.targets.iter_mut().filter(|t| t.configured()) {
-            let r = target_secret(t)
+            let r = target_secret(&dir, t)
                 .and_then(|secret| r2::put(t, &secret, r2::KEY_LATEST, &bytes).and_then(|_| r2::put(t, &secret, &copy, &bytes)).and_then(|_| r2::prune_auto(t, &secret, keep).map(|_| ())));
             match r {
                 Ok(()) => {
@@ -829,7 +830,7 @@ async fn backup_restore(app: AppHandle, id: String) -> Result<(taste::Summary, s
         let dir = data_dir(&app);
         let cfg = r2::load(&dir);
         let t = cfg.targets.iter().find(|t| t.id == id).ok_or("unknown backup target")?;
-        let secret = target_secret(t)?;
+        let secret = target_secret(&dir, t)?;
         let bytes = r2::get(t, &secret, r2::KEY_LATEST)?.ok_or("there is no backup in that bucket yet")?;
         let pack: taste::Pack = serde_json::from_slice(&bytes).map_err(|e| format!("the backup cannot be read: {e}"))?;
         taste_apply(&app, pack)
@@ -858,7 +859,7 @@ fn nas_connect_saved(app: &AppHandle, s: &nas::Share) -> Result<(), String> {
     if !s.enabled {
         return Err(format!("the NAS \"{}\" is turned off in Settings", s.name));
     }
-    let pw = nas::saved_password(s).ok_or_else(|| format!("the NAS \"{}\" needs its password: connect it in Settings", s.name))?;
+    let pw = nas::saved_password(&data_dir(app), s).ok_or_else(|| format!("the NAS \"{}\" needs its password: connect it in Settings", s.name))?;
     st.nas.connect(s, &pw).map_err(|e| format!("{}: {e}", s.name))
 }
 
@@ -888,7 +889,7 @@ async fn nas_probe(app: AppHandle, host: String, user: String, password: String,
             (true, Some(id)) => {
                 let dir = data_dir(&app);
                 let s = nas::load(&dir).into_iter().find(|s| s.id == id).ok_or("unknown NAS")?;
-                if s.user == user.trim() { nas::saved_password(&s).unwrap_or_default() } else { String::new() }
+                if s.user == user.trim() { nas::saved_password(&dir, &s).unwrap_or_default() } else { String::new() }
             }
             _ => password,
         };
@@ -912,13 +913,13 @@ async fn nas_update(app: AppHandle, id: String, name: String, host: String, user
         let next = nas::Share { id: id.clone(), name: if name.trim().is_empty() { host.clone() } else { name.trim().to_string() }, host, user: user.trim().to_string(), enabled: old.enabled };
         // 密码留空 = 用记住的（账号没变时）
         let same_account = next.host == old.host && next.user == old.user;
-        let pw = if password.is_empty() { if same_account { nas::saved_password(&old).unwrap_or_default() } else { String::new() } } else { password };
+        let pw = if password.is_empty() { if same_account { nas::saved_password(&dir, &old).unwrap_or_default() } else { String::new() } } else { password };
         app.state::<AppState>().nas.connect(&next, &pw)?;
         if !same_account {
-            nas::forget_password(&old);
+            nas::forget_password(&dir, &old);
         }
         if remember && (!same_account || !pw.is_empty()) {
-            nas::remember_password(&next, &pw)?;
+            nas::remember_password(&dir, &next, &pw)?;
         }
         if let Some(s) = list.iter_mut().find(|s| s.id == id) {
             *s = next;
@@ -950,7 +951,7 @@ async fn nas_add(app: AppHandle, name: String, host: String, user: String, passw
         let share = nas::Share { id, name, host, user: user.trim().to_string(), enabled: true };
         app.state::<AppState>().nas.connect(&share, &password)?;
         if remember {
-            nas::remember_password(&share, &password)?;
+            nas::remember_password(&dir, &share, &password)?;
         }
         list.push(share);
         nas::save(&dir, &list)?;
@@ -968,7 +969,7 @@ async fn nas_remove(app: AppHandle, id: String) -> Result<Vec<nas::ShareStatus>,
         let mut list = nas::load(&dir);
         if let Some(s) = list.iter().find(|s| s.id == id).cloned() {
             app.state::<AppState>().nas.disconnect(&s.id);
-            nas::forget_password(&s);
+            nas::forget_password(&dir, &s);
             let _ = std::fs::remove_dir_all(nas::local_dir(&dir, &s.id));
             list.retain(|x| x.id != id);
             nas::save(&dir, &list)?;
@@ -988,7 +989,7 @@ async fn nas_connect(app: AppHandle, id: String, password: Option<String>) -> Re
         match password.as_deref().filter(|p| !p.is_empty()) {
             Some(pw) => {
                 app.state::<AppState>().nas.connect(&s, pw)?;
-                nas::remember_password(&s, pw)?;
+                nas::remember_password(&dir, &s, pw)?;
             }
             None => nas_connect_saved(&app, &s)?,
         }

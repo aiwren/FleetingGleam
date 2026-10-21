@@ -408,7 +408,7 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
                 </span>
               </Row>
               <Row label={t("settings.backupKeep")} desc={t("settings.backupKeepHint")}>
-                <Stepper value={backup?.keep ?? 30} min={1} max={1000} disabled={!backup?.configured} label={t("settings.backupKeep")} format={(n) => t("settings.backupKeepN", { count: n })} onChange={bkKeep} />
+                <Stepper value={backup?.keep ?? 30} min={1} max={1000} disabled={!backup?.configured} label={t("settings.backupKeep")} onChange={bkKeep} />
               </Row>
               <Row label={t("settings.backupTargets")} desc={t("settings.backupTargetsDesc")}>
                 <button className="btn" disabled={bkBusy !== null} onClick={bkAdd}>{t("settings.backupAddTarget")}</button>

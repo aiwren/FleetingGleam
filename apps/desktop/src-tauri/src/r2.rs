@@ -1,6 +1,6 @@
 //! 云备份：把"我的设置与喜好"（见 taste.rs，只有设置和各风格学到的向量与决定，没有照片、项目和路径）自动存到用户自己的
 //! Cloudflare R2 桶里。没有账号系统，所以用的是用户自己在 Cloudflare 后台建的桶和 API 令牌：账户 ID、桶名、Access Key ID 记在
-//! `backup.json`，Secret Access Key 只存钥匙串。R2 走 S3 兼容接口，这里自己做 SigV4 签名（只需要 PUT / GET 两个对象操作），
+//! `backup.json`，Secret Access Key 在应用自己的加密仓库里（secrets.rs）。R2 走 S3 兼容接口，这里自己做 SigV4 签名（只需要 PUT / GET 两个对象操作），
 //! 不引入整套 AWS SDK。
 
 use std::path::Path;
@@ -89,9 +89,6 @@ pub fn load(dir: &Path) -> Config {
     // 早期的单目标格式：桶信息在顶层，Secret 按 Access Key 存；搬成一个目标，Secret 也搬到按 id 的条目
     if c.targets.is_empty() && !c.account.is_empty() {
         let t = Target { id: "t1".to_string(), name: "Cloudflare R2".to_string(), kind: kind_r2(), account: std::mem::take(&mut c.account), bucket: std::mem::take(&mut c.bucket), access_key: std::mem::take(&mut c.access_key), last_ok: 0, last_error: None };
-        if let Some(secret) = legacy_secret(&t.access_key) {
-            let _ = remember_secret(&t.id, &secret);
-        }
         c.targets.push(t);
         let _ = save(dir, &c);
     }
@@ -107,43 +104,20 @@ pub fn save(dir: &Path, c: &Config) -> Result<(), String> {
     std::fs::rename(&tmp, &path).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-// ---------------------------------------------------------------- 钥匙串里的 Secret Access Key
+// ---------------------------------------------------------------- Secret Access Key：本地加密仓库（见 secrets.rs）
 
-const SERVICE: &str = "FleetingGleam backup";
-/// 早期按 Access Key 存的条目，只在迁移时读一次。
-const LEGACY_SERVICE: &str = "FleetingGleam R2";
+fn secret_id(target_id: &str) -> String {
+    format!("backup:{target_id}")
+}
 
-#[cfg(target_os = "macos")]
-pub fn remember_secret(target_id: &str, secret: &str) -> Result<(), String> {
-    security_framework::passwords::set_generic_password(SERVICE, target_id, secret.as_bytes()).map_err(|e| format!("Keychain: {e}"))
+pub fn remember_secret(dir: &Path, target_id: &str, secret: &str) -> Result<(), String> {
+    crate::secrets::set(dir, &secret_id(target_id), secret)
 }
-#[cfg(target_os = "macos")]
-pub fn saved_secret(target_id: &str) -> Option<String> {
-    security_framework::passwords::get_generic_password(SERVICE, target_id).ok().and_then(|b| String::from_utf8(b).ok())
+pub fn saved_secret(dir: &Path, target_id: &str) -> Option<String> {
+    crate::secrets::get(dir, &secret_id(target_id))
 }
-#[cfg(target_os = "macos")]
-pub fn forget_secret(target_id: &str) {
-    let _ = security_framework::passwords::delete_generic_password(SERVICE, target_id);
-}
-#[cfg(target_os = "macos")]
-fn legacy_secret(access_key: &str) -> Option<String> {
-    let s = security_framework::passwords::get_generic_password(LEGACY_SERVICE, access_key).ok().and_then(|b| String::from_utf8(b).ok());
-    let _ = security_framework::passwords::delete_generic_password(LEGACY_SERVICE, access_key);
-    s
-}
-#[cfg(not(target_os = "macos"))]
-pub fn remember_secret(_target_id: &str, _secret: &str) -> Result<(), String> {
-    Err("the secret cannot be kept on this platform yet".to_string())
-}
-#[cfg(not(target_os = "macos"))]
-pub fn saved_secret(_target_id: &str) -> Option<String> {
-    None
-}
-#[cfg(not(target_os = "macos"))]
-pub fn forget_secret(_target_id: &str) {}
-#[cfg(not(target_os = "macos"))]
-fn legacy_secret(_access_key: &str) -> Option<String> {
-    None
+pub fn forget_secret(dir: &Path, target_id: &str) {
+    crate::secrets::delete(dir, &secret_id(target_id));
 }
 
 // ---------------------------------------------------------------- SigV4

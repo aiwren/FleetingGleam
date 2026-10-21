@@ -6,7 +6,7 @@
 //! （只拉新增或变化的原图，分析本来就要完整读一遍，没有额外流量；本地已经没有的远端文件也会从镜像里删掉），之后分析、查看、
 //! 导出都照旧走本地文件；淘汰照片则通过客户端在 NAS 上移进回收文件夹，再删掉本地副本。
 //!
-//! 共享只记地址和用户名（`nas.json`），密码存在钥匙串里（和系统"互联网密码"同一类条目）。
+//! 共享只记地址和用户名（`nas.json`），密码在应用自己的加密仓库里（secrets.rs）。
 //! 客户端是异步的，而扫描跑在阻塞线程上，所以所有连接都住在一条专用线程里，用通道收发请求；调用方拿到的是同步接口。
 
 use std::collections::{HashMap, HashSet};
@@ -145,53 +145,28 @@ fn join_rel(dir: &str, name: &str) -> String {
     if dir.is_empty() { name.to_string() } else { format!("{dir}/{name}") }
 }
 
-// ---------------------------------------------------------------- 钥匙串
+// ---------------------------------------------------------------- 密码：本地加密仓库（见 secrets.rs）
 
-#[cfg(target_os = "macos")]
-mod keychain {
-    use security_framework::passwords::{delete_internet_password, get_internet_password, set_internet_password};
-    use security_framework_sys::keychain::{SecAuthenticationType, SecProtocolType};
-
-    /// 和系统的"互联网密码"同一类条目（服务器 + 账号 + SMB 协议），所以 NAS 网页端的 http 密码永远不会被当成 SMB 密码。
-    pub fn set(server: &str, account: &str, password: &str) -> Result<(), String> {
-        set_internet_password(server, None, account, "", None, SecProtocolType::SMB, SecAuthenticationType::Any, password.as_bytes()).map_err(|e| format!("Keychain: {e}"))
-    }
-    pub fn get(server: &str, account: &str) -> Option<String> {
-        get_internet_password(server, None, account, "", None, SecProtocolType::SMB, SecAuthenticationType::Any).ok().and_then(|b| String::from_utf8(b).ok())
-    }
-    pub fn delete(server: &str, account: &str) {
-        let _ = delete_internet_password(server, None, account, "", None, SecProtocolType::SMB, SecAuthenticationType::Any);
-    }
+fn secret_id(s: &Share) -> String {
+    format!("nas:{}:{}", server_of(&s.host), s.user)
 }
 
-#[cfg(not(target_os = "macos"))]
-mod keychain {
-    // 其它平台的安全存储（Android 的 Keystore）以后接；现在密码不被记住，每次连接时要输入。
-    pub fn set(_server: &str, _account: &str, _password: &str) -> Result<(), String> {
-        Err("passwords cannot be remembered on this platform yet".to_string())
-    }
-    pub fn get(_server: &str, _account: &str) -> Option<String> {
-        None
-    }
-    pub fn delete(_server: &str, _account: &str) {}
-}
-
-/// 记住一个共享的密码。
-pub fn remember_password(s: &Share, password: &str) -> Result<(), String> {
+/// 记住一台 NAS 的密码。
+pub fn remember_password(dir: &Path, s: &Share, password: &str) -> Result<(), String> {
     if s.user.is_empty() {
         return Ok(());
     }
-    keychain::set(server_of(&s.host), &s.user, password)
+    crate::secrets::set(dir, &secret_id(s), password)
 }
 
 /// 记住的密码（访客没有密码，返回空串）。
-pub fn saved_password(s: &Share) -> Option<String> {
-    if s.user.is_empty() { Some(String::new()) } else { keychain::get(server_of(&s.host), &s.user) }
+pub fn saved_password(dir: &Path, s: &Share) -> Option<String> {
+    if s.user.is_empty() { Some(String::new()) } else { crate::secrets::get(dir, &secret_id(s)) }
 }
 
-pub fn forget_password(s: &Share) {
+pub fn forget_password(dir: &Path, s: &Share) {
     if !s.user.is_empty() {
-        keychain::delete(server_of(&s.host), &s.user);
+        crate::secrets::delete(dir, &secret_id(s));
     }
 }
 
@@ -715,7 +690,7 @@ mod tests {
     fn a_real_nas_is_browsed_synced_and_recycled_into() {
         let Ok(host) = std::env::var("FG_NAS_HOST") else { return };
         let s = Share { id: "t1".into(), name: "test".into(), host: check_host(&host).unwrap(), user: std::env::var("FG_NAS_USER").unwrap_or_default(), enabled: true };
-        let pw = std::env::var("FG_NAS_PASSWORD").ok().or_else(|| saved_password(&s)).expect("a password");
+        let pw = std::env::var("FG_NAS_PASSWORD").expect("FG_NAS_PASSWORD");
         let pool = Pool::start();
         pool.connect(&s, &pw).expect("connect");
         assert!(pool.is_connected("t1"));
