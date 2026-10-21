@@ -23,6 +23,8 @@ fn examples_for(strength: f32) -> usize {
 pub struct Reference {
     /// File name without extension, lower case: used to leave photos that are also in a project out of the "not chosen" examples.
     pub stem: String,
+    /// Stored packed (base64 of little-endian floats, a quarter of the size of a JSON list); old files with plain lists still read.
+    #[serde(with = "crate::cache::packed")]
     pub emb: Vec<f32>,
 }
 
@@ -138,6 +140,14 @@ impl Prefs {
         Some(sigmoid(z))
     }
 
+    /// Takes over the weights another copy of these preferences just trained (the labels here may already be newer; the next
+    /// retraining catches up on them).
+    pub fn adopt_weights(&mut self, trained: &Prefs) {
+        self.w = trained.w.clone();
+        self.b = trained.b;
+        self.n = trained.n;
+    }
+
     /// How strongly the learned taste is blended into a score: grows with evidence, capped.
     pub fn strength(&self) -> f32 {
         (0.08 + self.n as f32 / 300.0).min(MAX_STRENGTH)
@@ -230,6 +240,24 @@ pub struct Styles {
 
 pub const DEFAULT_STYLE: &str = "default";
 
+/// A serialised `styles.json` waiting to be written: through a temporary file, synced, then renamed into place.
+pub struct PendingSave {
+    path: PathBuf,
+    bytes: Vec<u8>,
+}
+
+impl PendingSave {
+    pub fn write(&self) {
+        if let Some(dir) = self.path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let tmp = self.path.with_extension("tmp");
+        if write_synced(&tmp, &self.bytes).is_ok() {
+            let _ = std::fs::rename(&tmp, &self.path);
+        }
+    }
+}
+
 impl Styles {
     /// Loads `styles.json`; the single preferences file of earlier versions becomes the default style.
     pub fn load(dir: &std::path::Path) -> Self {
@@ -249,15 +277,15 @@ impl Styles {
     }
 
     pub fn save(&self) {
-        if let Some(dir) = self.path.parent() {
-            let _ = std::fs::create_dir_all(dir);
+        if let Some(pending) = self.to_save() {
+            pending.write();
         }
-        if let Ok(bytes) = serde_json::to_vec(self) {
-            let tmp = self.path.with_extension("tmp");
-            if write_synced(&tmp, &bytes).is_ok() {
-                let _ = std::fs::rename(&tmp, &self.path);
-            }
-        }
+    }
+
+    /// The file as it would be saved now, to be written once the lock on these styles is released (the write can take a while with
+    /// thousands of reference vectors, and the settings page reads through the same lock).
+    pub fn to_save(&self) -> Option<PendingSave> {
+        serde_json::to_vec(self).ok().map(|bytes| PendingSave { path: self.path.clone(), bytes })
     }
 
     fn index(&self, id: Option<&str>) -> usize {

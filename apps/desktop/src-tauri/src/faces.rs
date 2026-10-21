@@ -209,27 +209,61 @@ pub fn assign_people(photos: &mut [Photo]) {
             _ => clusters.push(Cluster::new(emb, (pi, fi))),
         }
     }
-    // The same person at another angle can seed a second cluster; fold those back together.
-    loop {
-        let mut merged = false;
-        'scan: for i in 0..clusters.len() {
-            for j in i + 1..clusters.len() {
-                if dot(&clusters[i].centre, &clusters[j].centre) >= MERGE {
-                    let other = clusters.remove(j);
-                    for m in other.members {
-                        let emb = photos[m.0].face_embs[m.1].clone();
-                        clusters[i].add(&emb, m);
-                    }
-                    merged = true;
-                    break 'scan;
+    // The same person at another angle can seed a second cluster; fold those back together. Clusters with more than one face are
+    // joined in one pass (a union-find over their centres); the single faces, by far the most numerous in a crowd, are then attached
+    // to whichever joined cluster is close enough, so the work stays linear in them instead of quadratic in everything.
+    let (mut multi, singles): (Vec<Cluster>, Vec<Cluster>) = clusters.into_iter().partition(|c| c.members.len() > 1);
+    let mut root: Vec<usize> = (0..multi.len()).collect();
+    fn find(root: &mut [usize], i: usize) -> usize {
+        let mut i = i;
+        while root[i] != i {
+            root[i] = root[root[i]];
+            i = root[i];
+        }
+        i
+    }
+    for i in 0..multi.len() {
+        for j in i + 1..multi.len() {
+            if dot(&multi[i].centre, &multi[j].centre) >= MERGE {
+                let (a, b) = (find(&mut root, i), find(&mut root, j));
+                if a != b {
+                    root[b] = a;
                 }
             }
         }
-        if !merged {
-            break;
+    }
+    let mut joined: Vec<Cluster> = Vec::new();
+    let mut slot: Vec<Option<usize>> = vec![None; multi.len()];
+    for i in 0..multi.len() {
+        let r = find(&mut root, i);
+        let members = std::mem::take(&mut multi[i].members);
+        match slot[r] {
+            Some(k) => {
+                for m in members {
+                    joined[k].add(&photos[m.0].face_embs[m.1], m);
+                }
+            }
+            None => {
+                let mut c = Cluster::new(&photos[members[0].0].face_embs[members[0].1], members[0]);
+                for m in &members[1..] {
+                    c.add(&photos[m.0].face_embs[m.1], *m);
+                }
+                slot[r] = Some(joined.len());
+                joined.push(c);
+            }
         }
     }
-    clusters.sort_by_key(|c| std::cmp::Reverse(c.photos()));
+    let mut clusters = joined;
+    for s in singles {
+        let m = s.members[0];
+        let emb = &photos[m.0].face_embs[m.1];
+        let best = clusters.iter().enumerate().map(|(i, c)| (i, dot(&c.centre, emb))).max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        match best {
+            Some((i, sim)) if sim >= MERGE => clusters[i].add(emb, m),
+            _ => clusters.push(s),
+        }
+    }
+    clusters.sort_by_cached_key(|c| std::cmp::Reverse(c.photos()));
     let mut next = 0i32;
     for c in clusters.iter().filter(|c| c.photos() >= MIN_PHOTOS) {
         for &(pi, fi) in &c.members {

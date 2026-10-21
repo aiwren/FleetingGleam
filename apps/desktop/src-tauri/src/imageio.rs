@@ -2,8 +2,44 @@
 //! HEIC / AVIF / JPEG XL / TIFF / camera RAW. On other platforms there is no helper and these formats are simply not offered.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
+
+/// Decoding a huge RAW can take seconds; a helper that has not finished by then is stuck (or the file is pathological) and is killed,
+/// so one photo can never hold up a whole scan.
+const TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Runs the helper and collects its output, killing it at the deadline. Both pipes are drained by threads so a chatty child cannot
+/// block on a full pipe while we wait for it.
+fn run(cmd: &mut Command) -> Option<Output> {
+    let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().ok()?;
+    let drain = |mut r: Option<std::process::ChildStdout>, mut e: Option<std::process::ChildStderr>| {
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let mut out = Vec::new();
+            if let Some(r) = r.as_mut() { let _ = r.read_to_end(&mut out); }
+            let mut err = Vec::new();
+            if let Some(e) = e.as_mut() { let _ = e.read_to_end(&mut err); }
+            (out, err)
+        })
+    };
+    let reader = drain(child.stdout.take(), child.stderr.take());
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if started.elapsed() < TIMEOUT => std::thread::sleep(Duration::from_millis(20)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    };
+    let (stdout, stderr) = reader.join().ok()?;
+    Some(Output { status, stdout, stderr })
+}
 
 use serde::Deserialize;
 
@@ -73,7 +109,7 @@ pub fn info(path: &Path, with_hdr: bool) -> Option<Info> {
     if !with_hdr {
         cmd.arg("fast");
     }
-    let out = cmd.output().ok().filter(|o| o.status.success())?;
+    let out = run(&mut cmd).filter(|o| o.status.success())?;
     serde_json::from_slice(&out.stdout).ok()
 }
 
@@ -85,7 +121,7 @@ pub fn render(src: &Path, out: &Path, max: u32, sdr: bool) -> Result<(), String>
     if sdr {
         cmd.arg("sdr");
     }
-    let o = cmd.output().map_err(|e| e.to_string())?;
+    let o = run(&mut cmd).ok_or_else(|| format!("{}: the image helper did not finish in time", src.display()))?;
     if o.status.success() && out.exists() {
         Ok(())
     } else {
@@ -96,9 +132,9 @@ pub fn render(src: &Path, out: &Path, max: u32, sdr: bool) -> Result<(), String>
 /// A region of the photo (fractions of the upright photo, top-left origin) at up to `out_w` pixels wide, as a JPEG at `out`.
 pub fn crop(src: &Path, out: &Path, f: [f64; 4], out_w: u32) -> Result<(), String> {
     let b = bin().ok_or("the image helper is not available")?;
-    let o = Command::new(b)
-        .arg("crop").arg(src).arg(out).arg(f[0].to_string()).arg(f[1].to_string()).arg(f[2].to_string()).arg(f[3].to_string()).arg(out_w.to_string())
-        .output().map_err(|e| e.to_string())?;
+    let mut cmd = Command::new(b);
+    cmd.arg("crop").arg(src).arg(out).arg(f[0].to_string()).arg(f[1].to_string()).arg(f[2].to_string()).arg(f[3].to_string()).arg(out_w.to_string());
+    let o = run(&mut cmd).ok_or_else(|| format!("{}: the image helper did not finish in time", src.display()))?;
     if o.status.success() && out.exists() { Ok(()) } else { Err(format!("{}: {}", src.display(), String::from_utf8_lossy(&o.stderr).trim())) }
 }
 

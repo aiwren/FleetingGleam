@@ -10,7 +10,7 @@ use crate::analyze::Photo;
 
 /// The float vectors of an entry (CLIP, search, faces) are stored as text of raw bytes (base64) instead of a JSON array of numbers: a third of
 /// the size and several times faster to write and read, which matters at tens of thousands of photos. Files written the old way still load.
-mod packed {
+pub(crate) mod packed {
     use serde::de::{self, Deserializer, SeqAccess, Visitor};
     use serde::ser::{SerializeSeq, Serializer};
     use std::fmt;

@@ -90,6 +90,8 @@ struct AppState {
     last_photos: Mutex<(String, Vec<Photo>)>,
     /// Bumped by every scan and by `scan_cancel`, so a scan that is no longer the current one stops at the next photo.
     scan_job: AtomicU64,
+    /// Bumped by every recorded label; the retraining scheduled by a label only runs if no newer label came in the meantime.
+    retrain_gen: AtomicU64,
     /// Loaded once, on first use: the scene-description model (a few hundred MB) and the English-to-Chinese one.
     captioner: Mutex<Option<std::sync::Arc<florence::Captioner>>>,
     translator: Mutex<Option<std::sync::Arc<translate::Translator>>>,
@@ -1167,25 +1169,46 @@ fn retrain_style(app: &AppHandle, styles: &mut prefs::Styles, style: Option<&str
     with_cache(app, |c| p.retrain(|k| c.embedding(k), || c.pool()));
 }
 
-/// Retraining and saving take a moment (and the taste model is retrained on every keypress), so this runs off the main thread.
+/// The label is recorded at once; the retraining it calls for runs a moment later, once the keys have stopped, so a run of P / X
+/// presses retrains once rather than every time, on a copy outside the lock, and the file is written outside it too.
 #[tauri::command]
 async fn record_label(app: AppHandle, path: String, label: Option<bool>, style: Option<String>) -> Result<prefs::PrefsInfo, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let st = app.state::<AppState>();
+    let st = app.state::<AppState>();
+    let info = {
         let mut styles = st.prefs.lock().unwrap();
-        {
-            let p = &mut styles.get_mut(style.as_deref()).prefs;
-            match label {
-                Some(v) => { p.labels.insert(path, v); }
-                None => { p.labels.remove(&path); }
-            }
+        let p = &mut styles.get_mut(style.as_deref()).prefs;
+        match label {
+            Some(v) => { p.labels.insert(path, v); }
+            None => { p.labels.remove(&path); }
         }
-        retrain_style(&app, &mut styles, style.as_deref());
-        styles.save();
-        styles.get(style.as_deref()).prefs.info()
-    })
-    .await
-    .map_err(|e| e.to_string())
+        p.info()
+    };
+    let gen = st.retrain_gen.fetch_add(1, Ordering::Relaxed) + 1;
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        if app.state::<AppState>().retrain_gen.load(Ordering::Relaxed) != gen {
+            return; // a newer label will do it
+        }
+        retrain_outside_lock(&app, style.as_deref());
+    });
+    Ok(info)
+}
+
+/// Retrains a style on a copy of its preferences, so the lock is held only to take the copy and to put the weights back, then writes
+/// `styles.json` outside the lock as well.
+fn retrain_outside_lock(app: &AppHandle, style: Option<&str>) {
+    let st = app.state::<AppState>();
+    let mut copy = st.prefs.lock().unwrap().get(style).prefs.clone();
+    with_cache(app, |c| copy.retrain(|k| c.embedding(k), || c.pool()));
+    let pending = {
+        let mut styles = st.prefs.lock().unwrap();
+        styles.get_mut(style).prefs.adopt_weights(&copy);
+        styles.to_save()
+    };
+    if let Some(pending) = pending {
+        pending.write();
+    }
 }
 
 #[tauri::command]
@@ -1393,7 +1416,7 @@ pub fn run() {
             let dir = data_dir(app.handle());
             imageio::init(image_bin(app.handle()));
             app.manage(Downloads::default());
-            app.manage(AppState { text: Mutex::new(None), cache: Mutex::new(None), prefs: Mutex::new(prefs::Styles::load(&dir)), mediapipe_eyes: Mutex::new(None), face_embedder: Mutex::new(None), last_photos: Mutex::new((String::new(), Vec::new())), scan_job: AtomicU64::new(0), captioner: Mutex::new(None), translator: Mutex::new(None), scene_sentences: Mutex::new(None), scene_job: AtomicU64::new(0) });
+            app.manage(AppState { text: Mutex::new(None), cache: Mutex::new(None), prefs: Mutex::new(prefs::Styles::load(&dir)), mediapipe_eyes: Mutex::new(None), face_embedder: Mutex::new(None), last_photos: Mutex::new((String::new(), Vec::new())), scan_job: AtomicU64::new(0), retrain_gen: AtomicU64::new(0), captioner: Mutex::new(None), translator: Mutex::new(None), scene_sentences: Mutex::new(None), scene_job: AtomicU64::new(0) });
             let menu = build_menu(app.handle(), "en")?;
             app.set_menu(menu)?;
             // scratch files (larger previews, zoom crops, motion clips) are kept within bounds; done in the background
