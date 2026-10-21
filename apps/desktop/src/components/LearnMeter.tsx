@@ -10,8 +10,11 @@ export default function LearnMeter({ info, compact }: { info: PrefsInfo; compact
   const min = info.min_per_class || 3;
   const full = info.full_at || 81, half = info.half_at || 29, start = 2 * min;
   // what will be trained on; once in use the backend's own count (which includes the sampled "not chosen" examples) is the truth
-  const have = Math.max(info.trained || 0, info.labels + info.refs);
-  const keeps = info.keeps + info.refs, rejects = info.rejects ?? info.labels - info.keeps;
+  const imported = info.imported || 0;
+  const have = Math.max(info.trained || 0, info.labels + info.refs + imported);
+  // examples brought in from a taste file count on whichever side they were decided; the backend does not split them, so they are
+  // shown as covering both (the import retrains at once, and `active` says whether that was enough)
+  const keeps = info.keeps + info.refs + imported, rejects = (info.rejects ?? info.labels - info.keeps) + imported;
   const needKeep = Math.max(0, min - keeps), needReject = Math.max(0, min - rejects);
   const status = info.active
     ? `${t("meter.active", { pct: Math.round(info.strength * 100), max: Math.round(info.max_strength * 100) })}${have < full ? ` · ${t("meter.toFull", { n: full - have })}` : ""}`

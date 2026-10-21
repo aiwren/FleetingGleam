@@ -28,6 +28,14 @@ pub struct Reference {
     pub emb: Vec<f32>,
 }
 
+/// A labelled example that came from another machine: the embedding and the decision, no path (it never had one here).
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Example {
+    #[serde(with = "crate::cache::packed")]
+    pub emb: Vec<f32>,
+    pub keep: bool,
+}
+
 #[derive(Default, Clone, Serialize, Deserialize)]
 pub struct Prefs {
     /// path -> true (keep) / false (reject)
@@ -37,6 +45,9 @@ pub struct Prefs {
     pub refs: Vec<Reference>,
     #[serde(default)]
     pub refs_from: String,
+    /// Examples brought in from a taste file (see `taste.rs`); they train like labels but have no photo here.
+    #[serde(default)]
+    pub imported: Vec<Example>,
     w: Vec<f32>,
     b: f32,
     /// How many labelled photos the current weights were trained on.
@@ -53,6 +64,8 @@ pub struct PrefsInfo {
     pub rejects: usize,
     pub refs: usize,
     pub refs_from: String,
+    /// Examples imported from a taste file (no photo here, just the embedding and the decision).
+    pub imported: usize,
     pub active: bool,
     /// How many examples the current weights were trained on (0 while the taste is not in use).
     pub trained: usize,
@@ -112,6 +125,7 @@ impl Prefs {
             rejects: self.labels.len() - keeps,
             refs: self.refs.len(),
             refs_from: self.refs_from.clone(),
+            imported: self.imported.len(),
             active: self.active(),
             trained: if self.active() { self.n } else { 0 },
             strength: if self.active() { self.strength() } else { 0.0 },
@@ -126,6 +140,7 @@ impl Prefs {
         self.labels.clear();
         self.refs.clear();
         self.refs_from.clear();
+        self.imported.clear();
         self.w.clear();
         self.b = 0.0;
         self.n = 0;
@@ -138,6 +153,11 @@ impl Prefs {
         }
         let z: f32 = self.b + self.w.iter().zip(emb).map(|(w, x)| w * x * SCALE).sum::<f32>();
         Some(sigmoid(z))
+    }
+
+    /// The trained weights, bias and example count, when the taste is in use.
+    pub fn weights(&self) -> Option<(&[f32], f32, usize)> {
+        self.active().then_some((self.w.as_slice(), self.b, self.n))
     }
 
     /// Takes over the weights another copy of these preferences just trained (the labels here may already be newer; the next
@@ -177,6 +197,7 @@ impl Prefs {
                 }
             }
         }
+        data.extend(self.imported.iter().map(|e| (e.emb.clone(), if e.keep { 1.0 } else { 0.0 })));
         // Photos analysed by different models have embeddings of different sizes; train on the most common size only.
         let mut sizes: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
         data.iter().for_each(|d| *sizes.entry(d.0.len()).or_default() += 1);

@@ -20,6 +20,7 @@ mod textsearch;
 mod scene;
 mod scoring;
 mod vision;
+mod taste;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -589,6 +590,52 @@ pub fn quarantine_name(path: &Path) -> PathBuf {
     let mut name = path.file_name().map(|n| n.to_os_string()).unwrap_or_default();
     name.push(format!(".corrupt-{secs}"));
     path.with_file_name(name)
+}
+
+/// Writes "my settings and taste" to `path` (see `taste.rs`): the settings object the frontend passes, every style's examples as
+/// embeddings, no photos and no paths.
+#[tauri::command]
+async fn taste_export(app: AppHandle, path: String, settings: serde_json::Value) -> Result<taste::Summary, String> {
+    let version = app.package_info().version.to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        let st = app.state::<AppState>();
+        let styles = st.prefs.lock().unwrap();
+        let (pack, summary) = with_cache(&app, |c| taste::pack(&styles, settings, &version, |k| c.embedding(k)));
+        drop(styles);
+        let bytes = serde_json::to_vec_pretty(&pack).map_err(|e| e.to_string())?;
+        let out = PathBuf::from(&path);
+        let tmp = out.with_extension("json.tmp");
+        write_synced(&tmp, &bytes).map_err(|e| format!("{}: {e}", tmp.display()))?;
+        std::fs::rename(&tmp, &out).map_err(|e| format!("{}: {e}", out.display()))?;
+        Ok(summary)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Reads a taste file into the styles (merging by style name), retrains what it touched and returns the settings it carried for the
+/// frontend to apply.
+#[tauri::command]
+async fn taste_import(app: AppHandle, path: String) -> Result<(taste::Summary, serde_json::Value), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let text = std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?;
+        let pack: taste::Pack = serde_json::from_slice(&text).map_err(|e| format!("{path}: {e}"))?;
+        let st = app.state::<AppState>();
+        let (summary, touched) = {
+            let mut styles = st.prefs.lock().unwrap();
+            taste::unpack(&mut styles, &pack)?
+        };
+        for id in &touched {
+            retrain_outside_lock(&app, Some(id));
+        }
+        let pending = st.prefs.lock().unwrap().to_save();
+        if let Some(p) = pending {
+            p.write();
+        }
+        Ok((summary, pack.settings))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Stops the scan in progress: it ends at the next photo, and what it analysed by then is already in the cache. Called when
@@ -1428,7 +1475,7 @@ pub fn run() {
         .on_menu_event(|app, event| {
             let _ = app.emit("menu", event.id().0.clone());
         })
-        .invoke_handler(tauri::generate_handler![probe_folder, scan_project, scan_cancel, decide_photos, projects_load, projects_save, projects_quarantine, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, trash_photos, reveal, preview_thumbs, photo_info, large_preview, motion_clip, hdrview::hdr_overlay_supported, hdrview::hdr_overlay_show, hdrview::hdr_overlay_move, hdrview::hdr_overlay_hide, hdrview::hdr_overlay_detail, hdrview::hdr_overlay_detail_hide, photo_detail, machine_info, search_status, search_index, search_photos, scene_text, packs_status, pack_size, pack_download, pack_cancel, pack_remove])
+        .invoke_handler(tauri::generate_handler![probe_folder, scan_project, scan_cancel, decide_photos, projects_load, projects_save, projects_quarantine, taste_export, taste_import, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, trash_photos, reveal, preview_thumbs, photo_info, large_preview, motion_clip, hdrview::hdr_overlay_supported, hdrview::hdr_overlay_show, hdrview::hdr_overlay_move, hdrview::hdr_overlay_hide, hdrview::hdr_overlay_detail, hdrview::hdr_overlay_detail_hide, photo_detail, machine_info, search_status, search_index, search_photos, scene_text, packs_status, pack_size, pack_download, pack_cancel, pack_remove])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

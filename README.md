@@ -17,6 +17,7 @@
 - **Find photos by describing them.** Type "a small boat by the sea" or "two people". English and Chinese both work.
 - **Learns your taste.** Point it at a folder of photos you picked in the past and it learns your preferences. Keep one style for weddings and another for street.
 - **Organise.** Keepers move to a new folder and the rest go to the Trash, where they can be recovered.
+- **Take your taste with you.** Settings and everything the styles learned export to one file (embeddings and decisions only, never photos or paths) and import on another computer.
 
 > **A score is a hint, not a verdict.** The scoring constants are tuned by hand and have not yet been calibrated against real human labels. The app can tell you which frame is technically stronger, but a good photograph is sometimes imperfect. The final call is always yours.
 

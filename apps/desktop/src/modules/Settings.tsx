@@ -7,6 +7,7 @@ import { adopt, release } from "../strategy";
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 import InfoPop from "../components/InfoPop";
@@ -14,7 +15,7 @@ import Segmented from "../components/Segmented";
 import Select from "../components/Select";
 import { LANGS, Pref, setPref, storedPref } from "../i18n";
 import { SPRING } from "../motion";
-import { Theme, bumpCacheRev, setSettings, useScanInfo, useSettings } from "../settings";
+import { type Settings as AppSettings, Theme, bumpCacheRev, setSettings, useScanInfo, useSettings } from "../settings";
 
 
 function Group({ id, title, index, children }: { id: string; title: string; index: number; children: ReactNode }) {
@@ -102,6 +103,39 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
   };
 
   const packs = usePacks();
+  // "my settings and taste" as one file: what the taste models learned, as embeddings, plus the settings; no photos, no paths
+  const [tasteBusy, setTasteBusy] = useState(false);
+  const [tasteMsg, setTasteMsg] = useState<string | null>(null);
+  type TasteSummary = { styles: number; examples: number; refs: number; skipped: number };
+  const exportTaste = async () => {
+    const path = await save({ defaultPath: "fleetinggleam-taste.json", filters: [{ name: "JSON", extensions: ["json"] }] });
+    if (!path) return;
+    setTasteBusy(true); setTasteMsg(null);
+    try {
+      const r = await invoke<TasteSummary>("taste_export", { path, settings: s });
+      setTasteMsg(t("settings.exportTasteDone", { styles: r.styles, examples: r.examples, refs: r.refs }) + (r.skipped ? ` ${t("settings.exportTasteSkipped", { n: r.skipped })}` : ""));
+    } catch (e) { setTasteMsg(t("settings.tasteFailed", { error: String(e) })); }
+    setTasteBusy(false);
+  };
+  const importTaste = async () => {
+    const path = await open({ filters: [{ name: "JSON", extensions: ["json"] }], multiple: false });
+    if (typeof path !== "string") return;
+    setTasteBusy(true); setTasteMsg(null);
+    try {
+      const [r, carried] = await invoke<[TasteSummary, Record<string, unknown> | null]>("taste_import", { path });
+      // only the settings that mean the same on any machine; which model is installed here, and the analysis backend, stay as they are
+      if (carried && typeof carried === "object") {
+        const keep = ["theme", "learn", "search", "customStyles", "eyeMethod", "quality"] as const;
+        const patch: Partial<AppSettings> = {};
+        for (const k of keep) if (k in carried) (patch as Record<string, unknown>)[k] = carried[k];
+        setSettings(patch);
+      }
+      await refreshStyles(); bumpPrefsRevision();
+      invoke<PrefsInfo>("prefs_info").then(setPrefs).catch(() => {});
+      setTasteMsg(t("settings.importTasteDone", { styles: r.styles, examples: r.examples, refs: r.refs }));
+    } catch (e) { setTasteMsg(t("settings.tasteFailed", { error: String(e) })); }
+    setTasteBusy(false);
+  };
   const [refBusy, setRefBusy] = useState<number | null>(null);
   const [refFailed, setRefFailed] = useState(false);
   const learnRefs = async () => {
@@ -202,6 +236,12 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
               <Row label={t("settings.cache")} desc={t("settings.cacheDesc")}>
                 <span className="mono ash cachesize">{cache === null ? "—" : bytes(cache)}</span>
                 <button className="btn" onClick={clear} disabled={!cache}>{cleared ? t("settings.cleared") : t("settings.clear")}</button>
+              </Row>
+              <Row label={t("settings.exportTaste")} desc={tasteMsg ?? t("settings.exportTasteDesc")} info={<p className="ash">{t("settings.exportTasteInfo")}</p>}>
+                <span className="sctl-pair">
+                  <button className="btn" disabled={tasteBusy} onClick={exportTaste}>{t("settings.exportTasteBtn")}</button>
+                  <button className="btn" disabled={tasteBusy} onClick={importTaste}>{t("settings.importTasteBtn")}</button>
+                </span>
               </Row>
               <Row label={t("settings.privacy")} desc={t("settings.privacyBody")} />
             </Group>

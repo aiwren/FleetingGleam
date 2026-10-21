@@ -141,7 +141,7 @@ let labels = 0, keeps = 0;
 const prefsOf = (labels: number, keeps: number, refs = 0, refs_from = "") => {
   const active = keeps + refs >= 3 && labels - keeps >= 3;
   const trained = active ? labels + refs * 2 : 0;
-  return { labels, keeps, rejects: labels - keeps, refs, refs_from, active, trained, strength: active ? Math.min(0.08 + trained / 300, 0.35) : 0, max_strength: 0.35, min_per_class: 3, half_at: 29, full_at: 81 };
+  return { labels, keeps, rejects: labels - keeps, refs, refs_from, imported: 0, active, trained, strength: active ? Math.min(0.08 + trained / 300, 0.35) : 0, max_strength: 0.35, min_per_class: 3, half_at: 29, full_at: 81 };
 };
 const prefsInfo = () => prefsOf(labels, keeps);
 
@@ -187,6 +187,8 @@ w.__TAURI_INTERNALS__ = {
       case "projects_load": return localStorage.getItem("fg.projects");
       case "projects_save": localStorage.setItem("fg.projects", String(args.json)); return null;
       case "projects_quarantine": localStorage.removeItem("fg.projects"); return "fg.projects.corrupt";
+      case "taste_export": await sleep(300); return { styles: mockStyles.length, examples: 46, refs: 40, skipped: 2 };
+      case "taste_import": await sleep(400); labels += 20; keeps += 11; return [{ styles: 1, examples: 20, refs: 0, skipped: 0 }, { theme: "system" }];
       // The native HDR layer exists only in the app; here the calls are just recorded (window.__hdrCalls) so the page's side can be checked.
       case "hdr_overlay_supported": return true;
       case "hdr_overlay_show": case "hdr_overlay_move": case "hdr_overlay_hide": {
