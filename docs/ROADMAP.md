@@ -89,14 +89,32 @@ Android 没有 Apple Vision，两端要一样就得两端用同样的东西：
 
 ## 阶段 B：Android 端（原生，约 3–4 个月）
 
-原则：**核心逻辑复用 Rust，界面原生 Kotlin + Jetpack Compose。** 结构按 Material 3 Expressive（导航、返回手势、权限流程），表面用玻璃材质（Android 12+ 的实时模糊），颜色 / 字号 / 间距 / 动效节奏与琥珀只给"保留"等规则直接沿用 DESIGN.md。面向高端机：三档模型都提供。
+目标：**Mac 端的全部功能在 Android 上都要有**，不做"精简版"。原则：**核心逻辑复用 Rust，界面原生 Kotlin + Jetpack Compose。** 结构按 Material 3 Expressive（导航、返回手势、权限流程），表面用玻璃材质（Android 12+ 的实时模糊），颜色 / 字号 / 间距 / 动效节奏与琥珀只给"保留"等规则直接沿用 DESIGN.md。面向高端机：三档模型都提供。
 
-1. **Rust 核心抽成库**（1–2 周）：macOS 依赖（Vision、ImageIO）退到 trait 后面，cargo-ndk + UniFFI 编出 Android 库；A4 完成后核心里已没有平台特有的打分信号。
+### 功能对齐清单（Mac 端有的，Android 都要）
+| 功能 | Android 上怎么做 | 复用 |
+|---|---|---|
+| 项目：本机文件夹 / 相册 | MediaStore 读相册，也可选任意文件夹（SAF） | 项目模型、决策表与 Mac 同格式 |
+| 连拍分组、打分、理由、场景加权 | Rust 核心原样 | `analyze.rs` `decide.rs` `scoring.rs` |
+| 人脸、睁眼、人物识别 | MediaPipe（Android 版）；Vision 的部分退到 trait 后面 | `faces.rs` `mediapipe.rs` |
+| 三档模型 + 照片搜索 + 场景描述 + 翻译 | ONNX Runtime Android（NNAPI / QNN），同一批模型与清单 | `scorer.rs` `textsearch.rs` `florence.rs` `translate.rs` `modelpacks.rs` |
+| 学习喜好、多风格、学习进度 | Rust 核心原样 | `prefs.rs` `taste.rs` |
+| 选片界面：照片墙、单张、对比、检查器、筛选、搜索 | Compose 重写，手势版 P / R / X，撤销 | 文案与规则沿用 i18n 与 DESIGN.md |
+| 查看器：HDR、实况照片、放大细节 | Android 的 HDR 显示（Ultra HDR / gainmap）、Motion Photo | `hdrview.rs` 的 macOS 部分换掉 |
+| 整理：移到文件夹、回收站、导出 | MediaStore / SAF 移动，系统确认框；NAS 上仍走回收文件夹 | `lib.rs` 的 trash / export 逻辑 |
+| NAS 直连（SMB） | 同一份 Rust 客户端，镜像缓存放应用私有目录 | `nas.rs` 原样 |
+| 云备份（R2，多目标）、自动备份 | 同一份 Rust 客户端；自动触发逻辑搬到 Kotlin 侧或核心 | `r2.rs` 原样 |
+| 密码与密钥的本机加密仓库 | 同一份 Rust 实现，文件放应用私有目录 | `secrets.rs` 原样 |
+| 手动备份（导出 / 导入文件） | SAF 选文件 | `taste.rs` 原样 |
+| 设置：语言、外观、模型管理、缓存、隐私 | Compose 设置页 | 模型下载与校验沿用 |
+
+### 步骤
+1. **Rust 核心抽成库**（1–2 周）：macOS 依赖（Vision、ImageIO、HDR 叠层）退到 trait 后面，cargo-ndk + UniFFI 编出 Android 库；A4 完成后核心里已没有平台特有的打分信号。NAS、备份、加密仓库这三块已经是纯 Rust，直接进库。
 2. **模型层**（2–3 周）：ONNX Runtime Android（NNAPI / QNN），同一批 ONNX 文件与清单、同样的 SHA-256 校验；MediaPipe 人脸；Florence-2 与 OPUS-MT 作为可选包。
-3. **应用骨架**（2 周）：相册权限与 MediaStore 读取、项目模型、设置与"导入 Mac 的设置与喜好"、分析用前台服务 + 发热 / 充电策略。
-4. **选片界面**（4–6 周）：照片墙、对比、检查器与理由、手势版 P / R / X、搜索、风格与学习进度。
-5. **整理**（2 周）：MediaStore 的移动与回收站（系统确认框）、导出保留照片。
-6. **一致性测试**：同一组照片两端跑，决策与分组必须一致，作为 CI 固定用例。
+3. **应用骨架**（2 周）：相册权限与 MediaStore / SAF 读取、项目模型、设置页（含 NAS、备份、导入 Mac 的设置与喜好）、分析用前台服务 + 发热 / 充电策略。
+4. **选片界面**（4–6 周）：照片墙、单张、对比、检查器与理由、筛选面板、手势版 P / R / X 与撤销、搜索、风格与学习进度、HDR 与实况照片查看。
+5. **整理与 NAS**（2 周）：MediaStore / SAF 的移动与回收站（系统确认框）、导出保留照片；NAS 项目的镜像同步与回收。
+6. **一致性测试**：同一组照片两端跑，决策与分组必须一致，作为 CI 固定用例；设置与喜好文件两端互导。
 
 ## 不做的事
 
