@@ -28,7 +28,7 @@ export default function Organize({ project, photos, decisions, onChanged }: {
   const [phase, setPhase] = useState<Phase>("confirm");
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [scope, setScope] = useState<"manual" | "all">("manual");
-  const [result, setResult] = useState<{ ok: number; bad: number; dest?: string } | null>(null);
+  const [result, setResult] = useState<{ ok: number; bad: number; dest?: string; bins?: string[] } | null>(null);
 
   const keep = photos.filter((p) => decisions.get(p.path)?.state === "keep");
   const rejectAll = photos.filter((p) => decisions.get(p.path)?.state === "reject");
@@ -61,14 +61,14 @@ export default function Organize({ project, photos, decisions, onChanged }: {
   const startTrash = async () => {
     setPhase("running");
     try {
-      const r = await invoke<{ moved: number; failed: string[] }>("trash_photos", { paths: trashList.map((p) => p.path) });
+      const r = await invoke<{ moved: number; failed: string[]; network_bins?: string[] }>("trash_photos", { paths: trashList.map((p) => p.path) });
       const failed = new Set(r.failed);
       const gone = trashList.filter((p) => !failed.has(p.path)).map((p) => p.path);
       // Forget decisions about files that no longer exist.
       const next = { ...project.overrides };
       gone.forEach((g) => delete next[g]);
       updateProject(project.id, { overrides: next });
-      setResult({ ok: r.moved, bad: r.failed.length });
+      setResult({ ok: r.moved, bad: r.failed.length, bins: r.network_bins ?? [] });
     } catch { setResult({ ok: 0, bad: trashList.length }); }
     setPhase("done");
   };
@@ -137,7 +137,9 @@ export default function Organize({ project, photos, decisions, onChanged }: {
           <>
             <p>{t("organize.trashed", { count: result?.ok ?? 0 })}</p>
             {result && result.bad > 0 && <p className="ash small">{t("organize.trashFailed", { n: result.bad })}</p>}
-            <p className="ash small">{t("organize.trashRecover")}</p>
+            {result && (result.bins?.length ?? 0) > 0
+              ? <p className="ash small">{t("organize.trashedToShare", { where: result.bins!.join(" · ") })}</p>
+              : <p className="ash small">{t("organize.trashRecover")}</p>}
           </>
         ) : (
           <>

@@ -21,6 +21,7 @@ mod scene;
 mod scoring;
 mod vision;
 mod taste;
+mod nas;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -193,6 +194,17 @@ fn image_bin(app: &AppHandle) -> PathBuf {
     {
         if !bundled.exists() {
             return PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("bin/fg-image");
+        }
+    }
+    bundled
+}
+
+fn mount_bin(app: &AppHandle) -> PathBuf {
+    let bundled = app.path().resource_dir().map(|d| d.join("bin/fg-mount")).unwrap_or_default();
+    #[cfg(debug_assertions)]
+    {
+        if !bundled.exists() {
+            return PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("bin/fg-mount");
         }
     }
     bundled
@@ -562,7 +574,7 @@ async fn projects_save(app: AppHandle, json: String) -> Result<(), String> {
 
 /// Writes the bytes and waits until they are on disk, so the rename that follows can never point at an empty or half-written file
 /// after a power cut.
-fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let mut f = std::fs::File::create(path)?;
     f.write_all(bytes)?;
@@ -638,6 +650,107 @@ async fn taste_import(app: AppHandle, path: String) -> Result<(taste::Summary, s
     .map_err(|e| e.to_string())?
 }
 
+// ---------------------------------------------------------------- network shares
+
+fn nas_statuses(app: &AppHandle) -> Vec<nas::ShareStatus> {
+    let dir = data_dir(app);
+    nas::load(&dir).iter().map(|s| nas::status(&dir, s)).collect()
+}
+
+#[tauri::command]
+async fn nas_list(app: AppHandle) -> Vec<nas::ShareStatus> {
+    tauri::async_runtime::spawn_blocking(move || nas_statuses(&app)).await.unwrap_or_default()
+}
+
+/// Adds a share and connects to it at once; nothing is remembered unless the connection works.
+#[tauri::command]
+async fn nas_add(app: AppHandle, name: String, url: String, user: String, password: String, remember: bool) -> Result<Vec<nas::ShareStatus>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let url = nas::check_url(&url)?;
+        let dir = data_dir(&app);
+        let mut list = nas::load(&dir);
+        if list.iter().any(|s| s.url.eq_ignore_ascii_case(&url) && s.user == user.trim()) {
+            return Err("this share is already in the list".to_string());
+        }
+        let id = format!("n{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0));
+        let name = if name.trim().is_empty() { nas::host_of(&url).to_string() } else { name.trim().to_string() };
+        let share = nas::Share { id, name, url, user: user.trim().to_string() };
+        let pw = (!password.is_empty()).then_some(password.as_str());
+        nas::mount(&mount_bin(&app), &dir, &share, pw, remember)?;
+        list.push(share);
+        nas::save(&dir, &list)?;
+        Ok(nas_statuses(&app))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn nas_remove(app: AppHandle, id: String) -> Result<Vec<nas::ShareStatus>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = data_dir(&app);
+        let mut list = nas::load(&dir);
+        if let Some(s) = list.iter().find(|s| s.id == id).cloned() {
+            let bin = mount_bin(&app);
+            let _ = nas::unmount(&bin, &dir, &s);
+            nas::forget(&bin, &s);
+            let _ = std::fs::remove_dir(nas::mount_dir(&dir, &s.id));
+            list.retain(|x| x.id != id);
+            nas::save(&dir, &list)?;
+        }
+        Ok(nas_statuses(&app))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Connects a remembered share (with the stored password, or the one given now, which is then remembered).
+#[tauri::command]
+async fn nas_connect(app: AppHandle, id: String, password: Option<String>) -> Result<Vec<nas::ShareStatus>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = data_dir(&app);
+        let s = nas::load(&dir).into_iter().find(|s| s.id == id).ok_or("unknown share")?;
+        let pw = password.as_deref().filter(|p| !p.is_empty());
+        nas::mount(&mount_bin(&app), &dir, &s, pw, pw.is_some())?;
+        Ok(nas_statuses(&app))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn nas_disconnect(app: AppHandle, id: String) -> Result<Vec<nas::ShareStatus>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = data_dir(&app);
+        let s = nas::load(&dir).into_iter().find(|s| s.id == id).ok_or("unknown share")?;
+        nas::unmount(&mount_bin(&app), &dir, &s)?;
+        Ok(nas_statuses(&app))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Connects whichever remembered shares the folders are on, before a project on them is opened; returns those shares' state so the
+/// page can say which one is not reachable.
+#[tauri::command]
+async fn nas_ensure(app: AppHandle, dirs: Vec<String>) -> Vec<nas::ShareStatus> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = data_dir(&app);
+        let bin = mount_bin(&app);
+        let mut out = Vec::new();
+        for s in nas::load(&dir) {
+            let at = nas::mount_dir(&dir, &s.id);
+            if dirs.iter().any(|d| Path::new(d).starts_with(&at)) {
+                let _ = nas::mount(&bin, &dir, &s, None, false);
+                out.push(nas::status(&dir, &s));
+            }
+        }
+        out
+    })
+    .await
+    .unwrap_or_default()
+}
+
 /// Stops the scan in progress: it ends at the next photo, and what it analysed by then is already in the cache. Called when
 /// the person asks for it, and whenever the page leaves a project (its scan may still be running).
 #[tauri::command]
@@ -698,6 +811,8 @@ async fn export_photos(app: AppHandle, paths: Vec<String>, dest: String) -> Resu
 struct TrashResult {
     moved: usize,
     failed: Vec<String>,
+    /// Where photos on network volumes went instead of the Trash (one entry per volume), for the message.
+    network_bins: Vec<String>,
 }
 
 /// Moves photos to the system trash (recoverable from Finder / Explorer). Only image files are accepted,
@@ -713,16 +828,33 @@ async fn trash_photos(paths: Vec<String>) -> Result<TrashResult, String> {
             // NSFileManager needs no Finder automation permission prompt.
             ctx.set_delete_method(DeleteMethod::NsFileManager);
         }
-        let (mut moved, mut failed) = (0usize, Vec::new());
+        let (mut moved, mut failed, mut network_bins) = (0usize, Vec::new(), Vec::<String>::new());
         for p in paths {
             let path = PathBuf::from(&p);
-            if analyze::is_image(&path) && path.is_file() && ctx.delete(&path).is_ok() {
+            if !(analyze::is_image(&path) && path.is_file()) {
+                failed.push(p);
+                continue;
+            }
+            // a network volume (a NAS) has no Trash: the photo goes to a recycle folder at the root of that share instead
+            let ok = match nas::volume_of(&path).filter(|(_, fstype)| nas::is_network_fs(fstype)) {
+                Some((root, _)) => {
+                    let target = nas::network_bin_target(&root, &path);
+                    let bin = target.parent().and_then(|d| d.parent()).map(|d| d.to_string_lossy().into_owned()).unwrap_or_default();
+                    let done = target.parent().map(std::fs::create_dir_all).map_or(false, |r| r.is_ok()) && std::fs::rename(&path, &target).is_ok();
+                    if done && !network_bins.contains(&bin) {
+                        network_bins.push(bin);
+                    }
+                    done
+                }
+                None => ctx.delete(&path).is_ok(),
+            };
+            if ok {
                 moved += 1;
             } else {
                 failed.push(p);
             }
         }
-        TrashResult { moved, failed }
+        TrashResult { moved, failed, network_bins }
     })
     .await
     .map_err(|e| e.to_string())
@@ -1475,7 +1607,7 @@ pub fn run() {
         .on_menu_event(|app, event| {
             let _ = app.emit("menu", event.id().0.clone());
         })
-        .invoke_handler(tauri::generate_handler![probe_folder, scan_project, scan_cancel, decide_photos, projects_load, projects_save, projects_quarantine, taste_export, taste_import, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, trash_photos, reveal, preview_thumbs, photo_info, large_preview, motion_clip, hdrview::hdr_overlay_supported, hdrview::hdr_overlay_show, hdrview::hdr_overlay_move, hdrview::hdr_overlay_hide, hdrview::hdr_overlay_detail, hdrview::hdr_overlay_detail_hide, photo_detail, machine_info, search_status, search_index, search_photos, scene_text, packs_status, pack_size, pack_download, pack_cancel, pack_remove])
+        .invoke_handler(tauri::generate_handler![probe_folder, scan_project, scan_cancel, decide_photos, projects_load, projects_save, projects_quarantine, taste_export, taste_import, nas_list, nas_add, nas_remove, nas_connect, nas_disconnect, nas_ensure, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, trash_photos, reveal, preview_thumbs, photo_info, large_preview, motion_clip, hdrview::hdr_overlay_supported, hdrview::hdr_overlay_show, hdrview::hdr_overlay_move, hdrview::hdr_overlay_hide, hdrview::hdr_overlay_detail, hdrview::hdr_overlay_detail_hide, photo_detail, machine_info, search_status, search_index, search_photos, scene_text, packs_status, pack_size, pack_download, pack_cancel, pack_remove])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

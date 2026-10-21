@@ -8,6 +8,9 @@ import { ReactNode, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import Modal from "../components/Modal";
+import { Share, addShare, connectShare, disconnectShare, refreshShares, removeShare, useShares } from "../nas";
+import { createProject, setActive } from "../projects";
 import { motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 import InfoPop from "../components/InfoPop";
@@ -59,6 +62,7 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
     { id: "sec-performance", label: t("settings.analysis") },
     { id: "sec-personal", label: t("settings.personal") },
     { id: "sec-data", label: t("settings.data") },
+    { id: "sec-nas", label: t("settings.nas") },
     { id: "sec-about", label: t("settings.about") },
   ];
   const [current, setCurrent] = useState(sections[0].id);
@@ -67,6 +71,7 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
     if (!active) return;
     setCleared(false); setPrefsReset(false);
     void refreshStyles();
+    void refreshShares();
     invoke<PrefsInfo>("prefs_info").then((v) => setPrefs(v && typeof v === "object" ? v : null)).catch(() => setPrefs(null));
     invoke<number>("cache_size").then((n) => setCache(typeof n === "number" ? n : null)).catch(() => setCache(null));
     getVersion().then((v) => setVersion(v ?? "dev")).catch(() => setVersion("dev"));
@@ -103,6 +108,33 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
   };
 
   const packs = usePacks();
+  // network shares the app connects to itself: added here, then a project is started straight from the share
+  const shares = useShares();
+  const [nasOpen, setNasOpen] = useState(false);
+  const [nasForm, setNasForm] = useState({ name: "", url: "smb://", user: "", password: "", remember: true });
+  const [nasErr, setNasErr] = useState<string | null>(null);
+  const [nasBusy, setNasBusy] = useState<string | null>(null);
+  const [nasMsg, setNasMsg] = useState<{ id: string; text: string } | null>(null);
+  const nasDo = async (sh: Share, f: () => Promise<void>) => {
+    setNasBusy(sh.id); setNasMsg(null);
+    try { await f(); } catch (e) { setNasMsg({ id: sh.id, text: String(e) }); }
+    setNasBusy(null);
+  };
+  const nasSubmit = async () => {
+    setNasBusy("new"); setNasErr(null);
+    try {
+      await addShare(nasForm);
+      setNasOpen(false); setNasForm({ name: "", url: "smb://", user: "", password: "", remember: true });
+    } catch (e) { setNasErr(String(e)); }
+    setNasBusy(null);
+  };
+  const nasNewProject = async (sh: Share) => {
+    const dir = await open({ directory: true, defaultPath: sh.mountpoint });
+    if (typeof dir !== "string") return;
+    const p = createProject(dir.split("/").filter(Boolean).pop() || sh.name, [dir]);
+    setActive(p.id);
+    setNasMsg({ id: sh.id, text: t("settings.nasProjectMade", { name: p.name }) });
+  };
   // "my settings and taste" as one file: what the taste models learned, as embeddings, plus the settings; no photos, no paths
   const [tasteBusy, setTasteBusy] = useState(false);
   const [tasteMsg, setTasteMsg] = useState<string | null>(null);
@@ -152,6 +184,19 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
 
   return (
     <div className="module" data-active={active}>
+      <Modal open={nasOpen} onClose={() => nasBusy !== "new" && setNasOpen(false)} locked={nasBusy === "new"} title={t("settings.nasAddTitle")}
+        footer={(<><button className="btn" disabled={nasBusy === "new"} onClick={() => setNasOpen(false)}>{t("settings.nasCancel")}</button>
+          <button className="btn primary" disabled={nasBusy === "new" || !nasForm.url.includes("://")} onClick={nasSubmit}>{nasBusy === "new" ? t("settings.nasConnecting") : t("settings.nasConnectSave")}</button></>)}>
+        <div className="nas-form">
+          <label><span>{t("settings.nasUrl")}</span><input className="title-input wide" value={nasForm.url} placeholder="smb://nas.local/photos" spellCheck={false} autoFocus onChange={(e) => setNasForm({ ...nasForm, url: e.target.value })} /></label>
+          <label><span>{t("settings.nasUser")}</span><input className="title-input wide" value={nasForm.user} placeholder={t("settings.nasGuestHint")} spellCheck={false} onChange={(e) => setNasForm({ ...nasForm, user: e.target.value })} /></label>
+          <label><span>{t("settings.nasPassword")}</span><input className="title-input wide" type="password" value={nasForm.password} onChange={(e) => setNasForm({ ...nasForm, password: e.target.value })} /></label>
+          <label><span>{t("settings.nasName")}</span><input className="title-input wide" value={nasForm.name} placeholder={t("settings.nasNameHint")} onChange={(e) => setNasForm({ ...nasForm, name: e.target.value })} /></label>
+          <label className="nas-remember"><input type="checkbox" checked={nasForm.remember} onChange={(e) => setNasForm({ ...nasForm, remember: e.target.checked })} /><span>{t("settings.nasRemember")}</span></label>
+          <p className="ash small">{t("settings.nasHow")}</p>
+          {nasErr && <p className="error">{t("settings.nasFailed", { error: nasErr })}</p>}
+        </div>
+      </Modal>
       <section className="workspace">
         <header className="toolbar" data-tauri-drag-region>
           <div className="toolbar-title" data-tauri-drag-region><b>{t("settings.title")}</b></div>
@@ -246,7 +291,25 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
               <Row label={t("settings.privacy")} desc={t("settings.privacyBody")} />
             </Group>
 
-            <Group id="sec-about" title={t("settings.about")} index={4}>
+            <Group id="sec-nas" title={t("settings.nas")} index={4}>
+              <Row label={t("settings.nasTitle")} desc={t("settings.nasDesc")} info={<p className="ash">{t("settings.nasInfo")}</p>}>
+                <button className="btn" onClick={() => { setNasErr(null); setNasOpen(true); }}>{t("settings.nasAdd")}</button>
+              </Row>
+              {shares.map((sh) => (
+                <Row key={sh.id} label={sh.name} desc={`${sh.url} · ${sh.user || t("settings.nasGuest")}${nasMsg?.id === sh.id ? ` · ${nasMsg.text}` : ""}`}>
+                  <span className="sctl-pair">
+                    <span className={`ktag ${sh.connected ? "on" : ""}`}>{sh.connected ? t("settings.nasConnected") : t("settings.nasOffline")}</span>
+                    {sh.connected
+                      ? <button className="btn" disabled={nasBusy === sh.id} onClick={() => nasDo(sh, () => disconnectShare(sh.id))}>{t("settings.nasDisconnect")}</button>
+                      : <button className="btn" disabled={nasBusy === sh.id} onClick={() => nasDo(sh, () => connectShare(sh.id))}>{nasBusy === sh.id ? t("settings.nasConnecting") : t("settings.nasConnect")}</button>}
+                    {sh.connected && <button className="btn" onClick={() => nasNewProject(sh)}>{t("settings.nasNewProject")}</button>}
+                    <button className="btn" disabled={nasBusy === sh.id} onClick={() => nasDo(sh, () => removeShare(sh.id))}>{t("settings.nasRemove")}</button>
+                  </span>
+                </Row>
+              ))}
+            </Group>
+
+            <Group id="sec-about" title={t("settings.about")} index={5}>
               <Row label={t("brand.name")} desc={i18n.language === "en" ? undefined : t("brand.latin")} info={<p className="ash">{t("settings.modelsBody")}</p>}>
                 <span className="mono ash">{version ? `v${version}` : ""}</span>
               </Row>

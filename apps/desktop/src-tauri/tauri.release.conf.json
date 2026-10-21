@@ -2,7 +2,8 @@
   "bundle": {
     "resources": {
       "bin/fg-vision": "bin/fg-vision",
-      "bin/fg-image": "bin/fg-image"
+      "bin/fg-image": "bin/fg-image",
+      "bin/fg-mount": "bin/fg-mount"
     },
     "macOS": {
       "signingIdentity": "-"

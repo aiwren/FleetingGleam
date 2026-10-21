@@ -129,6 +129,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const [from, setFrom] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const cacheRev = useCacheRev();
+  const [nasOff, setNasOff] = useState("");
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
   const [searchRev, setSearchRev] = useState(0);
   const [previews, setPreviews] = useState<Record<string, string>>({});
@@ -212,6 +213,11 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     setPhase("probing");
     (async () => {
       try {
+        // a project on a network share: connect the share first, and say so when it cannot be reached
+        const shares = await invoke<{ name: string; connected: boolean }[]>("nas_ensure", { dirs: project.folders }).catch(() => []);
+        if (tok !== token.current) return;
+        const off = shares.filter((s) => !s.connected);
+        if (off.length > 0) { setPhotos([]); setFiles([]); setPhase("idle"); setNasOff(off.map((s) => s.name).join(", ")); setError("cull.nasOffline"); return; }
         const probe = await invoke<Probe>("probe_folder", { dirs: project.folders, compute: "auto", quality: currentTier() });
         if (tok !== token.current) return;
         setFiles(probe.files); setBytes(probe.bytes); setUncached(probe.uncached);
@@ -718,7 +724,8 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
         )}
         {phase === "done" && panelOpen && <Resizer panel={filterW} edge="right" label={t("cull.filters")} />}
         <div className="scroll" ref={scrollRef}>
-          {error && <p className="error">{t(error, { defaultValue: error })}</p>}
+          {error && error !== "cull.nasOffline" && <p className="error">{t(error, { defaultValue: error })}</p>}
+          {error === "cull.nasOffline" && <p className="error">{t("cull.nasOffline", { name: nasOff })} <button className="btn sm" onClick={() => setReloadKey((k) => k + 1)}>{t("cull.nasRetry")}</button></p>}
           {saveError && <p className="error">{t("cull.saveFailed", { error: saveError })}</p>}
           {loadError === "corrupt" && <p className="error">{t("cull.loadCorrupt")}</p>}
 

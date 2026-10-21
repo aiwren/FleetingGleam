@@ -147,6 +147,7 @@ const prefsInfo = () => prefsOf(labels, keeps);
 
 type MockStyle = { id: string; name: string; is_default: boolean; info: ReturnType<typeof prefsOf> };
 const now = Date.now();
+const mockShares = [{ id: "n1", name: "Home NAS", url: "smb://nas.local/photos", user: "me", mountpoint: "/mock/mounts/n1", connected: false }];
 const mockStyles: MockStyle[] = [
   { id: "default", name: "", is_default: true, info: prefsOf(34, 19) },
   { id: `s${now - 6 * 86400_000}`, name: "Street", is_default: false, info: prefsOf(12, 7, 40, "/Users/me/Photos/Street") },
@@ -187,6 +188,17 @@ w.__TAURI_INTERNALS__ = {
       case "projects_load": return localStorage.getItem("fg.projects");
       case "projects_save": localStorage.setItem("fg.projects", String(args.json)); return null;
       case "projects_quarantine": localStorage.removeItem("fg.projects"); return "fg.projects.corrupt";
+      case "nas_list": return [...mockShares];
+      case "nas_add": {
+        await sleep(600);
+        if (String(args.url).includes("bad")) throw "the server cannot be reached (65)";
+        mockShares.push({ id: `n${Date.now()}`, name: String(args.name || "NAS"), url: String(args.url), user: String(args.user ?? ""), mountpoint: "/mock/mounts/new", connected: true });
+        return [...mockShares];
+      }
+      case "nas_remove": { const i = mockShares.findIndex((s) => s.id === args.id); if (i >= 0) mockShares.splice(i, 1); return [...mockShares]; }
+      case "nas_connect": { await sleep(500); const s = mockShares.find((x) => x.id === args.id); if (s) s.connected = true; return [...mockShares]; }
+      case "nas_disconnect": { const s = mockShares.find((x) => x.id === args.id); if (s) s.connected = false; return [...mockShares]; }
+      case "nas_ensure": return [];
       case "taste_export": await sleep(300); return { styles: mockStyles.length, examples: 46, refs: 40, skipped: 2 };
       case "taste_import": await sleep(400); labels += 20; keeps += 11; return [{ styles: 1, examples: 20, refs: 0, skipped: 0 }, { theme: "system" }];
       // The native HDR layer exists only in the app; here the calls are just recorded (window.__hdrCalls) so the page's side can be checked.
