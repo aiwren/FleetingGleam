@@ -17,7 +17,8 @@
 - **Find photos by describing them.** Type "a small boat by the sea" or "two people". English and Chinese both work.
 - **Learns your taste.** Point it at a folder of photos you picked in the past and it learns your preferences. Keep one style for weddings and another for street.
 - **Organise.** Keepers move to a new folder and the rest go to the Trash, where they can be recovered.
-- **Works on a NAS.** Add a network share in Settings (SMB, NFS, AFP or WebDAV); the app connects by itself, through the system's own file-sharing client, and projects start straight from the share.
+- **Works on a NAS.** Add your NAS in Settings (server and account; SMB); the app connects with its own built-in SMB client (no Finder, no mounted volume on the desktop), a new project browses the NAS's shares and picks any folder, and photos are mirrored into the app's cache before analysis.
+- **Cloud backup of your taste.** Your settings and what the taste models learned can be backed up automatically to your own Cloudflare R2 bucket, and restored on another computer.
 - **Take your taste with you.** Settings and everything the styles learned export to one file (embeddings and decisions only, never photos or paths) and import on another computer.
 
 > **A score is a hint, not a verdict.** The scoring constants are tuned by hand and have not yet been calibrated against real human labels. The app can tell you which frame is technically stronger, but a good photograph is sometimes imperfect. The final call is always yours.

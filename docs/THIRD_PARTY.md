@@ -34,6 +34,7 @@
 | [Tauri](https://tauri.app) 2 | 桌面应用框架 | MIT / Apache-2.0 |
 | [ort](https://github.com/pykeio/ort) | ONNX Runtime 的 Rust 封装 | MIT / Apache-2.0 |
 | [tokenizers](https://github.com/huggingface/tokenizers) | 文本分词 | Apache-2.0 |
+| [smb2](https://github.com/vdavid/smb2) | 纯 Rust 的 SMB2/3 客户端（NAS 直连） | MIT / Apache-2.0 |
 | React、Vite | 前端 | MIT |
 | [Motion](https://motion.dev) | 动画 | MIT |
 | i18next、react-i18next | 国际化 | MIT |

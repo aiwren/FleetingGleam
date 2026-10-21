@@ -55,6 +55,8 @@ export const getSettings = () => state;
 export function setScanInfo(i: ScanInfo) { info = i; write(INFO_KEY, i); notify(); }
 
 export const useSettings = () => useSyncExternalStore(subscribe, () => state);
+/** 设置变化的通知（云备份靠它知道该上传了）。 */
+export const subscribeSettings = subscribe;
 /* Bumped when the thumbnail cache is cleared: the project in view reads its folders again (and finds everything needs analysing). */
 let cacheRev = 0;
 export function bumpCacheRev() { cacheRev += 1; notify(); }

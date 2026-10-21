@@ -22,6 +22,8 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 # 纯 Rust 的 SMB2/3 客户端：应用自己连 NAS，Mac 与 Android 共用一份实现（不依赖系统挂载）
 smb2 = "0.34"
+# 给 NAS 客户端一个自己的单线程运行时（见 nas.rs），不占用 Tauri 的工作线程
+tokio = { version = "1", features = ["rt", "sync"] }
 tauri = { version = "2", features = ["protocol-asset", "macos-private-api"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
@@ -37,6 +39,8 @@ trash = "5.2.9"
 tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"] }
 ureq = { version = "2", features = ["tls"] }
 sha2 = "0.10"
+# 云备份到 Cloudflare R2：S3 兼容接口的 SigV4 签名
+hmac = "0.12"
 
 
 # Debug builds of image decoding and pixel loops are 10-50x slower; optimise them even in `tauri dev`.
@@ -61,6 +65,9 @@ overflow-checks = false
 
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"
+# NAS 密码存进钥匙串（和系统"互联网密码"同一类条目）
+security-framework = "3"
+security-framework-sys = "2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

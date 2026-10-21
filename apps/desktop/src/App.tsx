@@ -1,4 +1,5 @@
 import ModelGate from "./components/ModelGate";
+import FolderPicker from "./components/FolderPicker";
 import { ReactNode, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { MotionConfig, motion } from "motion/react";
@@ -8,6 +9,8 @@ import Styles from "./modules/Styles";
 import Settings from "./modules/Settings";
 import { newProjectFromDialog } from "./projectActions";
 import { purgeExpired, setActive, useProjectsStatus } from "./projects";
+import { refreshShares } from "./nas";
+import { watchForBackup } from "./backup";
 import { SPRING } from "./motion";
 import logo from "./assets/logo.png";
 import "./App.css";
@@ -39,8 +42,12 @@ export default function App() {
 
   useEffect(() => {
     purgeExpired();
+    void refreshShares(); // 添加过 NAS 的话，"新建项目"要先问文件夹在本机还是共享里
+    watchForBackup();     // 配置过云备份的话，设置和喜好一变就自动上传
+    // 后端启动时在后台连 NAS，连完会说一声；设置页的状态跟着刷新
+    const un = listen("nas-changed", () => { void refreshShares(); });
     window.addEventListener("focus", purgeExpired);
-    return () => window.removeEventListener("focus", purgeExpired);
+    return () => { un.then((f) => f()); window.removeEventListener("focus", purgeExpired); };
   }, []);
 
   useEffect(() => {
@@ -72,6 +79,7 @@ export default function App() {
         </defs>
       </svg>
       <ModelGate />
+      <FolderPicker />
       <div className={`shell ${sidebar ? "" : "collapsed"}`}>
         <button className="sidebar-toggle" onClick={() => setSidebar((v) => !v)}
           aria-label={sidebar ? t("nav.collapse") : t("nav.expand")} title={`${sidebar ? t("nav.collapse") : t("nav.expand")} (⌘⌥S)`}>

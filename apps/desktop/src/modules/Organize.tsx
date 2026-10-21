@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 import Modal from "../components/Modal";
 import { EASE_OUT } from "../motion";
-import { baseName, pickFolder } from "../projectActions";
+import { baseName, pickLocalFolder } from "../projectActions";
 import { Project, updateProject } from "../projects";
 import { Decision, Photo } from "../types";
 
@@ -74,7 +74,7 @@ export default function Organize({ project, photos, decisions, onChanged }: {
   };
 
   const chooseDest = async () => {
-    const dir = await pickFolder();
+    const dir = await pickLocalFolder();
     if (dir) open({ kind: "export", dest: dir });
   };
 

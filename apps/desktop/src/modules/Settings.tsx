@@ -1,7 +1,7 @@
 import { PrefsInfo, bumpPrefsRevision, learnFromFolder, refreshStyles } from "../styles";
 import LearnMeter from "../components/LearnMeter";
 import { fmtBytes } from "../format";
-import { pickFolder, baseName } from "../projectActions";
+import { pickLocalFolder, baseName } from "../projectActions";
 import { ensurePack, removePack, usePacks } from "../models";
 import { adopt, release } from "../strategy";
 import { ReactNode, useEffect, useRef, useState } from "react";
@@ -9,8 +9,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import Modal from "../components/Modal";
-import { Share, addShare, connectShare, disconnectShare, refreshShares, removeShare, useShares } from "../nas";
-import { createProject, setActive } from "../projects";
+import { Share, addShare, probeShare, refreshShares, removeShare, setShareEnabled, updateShare, useShares } from "../nas";
+import { BackupTarget, backupNow, refreshBackup, removeTarget, restoreBackup, saveTarget, setBackupOptions, useBackup } from "../backup";
 import { motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 import InfoPop from "../components/InfoPop";
@@ -62,6 +62,7 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
     { id: "sec-performance", label: t("settings.analysis") },
     { id: "sec-personal", label: t("settings.personal") },
     { id: "sec-data", label: t("settings.data") },
+    { id: "sec-backup", label: t("settings.backup") },
     { id: "sec-nas", label: t("settings.nas") },
     { id: "sec-about", label: t("settings.about") },
   ];
@@ -111,10 +112,26 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
   // network shares the app connects to itself: added here, then a project is started straight from the share
   const shares = useShares();
   const [nasOpen, setNasOpen] = useState(false);
-  const [nasForm, setNasForm] = useState({ name: "", url: "smb://", user: "", password: "", remember: true });
+  // 添加 NAS：先填服务器和账号，"测试连接"连上后列出共享让人选，选了才能保存
+  const blankNas = { name: "", host: "", user: "", password: "", remember: true };
+  const [nasForm, setNasForm] = useState(blankNas);
+  /** 正在编辑的那台 NAS 的 id；null = 在添加。 */
+  const [nasEditing, setNasEditing] = useState<Share | null>(null);
+  const [nasShares, setNasShares] = useState<string[] | null>(null);
+  const nasEdit = (sh: Share) => { setNasErr(null); setNasShares(null); setNasEditing(sh); setNasForm({ name: sh.name, host: sh.host, user: sh.user, password: "", remember: true }); setNasOpen(true); };
   const [nasErr, setNasErr] = useState<string | null>(null);
+  const nasProbe = async () => {
+    setNasBusy("probe"); setNasErr(null); setNasShares(null);
+    try {
+      const list = await probeShare({ host: nasForm.host, user: nasForm.user, password: nasForm.password, id: nasEditing?.id });
+      setNasShares(list);
+    } catch (e) { setNasErr(String(e)); }
+    setNasBusy(null);
+  };
   const [nasBusy, setNasBusy] = useState<string | null>(null);
   const [nasMsg, setNasMsg] = useState<{ id: string; text: string } | null>(null);
+  /** 等着二次确认移除的那台 NAS。 */
+  const [nasRemoving, setNasRemoving] = useState<Share | null>(null);
   const nasDo = async (sh: Share, f: () => Promise<void>) => {
     setNasBusy(sh.id); setNasMsg(null);
     try { await f(); } catch (e) { setNasMsg({ id: sh.id, text: String(e) }); }
@@ -123,17 +140,66 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
   const nasSubmit = async () => {
     setNasBusy("new"); setNasErr(null);
     try {
-      await addShare(nasForm);
-      setNasOpen(false); setNasForm({ name: "", url: "smb://", user: "", password: "", remember: true });
+      if (nasEditing) await updateShare({ id: nasEditing.id, name: nasForm.name, host: nasForm.host, user: nasForm.user, password: nasForm.password, remember: nasForm.remember });
+      else await addShare({ name: nasForm.name, host: nasForm.host, user: nasForm.user, password: nasForm.password, remember: nasForm.remember });
+      setNasOpen(false); setNasForm(blankNas); setNasShares(null); setNasEditing(null);
     } catch (e) { setNasErr(String(e)); }
     setNasBusy(null);
   };
-  const nasNewProject = async (sh: Share) => {
-    const dir = await open({ directory: true, defaultPath: sh.mountpoint });
-    if (typeof dir !== "string") return;
-    const p = createProject(dir.split("/").filter(Boolean).pop() || sh.name, [dir]);
-    setActive(p.id);
-    setNasMsg({ id: sh.id, text: t("settings.nasProjectMade", { name: p.name }) });
+  // 备份：和"我的设置与喜好"同一份内容，自动存到用户自己的云存储；可以有多个目标（现在只有 Cloudflare R2 一种），各有名字；Secret 只进钥匙串
+  const backup = useBackup();
+  const blankTarget = { id: undefined as string | undefined, name: "", kind: "r2" as const, account: "", bucket: "", access_key: "", secret: "" };
+  const [bkOpen, setBkOpen] = useState(false);
+  const [bkForm, setBkForm] = useState(blankTarget);
+  const [bkBusy, setBkBusy] = useState<string | null>(null);
+  const [bkErr, setBkErr] = useState<string | null>(null);
+  const [bkMsg, setBkMsg] = useState<string | null>(null);
+  /** 等着二次确认移除的目标。 */
+  const [bkRemoving, setBkRemoving] = useState<BackupTarget | null>(null);
+  /** 有多个目标时，先问从哪一个恢复。 */
+  const [bkPick, setBkPick] = useState(false);
+  const bkAdd = () => { setBkErr(null); setBkForm(blankTarget); setBkOpen(true); };
+  const bkEdit = (tg: BackupTarget) => { setBkErr(null); setBkForm({ id: tg.id, name: tg.name, kind: tg.kind, account: tg.account, bucket: tg.bucket, access_key: tg.access_key, secret: "" }); setBkOpen(true); };
+  const bkEditing = bkForm.id ? backup?.targets.find((x) => x.id === bkForm.id) : undefined;
+  const bkSave = async () => {
+    setBkBusy("save"); setBkErr(null);
+    try { await saveTarget(bkForm); setBkOpen(false); setBkMsg(t("settings.backupSaved")); } catch (e) { setBkErr(String(e)); }
+    setBkBusy(null);
+  };
+  const bkToggle = async () => { if (!backup) return; setBkBusy("toggle"); try { await setBackupOptions({ enabled: !backup.enabled }); } catch (e) { setBkMsg(String(e)); } setBkBusy(null); };
+  const bkKeep = async (n: number) => { if (!backup || !(n >= 1)) return; try { await setBackupOptions({ keep: Math.round(n) }); } catch (e) { setBkMsg(String(e)); } };
+  const bkNow = async () => {
+    setBkBusy("now"); setBkMsg(null);
+    try { await backupNow(true); setBkMsg(t("settings.backupDone")); } catch (e) { setBkMsg(t("settings.backupFailed", { error: String(e) })); await refreshBackup(); }
+    setBkBusy(null);
+  };
+  const bkRestoreFrom = async (tg: BackupTarget) => {
+    setBkPick(false);
+    if (!window.confirm(t("settings.backupRestoreConfirm", { name: tg.name }))) return;
+    setBkBusy("restore"); setBkMsg(null);
+    try {
+      const [r, carried] = await restoreBackup(tg.id);
+      if (carried && typeof carried === "object") {
+        const keep = ["theme", "learn", "search", "customStyles", "eyeMethod", "quality"] as const;
+        const patch: Partial<AppSettings> = {};
+        for (const k of keep) if (k in carried) (patch as Record<string, unknown>)[k] = (carried as Record<string, unknown>)[k];
+        setSettings(patch);
+      }
+      await refreshStyles(); bumpPrefsRevision();
+      setBkMsg(t("settings.importTasteDone", { styles: r.styles, examples: r.examples, refs: r.refs }));
+    } catch (e) { setBkMsg(t("settings.backupFailed", { error: String(e) })); }
+    setBkBusy(null);
+  };
+  const bkRestore = () => { const list = backup?.targets ?? []; if (list.length === 1) void bkRestoreFrom(list[0]); else if (list.length > 1) setBkPick(true); };
+  const bkRemove = async (tg: BackupTarget) => { setBkRemoving(null); setBkBusy("remove"); setBkMsg(null); try { await removeTarget(tg.id); } catch (e) { setBkMsg(String(e)); } setBkBusy(null); };
+  const bkWhen = (secs: number) => new Intl.DateTimeFormat(i18n.language, { dateStyle: "medium", timeStyle: "short" }).format(new Date(secs * 1000));
+  /** 自动备份那一行的说明：最近一次成功、或最近的错误。 */
+  const bkSummary = () => {
+    if (!backup?.configured) return t("settings.backupDesc");
+    const errs = backup.targets.filter((x) => x.last_error);
+    if (errs.length) return t("settings.backupLastError", { error: `${errs[0].name}: ${errs[0].last_error}` });
+    const last = Math.max(0, ...backup.targets.map((x) => x.last_ok));
+    return last ? t("settings.backupLast", { when: bkWhen(last) }) : t("settings.backupNever");
   };
   // "my settings and taste" as one file: what the taste models learned, as embeddings, plus the settings; no photos, no paths
   const [tasteBusy, setTasteBusy] = useState(false);
@@ -171,7 +237,7 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
   const [refBusy, setRefBusy] = useState<number | null>(null);
   const [refFailed, setRefFailed] = useState(false);
   const learnRefs = async () => {
-    const dir = await pickFolder();
+    const dir = await pickLocalFolder();
     if (!dir) return;
     setRefFailed(false); setRefBusy(0);
     const ok = await learnFromFolder(dir, undefined, setRefBusy);
@@ -184,17 +250,58 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
 
   return (
     <div className="module" data-active={active}>
-      <Modal open={nasOpen} onClose={() => nasBusy !== "new" && setNasOpen(false)} locked={nasBusy === "new"} title={t("settings.nasAddTitle")}
-        footer={(<><button className="btn" disabled={nasBusy === "new"} onClick={() => setNasOpen(false)}>{t("settings.nasCancel")}</button>
-          <button className="btn primary" disabled={nasBusy === "new" || !nasForm.url.includes("://")} onClick={nasSubmit}>{nasBusy === "new" ? t("settings.nasConnecting") : t("settings.nasConnectSave")}</button></>)}>
+      <Modal open={bkOpen} onClose={() => bkBusy !== "save" && setBkOpen(false)} locked={bkBusy === "save"} title={bkEditing ? t("settings.backupEditTitle", { name: bkEditing.name }) : t("settings.backupAddTitle")}
+        footer={(<><button className="btn" disabled={bkBusy === "save"} onClick={() => setBkOpen(false)}>{t("settings.nasCancel")}</button>
+          <button className="btn primary" disabled={bkBusy !== null || !bkForm.account.trim() || !bkForm.bucket.trim() || !bkForm.access_key.trim() || (!bkForm.secret && !bkEditing?.has_secret)} onClick={bkSave}>{bkBusy === "save" ? t("settings.backupTesting") : t("settings.backupSave")}</button></>)}>
         <div className="nas-form">
-          <label><span>{t("settings.nasUrl")}</span><input className="title-input wide" value={nasForm.url} placeholder="smb://nas.local/photos" spellCheck={false} autoFocus onChange={(e) => setNasForm({ ...nasForm, url: e.target.value })} /></label>
-          <label><span>{t("settings.nasUser")}</span><input className="title-input wide" value={nasForm.user} placeholder={t("settings.nasGuestHint")} spellCheck={false} onChange={(e) => setNasForm({ ...nasForm, user: e.target.value })} /></label>
-          <label><span>{t("settings.nasPassword")}</span><input className="title-input wide" type="password" value={nasForm.password} onChange={(e) => setNasForm({ ...nasForm, password: e.target.value })} /></label>
+          <label><span>{t("settings.backupName")}</span><input className="title-input wide" value={bkForm.name} placeholder={t("settings.backupNameHint")} autoFocus onChange={(e) => setBkForm({ ...bkForm, name: e.target.value })} /></label>
+          <label><span>{t("settings.backupKind")}</span><Select value={bkForm.kind} disabled={!!bkEditing} onChange={() => { /* 目前只有一种 */ }}><option value="r2">Cloudflare R2</option></Select></label>
+          <p className="ash small">{t("settings.backupHow")}</p>
+          <label><span>{t("settings.backupAccount")}</span><input className="title-input wide" value={bkForm.account} placeholder={t("settings.backupAccountHint")} spellCheck={false} onChange={(e) => setBkForm({ ...bkForm, account: e.target.value })} /></label>
+          <label><span>{t("settings.backupBucket")}</span><input className="title-input wide" value={bkForm.bucket} placeholder="fleetinggleam" spellCheck={false} onChange={(e) => setBkForm({ ...bkForm, bucket: e.target.value })} /></label>
+          <label><span>Access Key ID</span><input className="title-input wide" value={bkForm.access_key} spellCheck={false} onChange={(e) => setBkForm({ ...bkForm, access_key: e.target.value })} /></label>
+          <label><span>Secret Access Key</span><input className="title-input wide" type="password" value={bkForm.secret} placeholder={bkEditing?.has_secret ? t("settings.backupSecretKept") : ""} onChange={(e) => setBkForm({ ...bkForm, secret: e.target.value })} /></label>
+          {bkErr && <p className="error">{t("settings.backupFailed", { error: bkErr })}</p>}
+        </div>
+      </Modal>
+      <Modal open={!!bkRemoving} onClose={() => setBkRemoving(null)} title={t("settings.backupRemoveTitle", { name: bkRemoving?.name ?? "" })}
+        footer={(<><button className="btn" onClick={() => setBkRemoving(null)}>{t("settings.nasCancel")}</button>
+          <button className="btn primary" onClick={() => bkRemoving && bkRemove(bkRemoving)}>{t("settings.backupRemoveConfirm")}</button></>)}>
+        <p className="ash">{t("settings.backupRemoveBody")}</p>
+      </Modal>
+      <Modal open={bkPick} onClose={() => setBkPick(false)} title={t("settings.backupRestorePick")} footer={<button className="btn" onClick={() => setBkPick(false)}>{t("settings.nasCancel")}</button>}>
+        <div className="picker-sources">
+          {(backup?.targets ?? []).map((tg) => (
+            <button key={tg.id} className="picker-src" onClick={() => bkRestoreFrom(tg)}><span><b>{tg.name}</b><small>{`Cloudflare R2 · ${tg.bucket}`}{tg.last_ok ? ` · ${t("settings.backupLast", { when: bkWhen(tg.last_ok) })}` : ""}</small></span></button>
+          ))}
+        </div>
+      </Modal>
+      <Modal open={!!nasRemoving} onClose={() => setNasRemoving(null)} title={t("settings.nasRemoveTitle", { name: nasRemoving?.name ?? "" })}
+        footer={(<><button className="btn" onClick={() => setNasRemoving(null)}>{t("settings.nasCancel")}</button>
+          <button className="btn primary" onClick={() => { const sh = nasRemoving; setNasRemoving(null); if (sh) void nasDo(sh, () => removeShare(sh.id)); }}>{t("settings.nasRemoveConfirm")}</button></>)}>
+        <p className="ash">{t("settings.nasRemoveBody")}</p>
+      </Modal>
+      <Modal open={nasOpen} onClose={() => nasBusy !== "new" && setNasOpen(false)} locked={nasBusy === "new"} title={nasEditing ? t("settings.nasEditTitle", { name: nasEditing.name }) : t("settings.nasAddTitle")}
+        footer={(<><button className="btn" disabled={nasBusy === "new"} onClick={() => setNasOpen(false)}>{t("settings.nasCancel")}</button>
+          <button className="btn primary" disabled={nasBusy !== null || (!nasShares && !(nasEditing && nasForm.host.trim() === nasEditing.host && nasForm.user.trim() === nasEditing.user && !nasForm.password))} onClick={nasSubmit}>{nasBusy === "new" ? t("settings.nasConnecting") : nasEditing ? t("settings.nasSaveChanges") : t("settings.nasConnectSave")}</button></>)}>
+        <div className="nas-form">
+          <p className="ash small">{t("settings.nasHow")}</p>
+          <label><span>{t("settings.nasHost")}</span><input className="title-input wide" value={nasForm.host} placeholder={t("settings.nasHostHint")} spellCheck={false} autoFocus onChange={(e) => { setNasForm({ ...nasForm, host: e.target.value }); setNasShares(null); }} /></label>
+          <label><span>{t("settings.nasUser")}</span><input className="title-input wide" value={nasForm.user} placeholder={t("settings.nasGuestHint")} spellCheck={false} onChange={(e) => { setNasForm({ ...nasForm, user: e.target.value }); setNasShares(null); }} /></label>
+          <label><span>{t("settings.nasPassword")}</span><input className="title-input wide" type="password" value={nasForm.password} placeholder={nasEditing && nasEditing.user ? t("settings.nasPasswordKept") : ""} onChange={(e) => { setNasForm({ ...nasForm, password: e.target.value }); setNasShares(null); }} onKeyDown={(e) => { if (e.key === "Enter" && nasForm.host.trim()) void nasProbe(); }} /></label>
+          <div className="nas-probe">
+            <button className="btn" disabled={nasBusy !== null || !nasForm.host.trim()} onClick={nasProbe}>{nasBusy === "probe" ? t("settings.nasProbing") : t("settings.nasProbe")}</button>
+            {nasShares && <span className={`ktag ${nasShares.length ? "on" : ""}`}>{nasShares.length ? t("settings.nasProbeOk", { count: nasShares.length }) : t("settings.nasProbeNone")}</span>}
+          </div>
+          {nasErr && <p className="error">{t("settings.nasFailed", { error: nasErr })}</p>}
+          {nasShares && nasShares.length > 0 && (
+            <div className="nas-shares">
+              {nasShares.map((sh) => <span key={sh} className="ktag">{sh}</span>)}
+              <span className="ash small">{t("settings.nasSharesHint")}</span>
+            </div>
+          )}
           <label><span>{t("settings.nasName")}</span><input className="title-input wide" value={nasForm.name} placeholder={t("settings.nasNameHint")} onChange={(e) => setNasForm({ ...nasForm, name: e.target.value })} /></label>
           <label className="nas-remember"><input type="checkbox" checked={nasForm.remember} onChange={(e) => setNasForm({ ...nasForm, remember: e.target.checked })} /><span>{t("settings.nasRemember")}</span></label>
-          <p className="ash small">{t("settings.nasHow")}</p>
-          {nasErr && <p className="error">{t("settings.nasFailed", { error: nasErr })}</p>}
         </div>
       </Modal>
       <section className="workspace">
@@ -282,34 +389,65 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
                 <span className="mono ash cachesize">{cache === null ? "—" : bytes(cache)}</span>
                 <button className="btn" onClick={clear} disabled={!cache}>{cleared ? t("settings.cleared") : t("settings.clear")}</button>
               </Row>
+              <Row label={t("settings.privacy")} desc={t("settings.privacyBody")} />
+            </Group>
+
+            <Group id="sec-backup" title={t("settings.backup")} index={4}>
+              <Row label={t("settings.backupTitle")} desc={bkMsg ?? bkSummary()} info={<p className="ash">{t("settings.backupInfo")}</p>}>
+                <span className="sctl-pair">
+                  {backup?.configured && <button className="btn" disabled={bkBusy !== null} onClick={bkNow}>{bkBusy === "now" ? t("settings.backupRunning") : t("settings.backupNow")}</button>}
+                  {backup?.configured && <button className="btn" disabled={bkBusy !== null} onClick={bkRestore}>{bkBusy === "restore" ? t("settings.backupRestoring") : t("settings.backupRestore")}</button>}
+                  <button className="switch" role="switch" aria-checked={!!backup?.configured && backup.enabled} aria-label={t("settings.backupAuto")} title={t("settings.backupAuto")} disabled={!backup?.configured || bkBusy !== null} onClick={bkToggle} />
+                </span>
+              </Row>
+              <Row label={t("settings.backupKeep")} desc={t("settings.backupKeepHint")}>
+                <input className="title-input keep" type="number" min={1} max={1000} defaultValue={backup?.keep ?? 30} key={backup?.keep ?? 30} disabled={!backup?.configured} aria-label={t("settings.backupKeep")} onBlur={(e) => bkKeep(Number(e.target.value))} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
+              </Row>
               <Row label={t("settings.exportTaste")} desc={tasteMsg ?? t("settings.exportTasteDesc")} info={<p className="ash">{t("settings.exportTasteInfo")}</p>}>
                 <span className="sctl-pair">
                   <button className="btn" disabled={tasteBusy} onClick={exportTaste}>{t("settings.exportTasteBtn")}</button>
                   <button className="btn" disabled={tasteBusy} onClick={importTaste}>{t("settings.importTasteBtn")}</button>
                 </span>
               </Row>
-              <Row label={t("settings.privacy")} desc={t("settings.privacyBody")} />
-            </Group>
-
-            <Group id="sec-nas" title={t("settings.nas")} index={4}>
-              <Row label={t("settings.nasTitle")} desc={t("settings.nasDesc")} info={<p className="ash">{t("settings.nasInfo")}</p>}>
-                <button className="btn" onClick={() => { setNasErr(null); setNasOpen(true); }}>{t("settings.nasAdd")}</button>
+              <Row label={t("settings.backupTargets")} desc={t("settings.backupTargetsDesc")}>
+                <button className="btn" disabled={bkBusy !== null} onClick={bkAdd}>{t("settings.backupAddTarget")}</button>
               </Row>
-              {shares.map((sh) => (
-                <Row key={sh.id} label={sh.name} desc={`${sh.url} · ${sh.user || t("settings.nasGuest")}${nasMsg?.id === sh.id ? ` · ${nasMsg.text}` : ""}`}>
+              {(backup?.targets ?? []).map((tg) => (
+                <Row key={tg.id} label={tg.name} desc={`Cloudflare R2 · ${tg.bucket}`}>
                   <span className="sctl-pair">
-                    <span className={`ktag ${sh.connected ? "on" : ""}`}>{sh.connected ? t("settings.nasConnected") : t("settings.nasOffline")}</span>
-                    {sh.connected
-                      ? <button className="btn" disabled={nasBusy === sh.id} onClick={() => nasDo(sh, () => disconnectShare(sh.id))}>{t("settings.nasDisconnect")}</button>
-                      : <button className="btn" disabled={nasBusy === sh.id} onClick={() => nasDo(sh, () => connectShare(sh.id))}>{nasBusy === sh.id ? t("settings.nasConnecting") : t("settings.nasConnect")}</button>}
-                    {sh.connected && <button className="btn" onClick={() => nasNewProject(sh)}>{t("settings.nasNewProject")}</button>}
-                    <button className="btn" disabled={nasBusy === sh.id} onClick={() => nasDo(sh, () => removeShare(sh.id))}>{t("settings.nasRemove")}</button>
+                    <span className={`nas-state ${tg.last_error ? "" : "on"}`}><i />{tg.last_error ? t("settings.backupErrored") : tg.last_ok ? t("settings.backupLast", { when: bkWhen(tg.last_ok) }) : t("settings.backupReady")}</span>
+                    <button className="btn icon sm" disabled={bkBusy !== null} onClick={() => bkEdit(tg)} title={t("settings.backupEdit")} aria-label={t("settings.backupEdit")}>
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><path d="M11.3 2.7l2 2L5.5 12.5l-2.8.8.8-2.8zM10 4l2 2" /></svg>
+                    </button>
+                    <button className="btn icon sm" disabled={bkBusy !== null} onClick={() => setBkRemoving(tg)} title={t("settings.backupRemove")} aria-label={t("settings.backupRemove")}>
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 4.5h11M6 4.5V3a.5.5 0 01.5-.5h3A.5.5 0 0110 3v1.5M4 4.5l.6 8.1a1 1 0 001 .9h4.8a1 1 0 001-.9l.6-8.1M6.5 7v4M9.5 7v4" /></svg>
+                    </button>
                   </span>
                 </Row>
               ))}
             </Group>
 
-            <Group id="sec-about" title={t("settings.about")} index={5}>
+            <Group id="sec-nas" title={t("settings.nas")} index={5}>
+              <Row label={t("settings.nasTitle")} desc={t("settings.nasDesc")} info={<p className="ash">{t("settings.nasInfo")}</p>}>
+                <button className="btn" onClick={() => { setNasErr(null); setNasShares(null); setNasEditing(null); setNasForm(blankNas); setNasOpen(true); }}>{t("settings.nasAdd")}</button>
+              </Row>
+              {shares.map((sh) => (
+                <Row key={sh.id} label={sh.name} desc={`${sh.host} · ${sh.user || t("settings.nasGuest")}${nasMsg?.id === sh.id ? ` · ${nasMsg.text}` : ""}`}>
+                  <span className="sctl-pair">
+                    <span className={`nas-state ${sh.enabled && sh.connected ? "on" : ""}`}><i />{!sh.enabled ? t("settings.nasDisabled") : sh.connected ? t("settings.nasConnected") : nasBusy === sh.id ? t("settings.nasConnecting") : t("settings.nasOffline")}</span>
+                    <button className="switch" role="switch" aria-checked={sh.enabled} aria-label={t("settings.nasEnabled")} title={t("settings.nasEnabled")} disabled={nasBusy === sh.id} onClick={() => nasDo(sh, () => setShareEnabled(sh.id, !sh.enabled))} />
+                    <button className="btn icon sm" disabled={nasBusy === sh.id} onClick={() => nasEdit(sh)} title={t("settings.nasEdit")} aria-label={t("settings.nasEdit")}>
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><path d="M11.3 2.7l2 2L5.5 12.5l-2.8.8.8-2.8zM10 4l2 2" /></svg>
+                    </button>
+                    <button className="btn icon sm" disabled={nasBusy === sh.id} onClick={() => setNasRemoving(sh)} title={t("settings.nasRemove")} aria-label={t("settings.nasRemove")}>
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 4.5h11M6 4.5V3a.5.5 0 01.5-.5h3A.5.5 0 0110 3v1.5M4 4.5l.6 8.1a1 1 0 001 .9h4.8a1 1 0 001-.9l.6-8.1M6.5 7v4M9.5 7v4" /></svg>
+                    </button>
+                  </span>
+                </Row>
+              ))}
+            </Group>
+
+            <Group id="sec-about" title={t("settings.about")} index={6}>
               <Row label={t("brand.name")} desc={i18n.language === "en" ? undefined : t("brand.latin")} info={<p className="ash">{t("settings.modelsBody")}</p>}>
                 <span className="mono ash">{version ? `v${version}` : ""}</span>
               </Row>

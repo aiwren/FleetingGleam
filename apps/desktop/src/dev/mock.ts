@@ -147,7 +147,10 @@ const prefsInfo = () => prefsOf(labels, keeps);
 
 type MockStyle = { id: string; name: string; is_default: boolean; info: ReturnType<typeof prefsOf> };
 const now = Date.now();
-const mockShares = [{ id: "n1", name: "Home NAS", url: "smb://nas.local/photos", user: "me", mountpoint: "/mock/mounts/n1", connected: false }];
+const mockShares = [{ id: "n1", name: "Home NAS", host: "nas.local", user: "me", enabled: true, local: "/mock/nas/n1", connected: true }];
+type MockTarget = { id: string; name: string; kind: "r2"; account: string; bucket: string; access_key: string; has_secret: boolean; last_ok: number; last_error: string | null };
+const mockBackup = { configured: false, enabled: false, keep: 30, targets: [] as MockTarget[] };
+const bkSync = () => { mockBackup.configured = mockBackup.targets.length > 0; return { ...mockBackup, targets: [...mockBackup.targets] }; };
 const mockStyles: MockStyle[] = [
   { id: "default", name: "", is_default: true, info: prefsOf(34, 19) },
   { id: `s${now - 6 * 86400_000}`, name: "Street", is_default: false, info: prefsOf(12, 7, 40, "/Users/me/Photos/Street") },
@@ -192,13 +195,45 @@ w.__TAURI_INTERNALS__ = {
       case "nas_add": {
         await sleep(600);
         if (String(args.url).includes("bad")) throw "the server cannot be reached (65)";
-        mockShares.push({ id: `n${Date.now()}`, name: String(args.name || "NAS"), url: String(args.url), user: String(args.user ?? ""), mountpoint: "/mock/mounts/new", connected: true });
+        mockShares.push({ id: `n${Date.now()}`, name: String(args.name || "NAS"), host: String(args.host), user: String(args.user ?? ""), enabled: true, local: "/mock/nas/new", connected: true });
         return [...mockShares];
       }
+      case "nas_update": { await sleep(500); const s = mockShares.find((x) => x.id === args.id); if (s) Object.assign(s, { name: String(args.name || args.host), host: String(args.host), user: String(args.user ?? ""), connected: true }); return [...mockShares]; }
+      case "nas_set_enabled": { const s = mockShares.find((x) => x.id === args.id); if (s) { s.enabled = !!args.enabled; s.connected = s.enabled; } return [...mockShares]; }
       case "nas_remove": { const i = mockShares.findIndex((s) => s.id === args.id); if (i >= 0) mockShares.splice(i, 1); return [...mockShares]; }
       case "nas_connect": { await sleep(500); const s = mockShares.find((x) => x.id === args.id); if (s) s.connected = true; return [...mockShares]; }
       case "nas_disconnect": { const s = mockShares.find((x) => x.id === args.id); if (s) s.connected = false; return [...mockShares]; }
       case "nas_ensure": return [];
+      case "backup_status": return bkSync();
+      case "backup_save_target": {
+        await sleep(700);
+        if (String(args.bucket).includes("bad")) throw "no such bucket in that account";
+        const id = (args.id as string | null) || `t${Date.now()}`;
+        const t: MockTarget = { id, name: String(args.name || `Cloudflare R2 · ${args.bucket}`), kind: "r2", account: String(args.account), bucket: String(args.bucket), access_key: String(args.accessKey), has_secret: true, last_ok: mockBackup.targets.find((x) => x.id === id)?.last_ok ?? 0, last_error: null };
+        const i = mockBackup.targets.findIndex((x) => x.id === id); if (i >= 0) mockBackup.targets[i] = t; else mockBackup.targets.push(t);
+        return bkSync();
+      }
+      case "backup_remove_target": mockBackup.targets = mockBackup.targets.filter((x) => x.id !== args.id); return bkSync();
+      case "backup_set_options": { if (args.enabled != null) mockBackup.enabled = !!args.enabled; if (args.keep != null) mockBackup.keep = Number(args.keep); return bkSync(); }
+      case "backup_now": await sleep(900); mockBackup.targets.forEach((x) => { x.last_ok = Math.floor(Date.now() / 1000); x.last_error = null; }); return bkSync();
+      case "backup_restore": await sleep(900); return [{ styles: 2, examples: 40, refs: 10, skipped: 0 }, { theme: "system" }];
+      case "nas_probe": { await sleep(600); if (String(args.host).includes("bad")) throw "the server cannot be reached"; return ["photos", "backup", "media"]; }
+      case "nas_browse": {
+        // 假的共享：根下两个年份文件夹，每个里面有几张照片
+        await sleep(300);
+        const path = String(args.path ?? "");
+        // 根是共享列表；往下是文件夹和照片
+        const tree: Record<string, { name: string; dir: boolean; size: number }[]> = {
+          "": [{ name: "photos", dir: true, size: 0 }, { name: "backup", dir: true, size: 0 }, { name: "media", dir: true, size: 0 }],
+          "photos": [{ name: "2024", dir: true, size: 0 }, { name: "2025", dir: true, size: 0 }, { name: "IMG_0001.jpg", dir: false, size: 4_200_000 }],
+          "photos/2024": [{ name: "Lisbon", dir: true, size: 0 }, { name: "IMG_0100.jpg", dir: false, size: 5_100_000 }, { name: "IMG_0101.jpg", dir: false, size: 4_900_000 }],
+          "photos/2025": [{ name: "Porto", dir: true, size: 0 }],
+          "photos/2024/Lisbon": Array.from({ length: 12 }, (_, i) => ({ name: `IMG_${200 + i}.jpg`, dir: false, size: 6_000_000 })),
+          "photos/2025/Porto": Array.from({ length: 7 }, (_, i) => ({ name: `IMG_${300 + i}.jpg`, dir: false, size: 5_500_000 })),
+          "backup": Array.from({ length: 30 }, (_, i) => ({ name: `folder-${i + 1}`, dir: true, size: 0 })),
+        };
+        return { path, local: path ? `/mock/nas/${args.id}/${path}` : "", entries: tree[path] ?? [] };
+      }
       case "taste_export": await sleep(300); return { styles: mockStyles.length, examples: 46, refs: 40, skipped: 2 };
       case "taste_import": await sleep(400); labels += 20; keeps += 11; return [{ styles: 1, examples: 20, refs: 0, skipped: 0 }, { theme: "system" }];
       // The native HDR layer exists only in the app; here the calls are just recorded (window.__hdrCalls) so the page's side can be checked.

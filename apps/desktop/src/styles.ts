@@ -20,6 +20,8 @@ const subscribe = (f: () => void) => { subs.add(f); return () => { subs.delete(f
 export const useStyles = () => useSyncExternalStore(subscribe, () => styles);
 /** Bumped whenever a learned taste changes, so open projects can offer to re-evaluate. */
 export const usePrefsRevision = () => useSyncExternalStore(subscribe, () => revision);
+/** 风格或喜好变化的通知（云备份靠它知道该上传了）。 */
+export const subscribeStyles = subscribe;
 export const bumpPrefsRevision = () => { revision++; notify(); };
 
 const set = (list: unknown) => { if (Array.isArray(list)) { styles = list as StyleInfo[]; notify(); } };

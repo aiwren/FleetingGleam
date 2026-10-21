@@ -63,7 +63,8 @@ kbd { font-family: "Geist Mono Variable", monospace; font-size: 11px; opacity: .
 /* ---------- shell: sidebar | content ---------- */
 .shell { --sw: 220px; display: grid; grid-template-columns: var(--sw) minmax(0, 1fr); height: 100%; overflow: hidden; transition: grid-template-columns .38s var(--ease); }
 .sidebar-wrap { overflow: hidden; min-width: 0; }
-.content { background: var(--canvas); min-width: 0; min-height: 0; position: relative; }
+/* overflow hidden：隐藏的模块带着 translateY(10px)，不裁掉会把 .shell 撑出 10px 可滚动区域，焦点一落到按钮上整页就被滚上去 */
+.content { background: var(--canvas); min-width: 0; min-height: 0; position: relative; overflow: hidden; }
 
 /* sidebar is transparent so the native macOS "sidebar" vibrancy shows through */
 .sidebar { width: 220px; height: 100%; padding: 52px 10px 14px; display: flex; flex-direction: column; gap: 8px; min-height: 0; border-right: 1px solid var(--line); }
@@ -1262,9 +1263,43 @@ img { -webkit-user-drag: none; }
 
 .focus.missing { display: block; width: 100%; height: 100%; background: var(--surface-2); }
 
-.sctl-pair { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.sctl-pair { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 
 .nas-form { display: grid; gap: 10px; }
 .nas-form label { display: grid; gap: 4px; font-size: 12.5px; color: var(--ash); }
 .nas-form label.nas-remember { grid-template-columns: auto 1fr; align-items: center; gap: 8px; color: var(--ink); }
 .nas-form .error { margin: 0; }
+
+/* 选文件夹：本机还是 NAS 共享，以及在共享里逐级浏览 */
+.picker-sources { display: grid; gap: 8px; }
+.picker-src { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: transparent; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.picker-src:hover { background: var(--line); }
+.picker-src span { display: grid; gap: 2px; }
+.picker-src small { color: var(--ash); font-size: 11.5px; }
+.picker-browse { display: grid; gap: 8px; min-height: 240px; }
+.picker-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; font-size: 12.5px; color: var(--ash); }
+.picker-crumbs button { border: 0; background: transparent; color: var(--ash); font: inherit; padding: 2px 4px; border-radius: 6px; cursor: pointer; }
+.picker-crumbs button:hover { background: var(--line); color: var(--ink); }
+.picker-crumbs button.cur { color: var(--ink); font-weight: 600; }
+.picker-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; max-height: 320px; overflow: auto; }
+.picker-list li button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.picker-list li button > svg { flex: none; color: var(--ash); }
+.picker-list li button > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker-list li button .picker-go { display: inline-flex; color: var(--ash); opacity: 0; transition: opacity .15s; }
+.picker-list li button:hover { background: var(--line); }
+.picker-list li button:hover .picker-go, .picker-list li button:focus-visible .picker-go { opacity: 1; }
+.picker-src > svg { flex: none; color: var(--ash); }
+.picker-list li.pad { padding: 7px 8px; }
+.nas-probe { display: flex; align-items: center; gap: 10px; }
+.nas-shares { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; max-height: 96px; overflow: auto; }
+.nas-shares .ktag { margin: 0; }
+/* 设置页里 NAS / 云备份的状态：小圆点 + 文字，不像按钮 */
+.nas-state { display: inline-flex; align-items: center; gap: 6px; margin-right: 4px; font-size: 12px; color: var(--ash); white-space: nowrap; }
+.nas-state i { width: 7px; height: 7px; border-radius: 50%; background: color-mix(in srgb, var(--ash) 45%, transparent); }
+.nas-state.on { color: var(--ink); }
+.nas-state.on i { background: var(--ink); }
+/* 只有图标的小按钮（编辑、移除） */
+/* 设置页列表里的小图标按钮（编辑、移除）：固定 30px 见方、默认灰一档；顶栏的 .btn.icon 不受影响 */
+.btn.icon.sm { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; color: var(--ash); }
+.btn.icon.sm:hover:not(:disabled) { color: var(--ink); }
+.title-input.keep { width: 80px; text-align: right; }

@@ -30,6 +30,7 @@ import { newProjectFromDialog, pickFolder } from "../projectActions";
 import { Project, setActive, trashProject, updateProject, useProjects, useProjectsStatus } from "../projects";
 import { getSettings, ScanInfo, setScanInfo, useSettings, useCacheRev } from "../settings";
 import { Decision, Photo, Probe, ProbeFile, Reason, State, pct, thumbSrc } from "../types";
+import { NasProgress } from "../nas";
 import Organize from "./Organize";
 import ReadyStage from "./ReadyStage";
 import ProjectSettings from "./ProjectSettings";
@@ -100,10 +101,13 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const [peopleProg, setPeopleProg] = useState<{ done: number; total: number } | null>(null);
   // The same for HDR and motion: photos analysed earlier get their HDR thumbnails made on first opening.
   const [mediaProg, setMediaProg] = useState<{ done: number; total: number } | null>(null);
+  // 项目在 NAS 上时，探测和分析前都先把新照片拉进本地镜像；第一次打开可能要等一会儿，所以把进度说出来
+  const [nasProg, setNasProg] = useState<NasProgress | null>(null);
   useEffect(() => {
     const a = listen<{ done: number; total: number }>("people-progress", (e) => setPeopleProg(e.payload));
     const b = listen<{ done: number; total: number }>("media-progress", (e) => setMediaProg(e.payload));
-    return () => { void a.then((f) => f()); void b.then((f) => f()); };
+    const c = listen<NasProgress>("nas-progress", (e) => setNasProg(e.payload.done >= e.payload.total ? null : e.payload));
+    return () => { void a.then((f) => f()); void b.then((f) => f()); void c.then((f) => f()); };
   }, []);
   const [panelOpen, setPanelOpen] = useState(() => { try { return localStorage.getItem("fg.filterpanel") !== "0"; } catch { return true; } });
   const togglePanel = () => setPanelOpen((v) => { const n = !v; try { localStorage.setItem("fg.filterpanel", n ? "1" : "0"); } catch { /* storage unavailable */ } return n; });
@@ -208,14 +212,16 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     // whatever scan was running belonged to the project (or settings) just left; it stops at its next photo
     invoke("scan_cancel").catch(() => { /* not in Tauri */ });
     undoStack.current = []; // the marks that could be undone belonged to the project just left
-    setSelected(null); setQuery(""); setZoomed(false); setError(null); setMode("all"); setSceneFilter(null); setPersonFilter(null); setSceneView(false); setCelebrate(false); setDirty(0);
+    setSelected(null); setQuery(""); setZoomed(false); setError(null); setMode("all"); setSceneFilter(null); setPersonFilter(null); setSceneView(false); setCelebrate(false); setDirty(0); setNasProg(null);
     if (!project || project.folders.length === 0) { setPhase("idle"); setPhotos([]); setFiles([]); return; }
     setPhase("probing");
     (async () => {
       try {
         // a project on a network share: connect the share first, and say so when it cannot be reached
-        const shares = await invoke<{ name: string; connected: boolean }[]>("nas_ensure", { dirs: project.folders }).catch(() => []);
+        const shares = await invoke<{ name: string; enabled: boolean; connected: boolean }[]>("nas_ensure", { dirs: project.folders }).catch(() => []);
         if (tok !== token.current) return;
+        const disabled = shares.filter((s) => !s.enabled);
+        if (disabled.length > 0) { setPhotos([]); setFiles([]); setPhase("idle"); setNasOff(disabled.map((s) => s.name).join(", ")); setError("cull.nasDisabled"); return; }
         const off = shares.filter((s) => !s.connected);
         if (off.length > 0) { setPhotos([]); setFiles([]); setPhase("idle"); setNasOff(off.map((s) => s.name).join(", ")); setError("cull.nasOffline"); return; }
         const probe = await invoke<Probe>("probe_folder", { dirs: project.folders, compute: "auto", quality: currentTier() });
@@ -724,12 +730,13 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
         )}
         {phase === "done" && panelOpen && <Resizer panel={filterW} edge="right" label={t("cull.filters")} />}
         <div className="scroll" ref={scrollRef}>
-          {error && error !== "cull.nasOffline" && <p className="error">{t(error, { defaultValue: error })}</p>}
-          {error === "cull.nasOffline" && <p className="error">{t("cull.nasOffline", { name: nasOff })} <button className="btn sm" onClick={() => setReloadKey((k) => k + 1)}>{t("cull.nasRetry")}</button></p>}
+          {error && error !== "cull.nasOffline" && error !== "cull.nasDisabled" && <p className="error">{t(error, { defaultValue: error })}</p>}
+          {(error === "cull.nasOffline" || error === "cull.nasDisabled") && <p className="error">{t(error, { name: nasOff })} <button className="btn sm" onClick={() => setReloadKey((k) => k + 1)}>{t("cull.nasRetry")}</button></p>}
           {saveError && <p className="error">{t("cull.saveFailed", { error: saveError })}</p>}
           {loadError === "corrupt" && <p className="error">{t("cull.loadCorrupt")}</p>}
 
-          {(phase === "probing" || phase === "loading") && <p className="ash pad loading">{phase === "loading" && mediaProg && mediaProg.done < mediaProg.total ? t("cull.preparingMedia", { done: mediaProg.done, total: mediaProg.total }) : phase === "loading" && peopleProg && peopleProg.done < peopleProg.total ? t("cull.recognising", { done: peopleProg.done, total: peopleProg.total }) : t(phase === "probing" ? "cull.probing" : "cull.loading")}</p>}
+          {(phase === "probing" || phase === "loading") && nasProg && <p className="ash pad loading">{t("cull.fetchingNas", { share: nasProg.share, done: nasProg.done, total: nasProg.total, size: fmtBytes(nasProg.bytes_total) })}</p>}
+          {(phase === "probing" || phase === "loading") && !nasProg && <p className="ash pad loading">{phase === "loading" && mediaProg && mediaProg.done < mediaProg.total ? t("cull.preparingMedia", { done: mediaProg.done, total: mediaProg.total }) : phase === "loading" && peopleProg && peopleProg.done < peopleProg.total ? t("cull.recognising", { done: peopleProg.done, total: peopleProg.total }) : t(phase === "probing" ? "cull.probing" : "cull.loading")}</p>}
 
           {!project && store.projects.length > 0 && (
             <ProjectHome projects={store.projects} onOpen={(id) => setActive(id)} onNew={() => newProjectFromDialog()}

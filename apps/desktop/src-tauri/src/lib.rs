@@ -22,6 +22,7 @@ mod scoring;
 mod vision;
 mod taste;
 mod nas;
+mod r2;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -101,6 +102,8 @@ struct AppState {
     scene_sentences: Mutex<Option<std::collections::HashMap<String, String>>>,
     /// Bumped by every request to describe scenes, so an older one stops as soon as a newer one arrives.
     scene_job: AtomicU64,
+    /// NAS 共享的连接，住在自己的线程里（见 nas.rs）。
+    nas: nas::Pool,
 }
 
 fn data_dir(app: &AppHandle) -> PathBuf {
@@ -142,12 +145,12 @@ fn face_embedder(app: &AppHandle, model_dir: &Path) -> Option<std::sync::Arc<fac
 
 /// Names that are never the user's photos: hidden files (this covers macOS `._IMG.jpg` resource forks and `.DS_Store`),
 /// and folders the system or a NAS keeps beside real content.
-fn is_junk(name: &str) -> bool {
+pub(crate) fn is_junk(name: &str) -> bool {
     name.starts_with('.') || matches!(name, "__MACOSX" | "@eaDir" | "$RECYCLE.BIN" | "System Volume Information" | "Thumbs.db" | "desktop.ini")
 }
 
 /// Photos below this size are icons or thumbnails, not photos.
-const MIN_PHOTO_BYTES: u64 = 8 * 1024;
+pub(crate) const MIN_PHOTO_BYTES: u64 = 8 * 1024;
 
 fn list_images(dir: &str) -> Vec<PathBuf> {
     let mut files: Vec<_> = WalkDir::new(dir)
@@ -199,17 +202,6 @@ fn image_bin(app: &AppHandle) -> PathBuf {
     bundled
 }
 
-fn mount_bin(app: &AppHandle) -> PathBuf {
-    let bundled = app.path().resource_dir().map(|d| d.join("bin/fg-mount")).unwrap_or_default();
-    #[cfg(debug_assertions)]
-    {
-        if !bundled.exists() {
-            return PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("bin/fg-mount");
-        }
-    }
-    bundled
-}
-
 fn vision_bin(app: &AppHandle) -> PathBuf {
     let bundled = app.path().resource_dir().map(|d| d.join("bin/fg-vision")).unwrap_or_default();
     #[cfg(debug_assertions)]
@@ -241,7 +233,10 @@ fn oriented_dims(p: &Path) -> Option<(u32, u32)> {
 #[tauri::command]
 async fn probe_folder(app: AppHandle, dirs: Vec<String>, compute: Option<String>, quality: Option<String>) -> Result<Probe, String> {
     let tag = scorer::analysis_tag(scorer::resolve(&models_dir(&app), compute.as_deref() != Some("cpu"), scorer::Quality::parse(quality.as_deref())));
+    // 离开项目时页面会 `scan_cancel`，正在从 NAS 拉照片的探测也就跟着停
+    let job = app.state::<AppState>().scan_job.load(Ordering::Relaxed);
     tauri::async_runtime::spawn_blocking(move || {
+        nas_sync_dirs(&app, &dirs, job)?;
         let files = list_all(&dirs);
         let cached: Vec<bool> = with_cache(&app, |c| {
             files
@@ -260,10 +255,10 @@ async fn probe_folder(app: AppHandle, dirs: Vec<String>, compute: Option<String>
         // Size of what still needs analysing, which is what the confirmation screen talks about.
         let bytes = files.iter().zip(&out).filter(|(_, o)| !o.cached).filter_map(|(p, _)| std::fs::metadata(p).ok()).map(|m| m.len()).sum();
         let uncached = out.iter().filter(|f| !f.cached).count();
-        Probe { files: out, bytes, uncached }
+        Ok(Probe { files: out, bytes, uncached })
     })
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?
 }
 
 /// Analyses whatever is new or changed, reuses the cache for the rest, then groups and scores every photo
@@ -288,6 +283,8 @@ async fn scan_project(app: AppHandle, key: String, dirs: Vec<String>, compute: O
 
     tauri::async_runtime::spawn_blocking(move || {
         let cancelled = || app.state::<AppState>().scan_job.load(Ordering::Relaxed) != job;
+        // 镜像里可能有探测之后才到 NAS 上的新照片；再对一次远端，没变化时只是几次目录列表
+        nas_sync_dirs(&app, &dirs, job)?;
         let files = list_all(&dirs);
         let total = files.len();
         let mut hits: Vec<Photo> = Vec::new();
@@ -606,15 +603,38 @@ pub fn quarantine_name(path: &Path) -> PathBuf {
 
 /// Writes "my settings and taste" to `path` (see `taste.rs`): the settings object the frontend passes, every style's examples as
 /// embeddings, no photos and no paths.
+/// "我的设置与喜好"打成一个包（JSON 字节）：导出到文件和备份到云端用的是同一份。
+fn taste_pack_bytes(app: &AppHandle, settings: serde_json::Value) -> Result<(Vec<u8>, taste::Summary), String> {
+    let version = app.package_info().version.to_string();
+    let st = app.state::<AppState>();
+    let styles = st.prefs.lock().unwrap();
+    let (pack, summary) = with_cache(app, |c| taste::pack(&styles, settings, &version, |k| c.embedding(k)));
+    drop(styles);
+    let bytes = serde_json::to_vec_pretty(&pack).map_err(|e| e.to_string())?;
+    Ok((bytes, summary))
+}
+
+/// 把一个包里的喜好并进本机的风格（从文件导入和从云端恢复都走这里），返回摘要和包里带的设置。
+fn taste_apply(app: &AppHandle, pack: taste::Pack) -> Result<(taste::Summary, serde_json::Value), String> {
+    let st = app.state::<AppState>();
+    let (summary, touched) = {
+        let mut styles = st.prefs.lock().unwrap();
+        taste::unpack(&mut styles, &pack)?
+    };
+    for id in &touched {
+        retrain_outside_lock(app, Some(id));
+    }
+    let pending = st.prefs.lock().unwrap().to_save();
+    if let Some(p) = pending {
+        p.write();
+    }
+    Ok((summary, pack.settings))
+}
+
 #[tauri::command]
 async fn taste_export(app: AppHandle, path: String, settings: serde_json::Value) -> Result<taste::Summary, String> {
-    let version = app.package_info().version.to_string();
     tauri::async_runtime::spawn_blocking(move || {
-        let st = app.state::<AppState>();
-        let styles = st.prefs.lock().unwrap();
-        let (pack, summary) = with_cache(&app, |c| taste::pack(&styles, settings, &version, |k| c.embedding(k)));
-        drop(styles);
-        let bytes = serde_json::to_vec_pretty(&pack).map_err(|e| e.to_string())?;
+        let (bytes, summary) = taste_pack_bytes(&app, settings)?;
         let out = PathBuf::from(&path);
         let tmp = out.with_extension("json.tmp");
         write_synced(&tmp, &bytes).map_err(|e| format!("{}: {e}", tmp.display()))?;
@@ -625,59 +645,270 @@ async fn taste_export(app: AppHandle, path: String, settings: serde_json::Value)
     .map_err(|e| e.to_string())?
 }
 
-/// Reads a taste file into the styles (merging by style name), retrains what it touched and returns the settings it carried for the
-/// frontend to apply.
 #[tauri::command]
 async fn taste_import(app: AppHandle, path: String) -> Result<(taste::Summary, serde_json::Value), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let text = std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?;
         let pack: taste::Pack = serde_json::from_slice(&text).map_err(|e| format!("{path}: {e}"))?;
-        let st = app.state::<AppState>();
-        let (summary, touched) = {
-            let mut styles = st.prefs.lock().unwrap();
-            taste::unpack(&mut styles, &pack)?
-        };
-        for id in &touched {
-            retrain_outside_lock(&app, Some(id));
-        }
-        let pending = st.prefs.lock().unwrap().to_save();
-        if let Some(p) = pending {
-            p.write();
-        }
-        Ok((summary, pack.settings))
+        taste_apply(&app, pack)
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
-// ---------------------------------------------------------------- network shares
+// ---------------------------------------------------------------- 云备份
+
+/// 设置页看到的一个备份目标；从不带 Secret。
+#[derive(Serialize, Clone)]
+struct TargetStatus {
+    id: String,
+    name: String,
+    kind: String,
+    account: String,
+    bucket: String,
+    access_key: String,
+    has_secret: bool,
+    last_ok: u64,
+    last_error: Option<String>,
+}
+
+#[derive(Serialize, Clone)]
+struct BackupStatus {
+    /// 至少有一个能用的目标。
+    configured: bool,
+    enabled: bool,
+    /// 自动备份保留的份数。
+    keep: usize,
+    targets: Vec<TargetStatus>,
+}
+
+fn backup_status_of(dir: &Path) -> BackupStatus {
+    let c = r2::load(dir);
+    BackupStatus {
+        configured: c.configured(),
+        enabled: c.enabled,
+        keep: c.keep(),
+        targets: c.targets.iter().map(|t| TargetStatus { id: t.id.clone(), name: t.name.clone(), kind: t.kind.clone(), account: t.account.clone(), bucket: t.bucket.clone(), access_key: t.access_key.clone(), has_secret: r2::saved_secret(&t.id).is_some(), last_ok: t.last_ok, last_error: t.last_error.clone() }).collect(),
+    }
+}
+
+fn target_secret(t: &r2::Target) -> Result<String, String> {
+    r2::saved_secret(&t.id).ok_or_else(|| format!("the Secret Access Key of \"{}\" is not in the Keychain: enter it again in Settings", t.name))
+}
+
+#[tauri::command]
+fn backup_status(app: AppHandle) -> BackupStatus {
+    backup_status_of(&data_dir(&app))
+}
+
+/// 添加或修改一个备份目标（`id` 为空 = 添加）：先连一次桶，连不上什么都不改。Secret 只进钥匙串；修改时留空就沿用。
+#[tauri::command]
+async fn backup_save_target(app: AppHandle, id: Option<String>, name: String, kind: String, account: String, bucket: String, access_key: String, secret: Option<String>) -> Result<BackupStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if kind != "r2" {
+            return Err(format!("unknown backup kind {kind}"));
+        }
+        let dir = data_dir(&app);
+        let mut cfg = r2::load(&dir);
+        let id = id.filter(|s| !s.is_empty()).unwrap_or_else(|| format!("t{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)));
+        let old = cfg.targets.iter().find(|t| t.id == id).cloned();
+        let mut t = r2::Target { id: id.clone(), name: name.trim().to_string(), kind, account: account.trim().to_string(), bucket: bucket.trim().to_string(), access_key: access_key.trim().to_string(), last_ok: old.as_ref().map_or(0, |o| o.last_ok), last_error: None };
+        if t.name.is_empty() {
+            t.name = format!("Cloudflare R2 · {}", t.bucket);
+        }
+        if !t.configured() {
+            return Err("the endpoint, the bucket and the Access Key ID are all needed".to_string());
+        }
+        let secret = match secret.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(s) => s.to_string(),
+            None => r2::saved_secret(&id).ok_or("the Secret Access Key is needed")?,
+        };
+        r2::check(&t, &secret)?;
+        r2::remember_secret(&id, &secret)?;
+        match cfg.targets.iter_mut().find(|x| x.id == id) {
+            Some(slot) => *slot = t,
+            None => cfg.targets.push(t),
+        }
+        r2::save(&dir, &cfg)?;
+        Ok(backup_status_of(&dir))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 移除一个目标：忘掉它的凭据；桶里已经有的备份不动。
+#[tauri::command]
+async fn backup_remove_target(app: AppHandle, id: String) -> Result<BackupStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = data_dir(&app);
+        let mut cfg = r2::load(&dir);
+        cfg.targets.retain(|t| t.id != id);
+        r2::forget_secret(&id);
+        r2::save(&dir, &cfg)?;
+        Ok(backup_status_of(&dir))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 自动备份的开关和保留份数（目标另外管）。
+#[tauri::command]
+async fn backup_set_options(app: AppHandle, enabled: Option<bool>, keep: Option<usize>) -> Result<BackupStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = data_dir(&app);
+        let mut cfg = r2::load(&dir);
+        if let Some(e) = enabled {
+            cfg.enabled = e;
+        }
+        if let Some(k) = keep {
+            cfg.keep = k.clamp(1, 1000);
+        }
+        r2::save(&dir, &cfg)?;
+        Ok(backup_status_of(&dir))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 备份一次到每个目标："最新"一份，再留一份副本。`manual` = 人点的"立即备份"，副本永久保留在 manual/ 下；否则是自动备份，
+/// 副本按天放在 auto/ 下并只留最近几份。哪个目标失败记在它自己的状态里；全都失败才算错。
+#[tauri::command]
+async fn backup_now(app: AppHandle, settings: serde_json::Value, manual: Option<bool>) -> Result<BackupStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = data_dir(&app);
+        let mut cfg = r2::load(&dir);
+        if !cfg.configured() {
+            return Err("cloud backup is not set up".to_string());
+        }
+        let manual = manual.unwrap_or(false);
+        let (bytes, _) = taste_pack_bytes(&app, settings)?;
+        let copy = if manual { format!("{}/{}.json", r2::KEY_MANUAL, r2::now_stamp()) } else { format!("{}/{}.json", r2::KEY_AUTO, r2::today()) };
+        let keep = cfg.keep();
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let mut failures = Vec::new();
+        let total = cfg.targets.iter().filter(|t| t.configured()).count();
+        for t in cfg.targets.iter_mut().filter(|t| t.configured()) {
+            let r = target_secret(t)
+                .and_then(|secret| r2::put(t, &secret, r2::KEY_LATEST, &bytes).and_then(|_| r2::put(t, &secret, &copy, &bytes)).and_then(|_| if manual { Ok(()) } else { r2::prune_auto(t, &secret, keep).map(|_| ()) }));
+            match r {
+                Ok(()) => {
+                    t.last_ok = now;
+                    t.last_error = None;
+                }
+                Err(e) => {
+                    t.last_error = Some(e.clone());
+                    failures.push(format!("{}: {e}", t.name));
+                }
+            }
+        }
+        r2::save(&dir, &cfg)?;
+        if failures.len() == total { Err(failures.join("; ")) } else { Ok(backup_status_of(&dir)) }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 从某个目标的"最新"备份恢复：喜好并进本机的风格，设置交给页面去套用。
+#[tauri::command]
+async fn backup_restore(app: AppHandle, id: String) -> Result<(taste::Summary, serde_json::Value), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = data_dir(&app);
+        let cfg = r2::load(&dir);
+        let t = cfg.targets.iter().find(|t| t.id == id).ok_or("unknown backup target")?;
+        let secret = target_secret(t)?;
+        let bytes = r2::get(t, &secret, r2::KEY_LATEST)?.ok_or("there is no backup in that bucket yet")?;
+        let pack: taste::Pack = serde_json::from_slice(&bytes).map_err(|e| format!("the backup cannot be read: {e}"))?;
+        taste_apply(&app, pack)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// ---------------------------------------------------------------- 网络共享（NAS）
 
 fn nas_statuses(app: &AppHandle) -> Vec<nas::ShareStatus> {
     let dir = data_dir(app);
-    nas::load(&dir).iter().map(|s| nas::status(&dir, s)).collect()
+    let st = app.state::<AppState>();
+    nas::load(&dir)
+        .iter()
+        .map(|s| nas::ShareStatus { id: s.id.clone(), name: s.name.clone(), host: s.host.clone(), user: s.user.clone(), enabled: s.enabled, local: nas::local_dir(&dir, &s.id).to_string_lossy().into_owned(), connected: st.nas.is_connected(&s.id) })
+        .collect()
 }
 
-#[tauri::command]
-async fn nas_list(app: AppHandle) -> Vec<nas::ShareStatus> {
-    tauri::async_runtime::spawn_blocking(move || nas_statuses(&app)).await.unwrap_or_default()
+/// 没连着就用记住的密码连上；没有记住的密码就说明缺什么。停用的不连。
+fn nas_connect_saved(app: &AppHandle, s: &nas::Share) -> Result<(), String> {
+    let st = app.state::<AppState>();
+    if st.nas.is_connected(&s.id) {
+        return Ok(());
+    }
+    if !s.enabled {
+        return Err(format!("the NAS \"{}\" is turned off in Settings", s.name));
+    }
+    let pw = nas::saved_password(s).ok_or_else(|| format!("the NAS \"{}\" needs its password: connect it in Settings", s.name))?;
+    st.nas.connect(s, &pw).map_err(|e| format!("{}: {e}", s.name))
 }
 
-/// Adds a share and connects to it at once; nothing is remembered unless the connection works.
+/// 项目文件夹里落在共享镜像上的，先把远端同步进来（进度发 "nas-progress"）；`job` 变了就停（页面离开项目时会 `scan_cancel`）。
+fn nas_sync_dirs(app: &AppHandle, dirs: &[String], job: u64) -> Result<(), String> {
+    let data = data_dir(app);
+    let shares = nas::load(&data);
+    let st = app.state::<AppState>();
+    for d in dirs {
+        let Some((s, rel)) = nas::share_of_path(&data, &shares, Path::new(d)) else { continue };
+        nas_connect_saved(app, s)?;
+        let emit = app.clone();
+        let watch = app.clone();
+        let local = nas::local_dir(&data, &s.id);
+        st.nas
+            .sync(&s.id, &rel, &local, move |p| { let _ = emit.emit("nas-progress", p); }, move || watch.state::<AppState>().scan_job.load(Ordering::Relaxed) != job)
+            .map_err(|e| if e.contains("ancelled") { "cancelled".to_string() } else { format!("{}: {e}", s.name) })?;
+    }
+    Ok(())
+}
+
+/// 添加或编辑 NAS 时的"测试连接"：连上这台服务器，返回它的共享名；什么都不记。编辑时密码留空就用记住的。
 #[tauri::command]
-async fn nas_add(app: AppHandle, name: String, url: String, user: String, password: String, remember: bool) -> Result<Vec<nas::ShareStatus>, String> {
+async fn nas_probe(app: AppHandle, host: String, user: String, password: String, id: Option<String>) -> Result<Vec<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let url = nas::check_url(&url)?;
+        let password = match (password.is_empty(), id) {
+            (true, Some(id)) => {
+                let dir = data_dir(&app);
+                let s = nas::load(&dir).into_iter().find(|s| s.id == id).ok_or("unknown NAS")?;
+                if s.user == user.trim() { nas::saved_password(&s).unwrap_or_default() } else { String::new() }
+            }
+            _ => password,
+        };
+        app.state::<AppState>().nas.probe(&host, user.trim(), &password)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 编辑一台 NAS：改显示名、地址、账号或密码；先用新的连一次，连不上什么都不改。id 不变，镜像和项目都还在。
+#[tauri::command]
+async fn nas_update(app: AppHandle, id: String, name: String, host: String, user: String, password: String, remember: bool) -> Result<Vec<nas::ShareStatus>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let host = nas::check_host(&host)?;
         let dir = data_dir(&app);
         let mut list = nas::load(&dir);
-        if list.iter().any(|s| s.url.eq_ignore_ascii_case(&url) && s.user == user.trim()) {
-            return Err("this share is already in the list".to_string());
+        let old = list.iter().find(|s| s.id == id).cloned().ok_or("unknown NAS")?;
+        if list.iter().any(|s| s.id != id && s.host.eq_ignore_ascii_case(&host) && s.user == user.trim()) {
+            return Err("this NAS is already in the list".to_string());
         }
-        let id = format!("n{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0));
-        let name = if name.trim().is_empty() { nas::host_of(&url).to_string() } else { name.trim().to_string() };
-        let share = nas::Share { id, name, url, user: user.trim().to_string() };
-        let pw = (!password.is_empty()).then_some(password.as_str());
-        nas::mount(&mount_bin(&app), &dir, &share, pw, remember)?;
-        list.push(share);
+        let next = nas::Share { id: id.clone(), name: if name.trim().is_empty() { host.clone() } else { name.trim().to_string() }, host, user: user.trim().to_string(), enabled: old.enabled };
+        // 密码留空 = 用记住的（账号没变时）
+        let same_account = next.host == old.host && next.user == old.user;
+        let pw = if password.is_empty() { if same_account { nas::saved_password(&old).unwrap_or_default() } else { String::new() } } else { password };
+        app.state::<AppState>().nas.connect(&next, &pw)?;
+        if !same_account {
+            nas::forget_password(&old);
+        }
+        if remember && (!same_account || !pw.is_empty()) {
+            nas::remember_password(&next, &pw)?;
+        }
+        if let Some(s) = list.iter_mut().find(|s| s.id == id) {
+            *s = next;
+        }
         nas::save(&dir, &list)?;
         Ok(nas_statuses(&app))
     })
@@ -686,15 +917,45 @@ async fn nas_add(app: AppHandle, name: String, url: String, user: String, passwo
 }
 
 #[tauri::command]
+async fn nas_list(app: AppHandle) -> Vec<nas::ShareStatus> {
+    tauri::async_runtime::spawn_blocking(move || nas_statuses(&app)).await.unwrap_or_default()
+}
+
+/// 添加一台 NAS 并马上连接；连不上就什么都不记。共享不用选，新建项目时浏览。
+#[tauri::command]
+async fn nas_add(app: AppHandle, name: String, host: String, user: String, password: String, remember: bool) -> Result<Vec<nas::ShareStatus>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let host = nas::check_host(&host)?;
+        let dir = data_dir(&app);
+        let mut list = nas::load(&dir);
+        if list.iter().any(|s| s.host.eq_ignore_ascii_case(&host) && s.user == user.trim()) {
+            return Err("this NAS is already in the list".to_string());
+        }
+        let id = format!("n{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0));
+        let name = if name.trim().is_empty() { host.clone() } else { name.trim().to_string() };
+        let share = nas::Share { id, name, host, user: user.trim().to_string(), enabled: true };
+        app.state::<AppState>().nas.connect(&share, &password)?;
+        if remember {
+            nas::remember_password(&share, &password)?;
+        }
+        list.push(share);
+        nas::save(&dir, &list)?;
+        Ok(nas_statuses(&app))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 移除：断开、忘掉密码、删掉镜像里的本地副本（NAS 上的照片不动）。
+#[tauri::command]
 async fn nas_remove(app: AppHandle, id: String) -> Result<Vec<nas::ShareStatus>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let dir = data_dir(&app);
         let mut list = nas::load(&dir);
         if let Some(s) = list.iter().find(|s| s.id == id).cloned() {
-            let bin = mount_bin(&app);
-            let _ = nas::unmount(&bin, &dir, &s);
-            nas::forget(&bin, &s);
-            let _ = std::fs::remove_dir(nas::mount_dir(&dir, &s.id));
+            app.state::<AppState>().nas.disconnect(&s.id);
+            nas::forget_password(&s);
+            let _ = std::fs::remove_dir_all(nas::local_dir(&dir, &s.id));
             list.retain(|x| x.id != id);
             nas::save(&dir, &list)?;
         }
@@ -704,14 +965,19 @@ async fn nas_remove(app: AppHandle, id: String) -> Result<Vec<nas::ShareStatus>,
     .map_err(|e| e.to_string())?
 }
 
-/// Connects a remembered share (with the stored password, or the one given now, which is then remembered).
+/// 连接一个记住的共享：用记住的密码，或者现在给的密码（给了就记住）。
 #[tauri::command]
 async fn nas_connect(app: AppHandle, id: String, password: Option<String>) -> Result<Vec<nas::ShareStatus>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let dir = data_dir(&app);
         let s = nas::load(&dir).into_iter().find(|s| s.id == id).ok_or("unknown share")?;
-        let pw = password.as_deref().filter(|p| !p.is_empty());
-        nas::mount(&mount_bin(&app), &dir, &s, pw, pw.is_some())?;
+        match password.as_deref().filter(|p| !p.is_empty()) {
+            Some(pw) => {
+                app.state::<AppState>().nas.connect(&s, pw)?;
+                nas::remember_password(&s, pw)?;
+            }
+            None => nas_connect_saved(&app, &s)?,
+        }
         Ok(nas_statuses(&app))
     })
     .await
@@ -721,34 +987,89 @@ async fn nas_connect(app: AppHandle, id: String, password: Option<String>) -> Re
 #[tauri::command]
 async fn nas_disconnect(app: AppHandle, id: String) -> Result<Vec<nas::ShareStatus>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let dir = data_dir(&app);
-        let s = nas::load(&dir).into_iter().find(|s| s.id == id).ok_or("unknown share")?;
-        nas::unmount(&mount_bin(&app), &dir, &s)?;
+        app.state::<AppState>().nas.disconnect(&id);
         Ok(nas_statuses(&app))
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
-/// Connects whichever remembered shares the folders are on, before a project on them is opened; returns those shares' state so the
-/// page can say which one is not reachable.
+/// 启用 / 停用：停用就断开，启用就用记住的密码连上（连不上也先记下开关，状态里能看到）。
+#[tauri::command]
+async fn nas_set_enabled(app: AppHandle, id: String, enabled: bool) -> Result<Vec<nas::ShareStatus>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = data_dir(&app);
+        let mut list = nas::load(&dir);
+        let s = list.iter_mut().find(|s| s.id == id).ok_or("unknown NAS")?;
+        s.enabled = enabled;
+        let s = s.clone();
+        nas::save(&dir, &list)?;
+        if enabled {
+            let _ = nas_connect_saved(&app, &s);
+        } else {
+            app.state::<AppState>().nas.disconnect(&id);
+        }
+        Ok(nas_statuses(&app))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 启动时在后台把启用的 NAS 都连上，打开设置或新建项目时就不用等。
+fn nas_connect_all(app: AppHandle) {
+    std::thread::spawn(move || {
+        let dir = data_dir(&app);
+        for s in nas::load(&dir).into_iter().filter(|s| s.enabled) {
+            if let Err(e) = nas_connect_saved(&app, &s) {
+                eprintln!("NAS {}: {e}", s.name);
+            }
+        }
+        let _ = app.emit("nas-changed", ());
+    });
+}
+
+/// 打开项目前：这些文件夹所在的共享先连上，并返回它们的状态，页面好说明哪一个连不上。
 #[tauri::command]
 async fn nas_ensure(app: AppHandle, dirs: Vec<String>) -> Vec<nas::ShareStatus> {
     tauri::async_runtime::spawn_blocking(move || {
         let dir = data_dir(&app);
-        let bin = mount_bin(&app);
+        let shares = nas::load(&dir);
         let mut out = Vec::new();
-        for s in nas::load(&dir) {
-            let at = nas::mount_dir(&dir, &s.id);
-            if dirs.iter().any(|d| Path::new(d).starts_with(&at)) {
-                let _ = nas::mount(&bin, &dir, &s, None, false);
-                out.push(nas::status(&dir, &s));
+        for s in &shares {
+            if dirs.iter().any(|d| nas::share_of_path(&dir, std::slice::from_ref(s), Path::new(d)).is_some()) {
+                let _ = nas_connect_saved(&app, s);
+                out.extend(nas_statuses(&app).into_iter().filter(|x| x.id == s.id));
             }
         }
         out
     })
     .await
     .unwrap_or_default()
+}
+
+/// 浏览 NAS 上的一个位置（新建项目时选文件夹用）：根是共享列表。
+#[derive(Serialize)]
+struct Listing {
+    /// `共享/文件夹/…`（`/` 分隔，根是空串）。
+    path: String,
+    /// 这个文件夹在镜像里的本地路径：选了它，项目的文件夹就是这个。根（还没选共享）时为空，不能当项目文件夹。
+    local: String,
+    entries: Vec<nas::Entry>,
+}
+
+#[tauri::command]
+async fn nas_browse(app: AppHandle, id: String, path: String) -> Result<Listing, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = data_dir(&app);
+        let s = nas::load(&dir).into_iter().find(|s| s.id == id).ok_or("unknown share")?;
+        nas_connect_saved(&app, &s)?;
+        let rel = path.trim_matches('/').to_string();
+        let entries = app.state::<AppState>().nas.browse(&s.id, &rel)?;
+        let local = if rel.is_empty() { String::new() } else { nas::local_dir(&dir, &s.id).join(&rel).to_string_lossy().into_owned() };
+        Ok(Listing { path: rel, local, entries })
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Stops the scan in progress: it ends at the next photo, and what it analysed by then is already in the cache. Called when
@@ -818,46 +1139,82 @@ struct TrashResult {
 /// Moves photos to the system trash (recoverable from Finder / Explorer). Only image files are accepted,
 /// so this can never be used to trash anything else.
 #[tauri::command]
-async fn trash_photos(paths: Vec<String>) -> Result<TrashResult, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        #[allow(unused_mut)]
-        let mut ctx = trash::TrashContext::default();
-        #[cfg(target_os = "macos")]
-        {
-            use trash::macos::{DeleteMethod, TrashContextExtMacos};
-            // NSFileManager needs no Finder automation permission prompt.
-            ctx.set_delete_method(DeleteMethod::NsFileManager);
+async fn trash_photos(app: AppHandle, paths: Vec<String>) -> Result<TrashResult, String> {
+    tauri::async_runtime::spawn_blocking(move || trash_photos_in(Some(&app), paths)).await.map_err(|e| e.to_string())
+}
+
+/// 真正的搬运；`app` 为 `None` 时（单元测试）不认识任何 NAS 共享，照片都按本机的处理。
+fn trash_photos_in(app: Option<&AppHandle>, paths: Vec<String>) -> TrashResult {
+    #[allow(unused_mut)]
+    let mut ctx = trash::TrashContext::default();
+    #[cfg(target_os = "macos")]
+    {
+        use trash::macos::{DeleteMethod, TrashContextExtMacos};
+        // NSFileManager needs no Finder automation permission prompt.
+        ctx.set_delete_method(DeleteMethod::NsFileManager);
+    }
+    let data = app.map(data_dir).unwrap_or_default();
+    let shares = app.map(|_| nas::load(&data)).unwrap_or_default();
+    let (mut moved, mut failed, mut network_bins) = (0usize, Vec::new(), Vec::<String>::new());
+    // 共享镜像里的照片按共享分组：在 NAS 上一次移完，成功的再删掉本地副本
+    let mut on_nas: std::collections::HashMap<String, Vec<(String, String)>> = std::collections::HashMap::new();
+    let mut local = Vec::new();
+    for p in paths {
+        let path = PathBuf::from(&p);
+        if !(analyze::is_image(&path) && path.is_file()) {
+            failed.push(p);
+            continue;
         }
-        let (mut moved, mut failed, mut network_bins) = (0usize, Vec::new(), Vec::<String>::new());
-        for p in paths {
-            let path = PathBuf::from(&p);
-            if !(analyze::is_image(&path) && path.is_file()) {
-                failed.push(p);
-                continue;
-            }
-            // a network volume (a NAS) has no Trash: the photo goes to a recycle folder at the root of that share instead
-            let ok = match nas::volume_of(&path).filter(|(_, fstype)| nas::is_network_fs(fstype)) {
-                Some((root, _)) => {
-                    let target = nas::network_bin_target(&root, &path);
-                    let bin = target.parent().and_then(|d| d.parent()).map(|d| d.to_string_lossy().into_owned()).unwrap_or_default();
-                    let done = target.parent().map(std::fs::create_dir_all).map_or(false, |r| r.is_ok()) && std::fs::rename(&path, &target).is_ok();
-                    if done && !network_bins.contains(&bin) {
-                        network_bins.push(bin);
+        match nas::share_of_path(&data, &shares, &path) {
+            Some((s, rel)) => on_nas.entry(s.id.clone()).or_default().push((p, rel)),
+            None => local.push(path),
+        }
+    }
+    if let Some(app) = app {
+        let st = app.state::<AppState>();
+        for (id, items) in on_nas {
+            let Some(s) = shares.iter().find(|s| s.id == id) else { continue };
+            let _ = nas_connect_saved(app, s);
+            let results = st.nas.recycle(&id, items.iter().map(|(_, rel)| rel.clone()).collect());
+            for ((p, _), r) in items.into_iter().zip(results) {
+                match r {
+                    Ok(target) => {
+                        let _ = std::fs::remove_file(&p);
+                        moved += 1;
+                        let at = nas::recycle_url(s, nas::split_share(&target).0);
+                        if !network_bins.contains(&at) {
+                            network_bins.push(at);
+                        }
                     }
-                    done
+                    Err(e) => {
+                        eprintln!("recycle on {}: {e}", s.name);
+                        failed.push(p);
+                    }
                 }
-                None => ctx.delete(&path).is_ok(),
-            };
-            if ok {
-                moved += 1;
-            } else {
-                failed.push(p);
             }
         }
-        TrashResult { moved, failed, network_bins }
-    })
-    .await
-    .map_err(|e| e.to_string())
+    }
+    for path in local {
+        // a network volume the person mounted in the Finder has no Trash: the photo goes to a recycle folder at the root of that volume instead
+        let ok = match nas::volume_of(&path).filter(|(_, fstype)| nas::is_network_fs(fstype)) {
+            Some((root, _)) => {
+                let target = nas::network_bin_target(&root, &path);
+                let bin = target.parent().and_then(|d| d.parent()).map(|d| d.to_string_lossy().into_owned()).unwrap_or_default();
+                let done = target.parent().map(std::fs::create_dir_all).map_or(false, |r| r.is_ok()) && std::fs::rename(&path, &target).is_ok();
+                if done && !network_bins.contains(&bin) {
+                    network_bins.push(bin);
+                }
+                done
+            }
+            None => ctx.delete(&path).is_ok(),
+        };
+        if ok {
+            moved += 1;
+        } else {
+            failed.push(path.to_string_lossy().into_owned());
+        }
+    }
+    TrashResult { moved, failed, network_bins }
 }
 
 /// Path of a large cached preview for the viewer (created on first request).
@@ -1595,9 +1952,10 @@ pub fn run() {
             let dir = data_dir(app.handle());
             imageio::init(image_bin(app.handle()));
             app.manage(Downloads::default());
-            app.manage(AppState { text: Mutex::new(None), cache: Mutex::new(None), prefs: Mutex::new(prefs::Styles::load(&dir)), mediapipe_eyes: Mutex::new(None), face_embedder: Mutex::new(None), last_photos: Mutex::new((String::new(), Vec::new())), scan_job: AtomicU64::new(0), retrain_gen: AtomicU64::new(0), captioner: Mutex::new(None), translator: Mutex::new(None), scene_sentences: Mutex::new(None), scene_job: AtomicU64::new(0) });
+            app.manage(AppState { text: Mutex::new(None), cache: Mutex::new(None), prefs: Mutex::new(prefs::Styles::load(&dir)), mediapipe_eyes: Mutex::new(None), face_embedder: Mutex::new(None), last_photos: Mutex::new((String::new(), Vec::new())), scan_job: AtomicU64::new(0), retrain_gen: AtomicU64::new(0), captioner: Mutex::new(None), translator: Mutex::new(None), scene_sentences: Mutex::new(None), scene_job: AtomicU64::new(0), nas: nas::Pool::start() });
             let menu = build_menu(app.handle(), "en")?;
             app.set_menu(menu)?;
+            nas_connect_all(app.handle().clone());
             // scratch files (larger previews, zoom crops, motion clips) are kept within bounds; done in the background
             if let Ok(thumbs) = thumbs_dir(app.handle()) {
                 std::thread::spawn(move || scratch::prune(&thumbs));
@@ -1607,7 +1965,7 @@ pub fn run() {
         .on_menu_event(|app, event| {
             let _ = app.emit("menu", event.id().0.clone());
         })
-        .invoke_handler(tauri::generate_handler![probe_folder, scan_project, scan_cancel, decide_photos, projects_load, projects_save, projects_quarantine, taste_export, taste_import, nas_list, nas_add, nas_remove, nas_connect, nas_disconnect, nas_ensure, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, trash_photos, reveal, preview_thumbs, photo_info, large_preview, motion_clip, hdrview::hdr_overlay_supported, hdrview::hdr_overlay_show, hdrview::hdr_overlay_move, hdrview::hdr_overlay_hide, hdrview::hdr_overlay_detail, hdrview::hdr_overlay_detail_hide, photo_detail, machine_info, search_status, search_index, search_photos, scene_text, packs_status, pack_size, pack_download, pack_cancel, pack_remove])
+        .invoke_handler(tauri::generate_handler![probe_folder, scan_project, scan_cancel, decide_photos, projects_load, projects_save, projects_quarantine, taste_export, taste_import, nas_list, nas_add, nas_remove, nas_connect, nas_disconnect, nas_ensure, nas_browse, nas_probe, nas_update, nas_set_enabled, backup_status, backup_save_target, backup_remove_target, backup_set_options, backup_now, backup_restore, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, trash_photos, reveal, preview_thumbs, photo_info, large_preview, motion_clip, hdrview::hdr_overlay_supported, hdrview::hdr_overlay_show, hdrview::hdr_overlay_move, hdrview::hdr_overlay_hide, hdrview::hdr_overlay_detail, hdrview::hdr_overlay_detail_hide, photo_detail, machine_info, search_status, search_index, search_photos, scene_text, packs_status, pack_size, pack_download, pack_cancel, pack_remove])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -1635,7 +1993,7 @@ mod organize_tests {
         let other = dir.join("notes.txt");
         std::fs::write(&photo, b"not really a jpeg").unwrap();
         std::fs::write(&other, b"keep me").unwrap();
-        let r = tauri::async_runtime::block_on(trash_photos(vec![photo.to_string_lossy().into(), other.to_string_lossy().into()])).unwrap();
+        let r = trash_photos_in(None, vec![photo.to_string_lossy().into(), other.to_string_lossy().into()]);
         println!("moved={} failed={:?}", r.moved, r.failed);
         assert_eq!(r.moved, 1);
         assert_eq!(r.failed.len(), 1);
