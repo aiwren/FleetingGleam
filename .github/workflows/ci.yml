@@ -47,13 +47,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
         with:
-          workspaces: apps/desktop/src-tauri
+          workspaces: .
       - run: pnpm install --frozen-lockfile
       # Tauri 编译时要读取 frontendDist，所以必须先构建前端
       - run: pnpm --filter @fleetinggleam/desktop build
+      # 根目录是 Cargo 工作区：默认成员是核心库与桌面端（Android 绑定 crate 只在 cargo-ndk 构建时编）
       - name: cargo check
         run: cargo check --locked
-        working-directory: apps/desktop/src-tauri
       - name: cargo test
         run: cargo test --locked --lib
-        working-directory: apps/desktop/src-tauri

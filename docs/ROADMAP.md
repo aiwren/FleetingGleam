@@ -46,7 +46,7 @@
 ### A3. NAS 直连（macOS 端已完成 2026-10-21，改为应用内置客户端；Android 端复用，见阶段 B）
 
 应用内"添加 NAS"：填服务器地址与账号（"测试连接"通过即可保存，不用选共享），密码加密保存在本机（`secrets.rs`，AES-256-GCM，不用系统钥匙串）；之后应用自己建立连接，新建项目时从这台 NAS 的共享开始逐级浏览、任意一层文件夹都可以选，用户全程不碰 Finder，桌面上也不出现挂载卷。
-- 实现（`src-tauri/src/nas.rs`）：纯 Rust 的 SMB2/3 客户端（`smb2` crate，MIT / Apache-2.0），连接住在一条专用线程里；**不再**走系统挂载（NetFS 的 `fg-mount` 已下掉），所以 Mac 与 Android 共用同一份实现。目前只支持 SMB；WebDAV / NFS 不做。
+- 实现（`packages/core/src/nas.rs`）：纯 Rust 的 SMB2/3 客户端（`smb2` crate，MIT / Apache-2.0），连接住在一条专用线程里；**不再**走系统挂载（NetFS 的 `fg-mount` 已下掉），所以 Mac 与 Android 共用同一份实现。目前只支持 SMB；WebDAV / NFS 不做。
 - 镜像缓存：每台 NAS 在应用数据目录下有一格 `nas/<id>/<共享>/…`，项目的文件夹就是镜像里的本地路径。探测和分析前先同步（只拉新增或变化的照片，按大小 + 修改时间比对；远端已没有的从镜像删掉），后面的分析、查看、导出全部照旧走本地文件。第一次打开显示"正在从 NAS 读取照片 n / N"。
 - 淘汰：在共享里移到根目录的 `.FleetingGleam Recycle Bin/<日期>/`，本机副本随之删掉；移除 NAS 删掉本机副本。
 - [ ] 镜像缓存的上限与清理（现在"清除缓存"不动镜像；大项目会占满本机磁盘时要能按项目清掉副本）。
@@ -63,7 +63,7 @@ Android 没有 Apple Vision，两端要一样就得两端用同样的东西：
 
 ### A3b. 云备份（已完成 2026-10-21）
 
-设置 → 备份：把「我的设置与喜好」（和导出文件同一份内容）自动备份到用户自己的云存储，可以有多个备份目标、各有名字（`backup.json` 的 `targets`，目前只有 `r2` 一种；Secret 按目标 id 存在本机加密仓库）。`src-tauri/src/r2.rs` 自己做 S3 SigV4 签名（PUT / GET / DELETE / ListObjectsV2），不引入 AWS SDK。设置或喜好变化后 20 秒静默再上传到每个目标（`src/backup.ts`）；桶里 `fleetinggleam/taste.json` 是最新一份，`auto/<日期>.json` 只留最近 N 份（可设）；"立即备份"是手动触发同一次上传；可从任一目标恢复。
+设置 → 备份：把「我的设置与喜好」（和导出文件同一份内容）自动备份到用户自己的云存储，可以有多个备份目标、各有名字（`backup.json` 的 `targets`，目前只有 `r2` 一种；Secret 按目标 id 存在本机加密仓库）。`packages/core/src/r2.rs` 自己做 S3 SigV4 签名（PUT / GET / DELETE / ListObjectsV2），不引入 AWS SDK。设置或喜好变化后 20 秒静默再上传到每个目标（`src/backup.ts`）；桶里 `fleetinggleam/taste.json` 是最新一份，`auto/<日期>.json` 只留最近 N 份（可设）；"立即备份"是手动触发同一次上传；可从任一目标恢复。
 - [x] 对着真的 R2 桶验证（用户 2026-10-21 在应用里配置并备份成功）。
 - [ ] 以后有账号系统时，桶和令牌由服务端代管，这里的设置页收起来。
 
@@ -109,12 +109,17 @@ Android 没有 Apple Vision，两端要一样就得两端用同样的东西：
 | 设置：语言、外观、模型管理、缓存、隐私 | Compose 设置页 | 模型下载与校验沿用 |
 
 ### 步骤
-1. **Rust 核心抽成库**（1–2 周）：macOS 依赖（Vision、ImageIO、HDR 叠层）退到 trait 后面，cargo-ndk + UniFFI 编出 Android 库；A4 完成后核心里已没有平台特有的打分信号。NAS、备份、加密仓库这三块已经是纯 Rust，直接进库。
-2. **模型层**（2–3 周）：ONNX Runtime Android（NNAPI / QNN），同一批 ONNX 文件与清单、同样的 SHA-256 校验；MediaPipe 人脸；Florence-2 与 OPUS-MT 作为可选包。
-3. **应用骨架**（2 周）：相册权限与 MediaStore / SAF 读取、项目模型、设置页（含 NAS、备份、导入 Mac 的设置与喜好）、分析用前台服务 + 发热 / 充电策略。
-4. **选片界面**（4–6 周）：照片墙、单张、对比、检查器与理由、筛选面板、手势版 P / R / X 与撤销、搜索、风格与学习进度、HDR 与实况照片查看。
-5. **整理与 NAS**（2 周）：MediaStore / SAF 的移动与回收站（系统确认框）、导出保留照片；NAS 项目的镜像同步与回收。
-6. **一致性测试**：同一组照片两端跑，决策与分组必须一致，作为 CI 固定用例；设置与喜好文件两端互导。
+1. [x] **Rust 核心抽成库**（完成 2026-10-21）：仓库根目录成了 Cargo 工作区，核心在 `packages/core`（crate `fleetinggleam-core`，lib 名 `fg_core`），桌面端 `apps/desktop/src-tauri` 只剩 Tauri 命令、窗口菜单和 macOS 边车；Android 绑定 crate 在 `apps/android/rust`（UniFFI 0.32，`cargo ndk -t arm64-v8a` 编出 `libfg_android.so`），Android 工程骨架在 `apps/android`（Kotlin + Compose + Material 3，Gradle 任务自动跑 cargo-ndk 并生成 Kotlin 绑定）。冒烟：显示核心版本、对应用内生成的示例照片做一次分析（分组 / 打分 / 取舍）、列出一台 NAS 的共享。
+   - 平台能力的边界在 `packages/core/src/platform.rs`：`SystemImages`（系统图像解码器，桌面端 `imageio_macos.rs` 的 ImageIO 边车）、`SystemVision`（桌面端 `vision.rs` 的 Apple Vision 边车）、`GpuClipFactory`（桌面端 `clipgpu.rs` 的 Metal 实现）；宿主启动时注册，不注册也能跑。HDR 叠层（`hdrview.rs`）和访达挂载的网络卷（`mounts.rs`）整个留在桌面端。
+   - 核心里**仍然残留的平台特有打分信号**（A4 要解决的，这一步只记录不改）：`Photo.sys_score`（Apple 的美学分，`scoring::combine_aesthetic` 里按 `W_SYS_IN_AESTHETIC = 0.6` 与 CLIP 头混合）；`utility` 标记（Vision 判"实用图片"）；`face_count` / `face_min`（Vision 的人脸数与拍摄质量，进 `final_score` 的组内人脸比较）；`eyes_open` 的 "vision" 量表与 MediaPipe 要读的 `eye_boxes`、人物识别要的 `face_marks` 都来自 Vision 的人脸检测。没有 `SystemVision` 的平台（现在的 Android）这些全是空：没有人脸、没有闭眼、美学只有 CLIP 头——所以两端分数一致要等 A4（美学分蒸馏 + 人脸统一 MediaPipe）。
+   - 假设（没问过，先按默认做）：最低 Android 12（API 31，玻璃材质要实时模糊，面向高端机）；ONNX Runtime 用 pyke 的 `aarch64-linux-android+nnapi` 预编译包（core 的 Cargo.toml 在 Android 目标上开 `nnapi` 特性），QNN 第 2 步再看；工具链 Gradle 8.13 / AGP 8.12 / Kotlin 2.1.20 / Compose 1.9.3 / Material 3 1.4.0 / JNA 5.17；只编 arm64-v8a。
+   - 留给第 3 步：桌面端 `scan_project` 的流程（缓存命中、NAS 同步、分批落盘、补测眼睛 / 人脸 / HDR、取消）还在 `lib.rs` 里，Android 的 `analyze_folder` 是不走缓存的直通版；第 3 步把这段流程搬进核心（进度与取消做成 trait），两端共用。核心里 `std::env::temp_dir()` 的两处（非原生格式的临时渲染、GPU 编码器的标记文件）在 Android 上不可写，到时给核心一个可配置的临时目录。
+   - 本机遗留：旧的 `apps/desktop/src-tauri/target`（约 13 GB）不再使用，可以删；新的构建目录是仓库根的 `target/`。
+2. [ ] **模型层**（2–3 周）：ONNX Runtime Android（NNAPI / QNN），同一批 ONNX 文件与清单、同样的 SHA-256 校验；MediaPipe 人脸；Florence-2 与 OPUS-MT 作为可选包。
+3. [ ] **应用骨架**（2 周）：相册权限与 MediaStore / SAF 读取、项目模型、设置页（含 NAS、备份、导入 Mac 的设置与喜好）、分析用前台服务 + 发热 / 充电策略。
+4. [ ] **选片界面**（4–6 周）：照片墙、单张、对比、检查器与理由、筛选面板、手势版 P / R / X 与撤销、搜索、风格与学习进度、HDR 与实况照片查看。
+5. [ ] **整理与 NAS**（2 周）：MediaStore / SAF 的移动与回收站（系统确认框）、导出保留照片；NAS 项目的镜像同步与回收。
+6. [ ] **一致性测试**：同一组照片两端跑，决策与分组必须一致，作为 CI 固定用例；设置与喜好文件两端互导。
 
 ## 不做的事
 

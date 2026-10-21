@@ -1,4 +1,4 @@
-//! Telling people apart. Apple Vision finds each face and its five key points (see `vision.rs`); a small face-recognition
+//! Telling people apart. The system vision signal (Apple Vision on macOS, see `platform.rs`) finds each face and its five key points; a small face-recognition
 //! network (SFace, 128 numbers per face) turns the aligned face into a vector where the same person lands close together;
 //! then all faces in a project are grouped greedily by how alike those vectors are. Nothing here names anybody: a
 //! "person" is just a cluster, numbered from the one with the most photos.
@@ -21,7 +21,7 @@ const SIZE: u32 = 112;
 /// mouth corner (left/right as seen in the picture).
 const TEMPLATE: [[f32; 2]; 5] = [[38.2946, 51.6963], [73.5318, 51.5014], [56.0252, 71.7366], [41.5493, 92.3655], [70.7299, 92.2041]];
 /// A face shorter than this (as a share of the picture's longer side) is too few pixels to recognise; it is skipped.
-const MIN_FACE: f32 = 0.06;
+pub const MIN_FACE: f32 = 0.06;
 /// A face joins the person whose average face it is at least this close to (cosine similarity).
 const SAME_PERSON: f32 = 0.42;
 /// Two people whose average faces are this close are one person seen at different angles.
@@ -107,7 +107,7 @@ fn normalise(v: &[f32]) -> Option<Vec<f32>> {
 
 /// The face rotated, scaled and cropped to the 112x112 frame the network expects: the least-squares similarity
 /// transform taking the five key points onto `TEMPLATE`, then a bilinear resample.
-fn align(img: &RgbImage, pts: &[[f32; 2]]) -> Option<RgbImage> {
+pub fn align(img: &RgbImage, pts: &[[f32; 2]]) -> Option<RgbImage> {
     let n = pts.len() as f32;
     let ms = pts.iter().fold([0f32; 2], |a, p| [a[0] + p[0] / n, a[1] + p[1] / n]);
     let md = TEMPLATE.iter().fold([0f32; 2], |a, p| [a[0] + p[0] / n, a[1] + p[1] / n]);
@@ -313,64 +313,10 @@ mod tests {
         assert_eq!(out.get_pixel(50, 60).0, [50, 60, 7]);
     }
 
-    /// Runs the real pipeline over a folder whose analysis copies are already in the app cache and reports how the
-    /// faces cluster: PROBE_DIR=<photos> [FG_THUMBS=<cache dir>] [SHEET=<png to write, face crops of the biggest people>].
-    #[test]
-    #[ignore = "needs models/, bin/fg-vision and a real, already analysed folder"]
-    fn people_in_a_real_folder() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let dir = std::env::var("PROBE_DIR").expect("PROBE_DIR");
-        let thumbs = std::env::var("FG_THUMBS").unwrap_or_else(|_| format!("{}/Library/Caches/com.fleetinggleam.app/thumbs", std::env::var("HOME").unwrap()));
-        let vision = crate::vision::Vision::start(&root.join("bin/fg-vision"), 2, false).expect("vision");
-        let m = FaceEmbedder::load(&root.join("../models")).expect("load");
-        let mut files: Vec<_> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| crate::analyze::is_image(p)).collect();
-        files.sort();
-        let mut photos = Vec::new();
-        let mut crops: Vec<(usize, usize, RgbImage)> = Vec::new();
-        for f in &files {
-            let copy = crate::analyze::cache_name(f, ".a.jpg", Path::new(&thumbs));
-            let Some(v) = vision.analyze(&copy) else { continue };
-            let Ok(img) = image::open(&copy) else { continue };
-            let found = m.embed(&img, &v.face_marks);
-            let rgb = img.to_rgb8();
-            let (w, h) = (rgb.width() as f32, rgb.height() as f32);
-            for (fi, mk) in v.face_marks.iter().filter(|mk| mk.bbox[3] * h >= MIN_FACE * w.max(h)).enumerate() {
-                let pts: Vec<[f32; 2]> = mk.pts.iter().map(|p| [p[0] * w, p[1] * h]).collect();
-                if let Some(c) = align(&rgb, &pts) {
-                    crops.push((photos.len(), fi, c));
-                }
-            }
-            photos.push(Photo { path: f.to_string_lossy().into_owned(), face_boxes: found.iter().map(|x| x.bbox).collect(), face_embs: found.into_iter().map(|x| x.emb).collect(), ..Default::default() });
-        }
-        assign_people(&mut photos);
-        let mut per: std::collections::BTreeMap<i32, usize> = Default::default();
-        for p in &photos {
-            for &id in &p.people {
-                *per.entry(id).or_default() += 1;
-            }
-        }
-        let with_faces = photos.iter().filter(|p| !p.face_boxes.is_empty()).count();
-        println!("{} photos, {} with recognisable faces, faces per person id (-1 = nobody in particular): {:?}", photos.len(), with_faces, per);
-        if let Ok(sheet) = std::env::var("SHEET") {
-            // the first 16 faces of each of the first four people, one person per row
-            let mut img = RgbImage::new(16 * 112, 4 * 112);
-            for person in 0..4i32 {
-                let mut col = 0u32;
-                for (pi, fi, c) in &crops {
-                    if photos[*pi].people.get(*fi) == Some(&person) && col < 16 {
-                        image::imageops::replace(&mut img, c, (col * 112) as i64, (person as u32 * 112) as i64);
-                        col += 1;
-                    }
-                }
-            }
-            img.save(sheet).unwrap();
-        }
-    }
-
     #[test]
     #[ignore = "needs models/ and a real photo (set PROBE_IMG); prints similarities between the faces found"]
     fn embeds_faces_on_a_real_photo() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../models");
+        let dir = crate::dev_models_dir();
         let m = FaceEmbedder::load(&dir).expect("load");
         let path = std::env::var("PROBE_IMG").expect("set PROBE_IMG=<image>");
         let marks: Vec<f32> = std::env::var("PROBE_MARKS").expect("PROBE_MARKS=comma separated 14 numbers per face").split(',').map(|s| s.trim().parse().unwrap()).collect();

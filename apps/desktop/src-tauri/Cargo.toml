@@ -1,13 +1,11 @@
 [package]
 name = "fleetinggleam"
-version = "0.1.0"
-description = "FleetingGleam：在本机运行的照片筛选软件"
-authors = ["FleetingGleam contributors"]
-license = "AGPL-3.0-or-later"
-repository = "https://github.com/lcopilot/FleetingGleam"
-edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+description = "FleetingGleam：在本机运行的照片筛选软件（macOS 桌面端，Tauri）"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+edition.workspace = true
 
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary
@@ -20,55 +18,22 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-# 纯 Rust 的 SMB2/3 客户端：应用自己连 NAS，Mac 与 Android 共用一份实现（不依赖系统挂载）
-smb2 = "0.34"
-# 给 NAS 客户端一个自己的单线程运行时（见 nas.rs），不占用 Tauri 的工作线程
-tokio = { version = "1", features = ["rt", "sync"] }
+# 全部核心逻辑（分析、决策、喜好、搜索、NAS、备份……）在共用的库里；这里只剩 Tauri 命令、窗口与 macOS 的边车
+fleetinggleam-core.workspace = true
 tauri = { version = "2", features = ["protocol-asset", "macos-private-api"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
-rayon = "1"
-walkdir = "2"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-ort = { version = "2.0.0-rc.13", features = ["coreml"] }
-kamadak-exif = "0.6.1"
-fast_image_resize = "6.1.0"
+image.workspace = true
+rayon.workspace = true
+walkdir.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+kamadak-exif.workspace = true
+# 系统废纸篓（照片的淘汰）
 trash = "5.2.9"
-tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"] }
-ureq = { version = "2", features = ["tls"] }
-sha2 = "0.10"
-# 云备份到 Cloudflare R2：S3 兼容接口的 SigV4 签名
-hmac = "0.12"
-# 本地加密的小秘密仓库（NAS 密码、备份密钥）：AES-256-GCM，密钥文件随机生成
-aes-gcm = "0.11"
-getrandom = "0.3"
-base64 = "0.22"
-
-
-# Debug builds of image decoding and pixel loops are 10-50x slower; optimise them even in `tauri dev`.
-[profile.dev]
-opt-level = 2
-# Incremental builds at opt-level 2 keep ending in "_anon.*.llvm symbol(s) not found" link errors whenever a rebuild is interrupted by the
-# next file save; a full rebuild of this crate is only a little slower and never breaks.
-incremental = false
-
-[profile.dev.package."*"]
-opt-level = 3
-
-# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
-[profile.release]
-codegen-units = 1
-lto = true
-opt-level = 3
-panic = "abort"
-strip = true
-debug = false
-overflow-checks = false
+# 基准测试里直接用 ONNX Runtime 对比 GPU 编码器
+ort.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
-libc = "0.2"
-
-[dev-dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+# 访达挂载的网络卷（statfs）
+libc.workspace = true

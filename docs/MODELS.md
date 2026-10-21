@@ -4,12 +4,12 @@
 
 ## 它们从哪里下载
 
-应用里内置了一份清单：[`apps/desktop/src-tauri/models.manifest.json`](../apps/desktop/src-tauri/models.manifest.json)。每个文件在里面都有固定的**下载地址、大小和 SHA-256**。下载完成后应用会核对大小和 SHA-256，**对不上就丢弃**，不会使用一个被损坏或被替换过的文件。
+应用里内置了一份清单：[`packages/core/models.manifest.json`](../packages/core/models.manifest.json)。每个文件在里面都有固定的**下载地址、大小和 SHA-256**。下载完成后应用会核对大小和 SHA-256，**对不上就丢弃**，不会使用一个被损坏或被替换过的文件。
 
 文件分三类：
 
 1. **直接来自公开上游（Hugging Face）**：下载地址固定在某个提交上（地址里带完整的提交号），上游之后再更新也不会悄悄变化。我们不托管这些文件，也没有自己的模型服务器。
-2. **随应用分发的小文件**（共 3.7 MB，在 [`apps/desktop/src-tauri/model-data/`](../apps/desktop/src-tauri/model-data/)）：上游没有现成的、应用能直接读的版本，是我们把权重转成了应用需要的格式。因为很小，直接编进应用，不需要下载。
+2. **随应用分发的小文件**（共 3.7 MB，在 [`packages/core/model-data/`](../packages/core/model-data/)）：上游没有现成的、应用能直接读的版本，是我们把权重转成了应用需要的格式。因为很小，直接编进应用，不需要下载。
 3. **我们转换后放在本仓库 Release 里的文件**（标签 `models-v1`）：同样是上游没有现成版本，转换出来的文件又比较大，所以放在 GitHub Release 的附件里。清单里固定了它们的 SHA-256，换成别的内容应用会拒绝。
 
 应用联网只做一件事：下载这些文件。照片和照片的任何信息都不会发出去。

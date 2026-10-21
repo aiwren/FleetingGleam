@@ -30,7 +30,7 @@ jobs:
           tag="${GITHUB_REF_NAME#v}"
           app=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
           pkg=$(node -p "require('./apps/desktop/package.json').version")
-          crate=$(sed -n 's/^version = "\(.*\)"/\1/p' apps/desktop/src-tauri/Cargo.toml | head -1)
+          crate=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
           for v in "$app" "$pkg" "$crate"; do
             if [ "$tag" != "$v" ]; then
               echo "::error::标签 $GITHUB_REF_NAME 与版本号不一致：tauri.conf.json=$app package.json=$pkg Cargo.toml=$crate。请先把三处改成同一个版本再打标签。"
@@ -48,7 +48,7 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: swatinem/rust-cache@v2
         with:
-          workspaces: apps/desktop/src-tauri
+          workspaces: .
           key: ${{ matrix.target }}
 
       - run: pnpm install --frozen-lockfile

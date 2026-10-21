@@ -286,7 +286,7 @@ mod tests {
     #[test]
     #[ignore = "needs models/ with the scene-text pack and FLO_IMGS (a folder of jpgs)"]
     fn describes_scenes() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../models");
+        let dir = crate::dev_models_dir();
         let c = Captioner::load(&dir).unwrap();
         let mut files: Vec<_> = std::fs::read_dir(std::env::var("FLO_IMGS").unwrap()).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().map_or(false, |x| x == "jpg")).collect();
         files.sort();

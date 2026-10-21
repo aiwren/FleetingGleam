@@ -1,0 +1,46 @@
+# 整个仓库一个 Cargo 工作区：核心库（packages/core）由桌面端（apps/desktop/src-tauri）与 Android 端（apps/android/rust）共用。
+# `cargo test --lib` 在根目录跑的是默认成员；Android 的绑定 crate 只在 cargo-ndk 构建时编（见 apps/android/README.md）。
+[workspace]
+resolver = "2"
+members = ["packages/core", "apps/desktop/src-tauri", "apps/android/rust"]
+default-members = ["packages/core", "apps/desktop/src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+authors = ["FleetingGleam contributors"]
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/lcopilot/FleetingGleam"
+edition = "2021"
+
+# 几个 crate 共用的依赖版本，各自在 Cargo.toml 里写 `xxx.workspace = true`。
+[workspace.dependencies]
+fleetinggleam-core = { path = "packages/core" }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+rayon = "1"
+walkdir = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+kamadak-exif = "0.6.1"
+ort = { version = "2.0.0-rc.13" }
+tokio = { version = "1", features = ["rt", "sync"] }
+libc = "0.2"
+
+# debug 构建里图像解码与像素循环慢 10–50 倍，`tauri dev` 也要优化它们。
+[profile.dev]
+opt-level = 2
+# opt-level 2 的增量编译在重编被下一次保存打断时老出现 "_anon.*.llvm symbol(s) not found" 的链接错误；
+# 整个 crate 重编只慢一点，而且从不出错。
+incremental = false
+
+[profile.dev.package."*"]
+opt-level = 3
+
+# 见 https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
+debug = false
+overflow-checks = false

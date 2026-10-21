@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">FleetingGleam</string>
+    <string name="core_version">核心库 %1$s · %2$d GB 内存 · %3$d 核</string>
+    <string name="section_analyze">分析一个文件夹</string>
+    <string name="analyze_hint">分析应用内生成的一组示例照片（不需要任何权限）：分组、打分与保留 / 待定 / 淘汰的判断都来自共用的 Rust 核心。</string>
+    <string name="analyze_button">分析示例照片</string>
+    <string name="analyzing">正在分析 %1$d / %2$d…</string>
+    <string name="state_keep">保留</string>
+    <string name="state_review">待定</string>
+    <string name="state_reject">淘汰</string>
+    <string name="section_nas">NAS（SMB）</string>
+    <string name="nas_hint">用应用内置的 SMB 客户端列出一台 NAS 的共享——和 Mac 端同一份代码。</string>
+    <string name="nas_host">服务器地址</string>
+    <string name="nas_user">账号</string>
+    <string name="nas_password">密码</string>
+    <string name="nas_button">测试连接</string>
+    <string name="nas_shares">共享：%1$s</string>
+    <string name="error_prefix">出错：%1$s</string>
+</resources>

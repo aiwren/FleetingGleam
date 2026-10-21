@@ -1,4 +1,4 @@
-//! Optional platform signals from a helper process (Apple Vision on macOS).
+//! Optional platform signals from a helper process (Apple Vision on macOS): the desktop's `platform::SystemVision`.
 //! Everything degrades gracefully: no binary, wrong OS or a crashed helper just means "no signal".
 
 use std::io::{BufRead, BufReader, Write};
@@ -15,22 +15,9 @@ const TIMEOUT: Duration = Duration::from_secs(20);
 /// How many times the helpers may be restarted in one scan before the scan goes on without them.
 const MAX_RESTARTS: usize = 8;
 
+use fg_core::platform::{SystemVision, VisionOut};
 use serde::Deserialize;
 
-pub struct VisionOut {
-    /// Apple's overallScore, roughly -1..1.
-    pub aesthetic: f32,
-    pub utility: bool,
-    /// One capture-quality value (0..1) per detected face.
-    pub faces: Vec<f32>,
-    /// One eye-openness value per face whose eyes could be located (about 0.25-0.4 open, under 0.15 closed).
-    pub eyes: Vec<f32>,
-    /// Same faces, same order as `eyes`: `[x, y, w, h]`, top-left origin, normalised to the image handed to `analyze`.
-    /// The crop a learned model (`mediapipe.rs`) looks at, when one is asked to look instead of the geometric ratio.
-    pub eye_boxes: Vec<[f32; 4]>,
-    /// Every face with a full set of landmarks, for telling people apart (see `faces.rs`).
-    pub face_marks: Vec<crate::faces::FaceMark>,
-}
 
 #[derive(Deserialize)]
 struct Reply {
@@ -106,7 +93,7 @@ impl Proc {
             faces: r.faces.unwrap_or_default(),
             eyes: r.eyes.unwrap_or_default(),
             eye_boxes: r.eye_boxes.unwrap_or_default(),
-            face_marks: r.face_marks.unwrap_or_default().iter().map(crate::faces::FaceMark::from_row).collect(),
+            face_marks: r.face_marks.unwrap_or_default().iter().map(fg_core::faces::FaceMark::from_row).collect(),
         })
     }
 }
@@ -148,6 +135,12 @@ impl Vision {
         }
         let mut g = self.procs[0].lock().ok()?;
         self.ask_slot(&mut g, path)
+    }
+}
+
+impl SystemVision for Vision {
+    fn analyze(&self, path: &Path) -> Option<VisionOut> {
+        Vision::analyze(self, path)
     }
 }
 

@@ -21,7 +21,7 @@
 | 场景描述 | Florence-2-base-ft（int8） | Microsoft；ONNX 版本来自 [`onnx-community/Florence-2-base-ft`](https://huggingface.co/onnx-community/Florence-2-base-ft) | MIT |
 | 场景描述的翻译 | OPUS-MT 英译中（int8） | Helsinki-NLP 的 [`opus-mt-en-zh`](https://huggingface.co/Helsinki-NLP/opus-mt-en-zh)；ONNX 版本来自 [`Xenova/opus-mt-en-zh`](https://huggingface.co/Xenova/opus-mt-en-zh) | Apache-2.0（模型卡标注） |
 
-其中三个美学评分头和多语言文本编码的投影权重、OPUS-MT 的分词器，因为上游没有现成可读的版本，是我们转换成应用能读的格式后**随应用一起分发**的（`apps/desktop/src-tauri/model-data/`），分发时请保留上面的来源和许可声明。
+其中三个美学评分头和多语言文本编码的投影权重、OPUS-MT 的分词器，因为上游没有现成可读的版本，是我们转换成应用能读的格式后**随应用一起分发**的（`packages/core/model-data/`），分发时请保留上面的来源和许可声明。
 
 关于 **Aesthetic Predictor V2.5 是 AGPL-3.0**：本项目选用 AGPL-3.0-or-later，与它是兼容的。反过来要注意，如果将来想把本项目改成闭源或更宽松的许可证，必须先处理这一项（换掉这个评分头，或者另行获得授权）。
 

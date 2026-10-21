@@ -644,7 +644,7 @@ mod tests {
     #[test]
     #[ignore = "needs models/ with the search pack; rewrites scene_vocab_b32.bin"]
     fn make_scene_vocab() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../models");
+        let dir = crate::dev_models_dir();
         let enc = crate::textsearch::TextEncoder::load(&dir).expect("text model");
         let mut out: Vec<u8> = Vec::new();
         let descs = ENTRIES.iter().map(|e| e.1).chain(DISTRACTORS.iter().copied());
@@ -668,8 +668,8 @@ mod tests {
     fn name_dev_photos() {
         use crate::scorer::AiScorer;
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let scorer = crate::scorer::ClipScorer::load(&root.join("../models"), true, crate::scorer::Quality::Fast).expect("clip");
-        let mut files: Vec<_> = std::fs::read_dir(root.join("../public/dev-photos")).unwrap().filter_map(|e| e.ok().map(|e| e.path())).collect();
+        let scorer = crate::scorer::ClipScorer::load(&crate::dev_models_dir(), true, crate::scorer::Quality::Fast).expect("clip");
+        let mut files: Vec<_> = std::fs::read_dir(root.join("../../apps/desktop/public/dev-photos")).unwrap().filter_map(|e| e.ok().map(|e| e.path())).collect();
         files.sort();
         for f in files {
             let emb = scorer.analyze(&image::open(&f).unwrap()).unwrap().embedding;

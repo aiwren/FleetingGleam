@@ -1,29 +1,16 @@
-mod analyze;
-mod cache;
+//! macOS 桌面端：Tauri 命令、窗口与菜单、macOS 的边车（Apple Vision、ImageIO、HDR 叠层、Metal 上的 CLIP）。
+//! 其余全部逻辑在共用的核心库 `fg_core`（packages/core）里。
+
 mod clipgpu;
-mod decide;
 mod hdrview;
-mod imageio;
-mod media;
-mod scratch;
-mod scene_vocab;
-mod florence;
-mod translate;
-mod faces;
-mod prefs;
-pub mod modelfiles;
-mod scorer;
-mod colorsig;
-mod mediapipe;
-mod modelpacks;
-mod textsearch;
-mod scene;
-mod scoring;
+mod imageio_macos;
+mod mounts;
 mod vision;
-mod taste;
-mod nas;
-mod r2;
-mod secrets;
+#[cfg(test)]
+mod bench;
+
+use fg_core::{analyze, cache, colorsig, decide, faces, florence, imageio, media, mediapipe, modelfiles, modelpacks, nas, prefs, r2, scene_vocab, scorer, scratch, taste, textsearch, translate};
+use fg_core::{list_all_with, list_images, oriented_dims, quarantine_name, unique_path, write_synced};
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -144,42 +131,6 @@ fn face_embedder(app: &AppHandle, model_dir: &Path) -> Option<std::sync::Arc<fac
     guard.clone()
 }
 
-/// Names that are never the user's photos: hidden files (this covers macOS `._IMG.jpg` resource forks and `.DS_Store`),
-/// and folders the system or a NAS keeps beside real content.
-pub(crate) fn is_junk(name: &str) -> bool {
-    name.starts_with('.') || matches!(name, "__MACOSX" | "@eaDir" | "$RECYCLE.BIN" | "System Volume Information" | "Thumbs.db" | "desktop.ini")
-}
-
-/// Photos below this size are icons or thumbnails, not photos.
-pub(crate) const MIN_PHOTO_BYTES: u64 = 8 * 1024;
-
-fn list_images(dir: &str) -> Vec<PathBuf> {
-    let mut files: Vec<_> = WalkDir::new(dir)
-        .into_iter()
-        .filter_entry(|e| e.depth() == 0 || !is_junk(&e.file_name().to_string_lossy()))
-        .filter_map(Result::ok)
-        .filter(|e| e.file_type().is_file() && analyze::is_image(e.path()) && e.metadata().map_or(false, |m| m.len() >= MIN_PHOTO_BYTES))
-        .map(|e| e.into_path())
-        .collect();
-    files.sort();
-    files
-}
-
-/// Every photo in the folders, without duplicates. A file whose header cannot be read (corrupt, or not really an image
-/// despite its extension) is left out here, so the count the user sees, the wall and the analysis all agree.
-fn list_all(dirs: &[String]) -> Vec<PathBuf> {
-    list_all_with(dirs, |_| false)
-}
-
-/// 同 `list_all`，但 `known(path)` 为真的文件（分析缓存里已经有、文件没变过）不再读文件头验证：打开一个分析过的项目时，
-/// 几百个 20 MB 的 JPEG 头一张张读要一两秒，这是"正在读取文件夹"卡住的主要原因。
-fn list_all_with(dirs: &[String], known: impl Fn(&Path) -> bool + Sync) -> Vec<PathBuf> {
-    let mut all: Vec<PathBuf> = dirs.iter().flat_map(|d| list_images(d)).collect();
-    all.sort();
-    all.dedup();
-    all.into_par_iter().filter(|p| known(p) || oriented_dims(p).is_some()).collect()
-}
-
 /// Where downloaded models live.
 fn downloaded_models_dir(app: &AppHandle) -> PathBuf {
     data_dir(app).join("models")
@@ -218,21 +169,6 @@ fn vision_bin(app: &AppHandle) -> PathBuf {
         }
     }
     bundled
-}
-
-fn oriented_dims(p: &Path) -> Option<(u32, u32)> {
-    use image::metadata::Orientation as O;
-    if !imageio::is_native(p) {
-        return imageio::info(p, false).map(|i| (i.w, i.h));
-    }
-    use image::ImageDecoder;
-    let reader = image::ImageReader::open(p).ok()?.with_guessed_format().ok()?;
-    let mut dec = reader.into_decoder().ok()?;
-    let (w, h) = dec.dimensions();
-    Some(match dec.orientation().unwrap_or(O::NoTransforms) {
-        O::Rotate90 | O::Rotate270 | O::Rotate90FlipH | O::Rotate270FlipH => (h, w),
-        _ => (w, h),
-    })
 }
 
 /// Cheap pre-flight for a set of folders: every photo's true displayed size (so the wall can be laid out
@@ -375,7 +311,7 @@ async fn scan_project(app: AppHandle, key: String, dirs: Vec<String>, compute: O
                             Stage { path: &key, stage, pct, thumb: thumb.map(|t| t.0), width: thumb.map(|t| t.1), height: thumb.map(|t| t.2) },
                         );
                     };
-                    let r = analyze::analyze(p, &cache_dir, scorer.as_ref().map(|s| s as &dyn scorer::AiScorer), vision.as_ref(), eye_method, mp.as_deref(), fe.as_deref(), &on_stage);
+                    let r = analyze::analyze(p, &cache_dir, scorer.as_ref().map(|s| s as &dyn scorer::AiScorer), vision.as_ref().map(|v| v as &dyn fg_core::platform::SystemVision), eye_method, mp.as_deref(), fe.as_deref(), &on_stage);
                     let d = done.fetch_add(1, Ordering::Relaxed) + 1;
                     if !quiet {
                         if let Ok(photo) = &r {
@@ -585,15 +521,6 @@ async fn projects_save(app: AppHandle, json: String) -> Result<(), String> {
     .map_err(|e| e.to_string())?
 }
 
-/// Writes the bytes and waits until they are on disk, so the rename that follows can never point at an empty or half-written file
-/// after a power cut.
-pub(crate) fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    let mut f = std::fs::File::create(path)?;
-    f.write_all(bytes)?;
-    f.sync_all()
-}
-
 /// Sets aside a `projects.json` the frontend could not read (renamed with a timestamp, never deleted), so a fresh one can be started
 /// without destroying what might still be repaired by hand.
 #[tauri::command]
@@ -607,14 +534,6 @@ async fn projects_quarantine(app: AppHandle) -> Result<String, String> {
     })
     .await
     .map_err(|e| e.to_string())?
-}
-
-/// `name.json` → `name.json.corrupt-<unix seconds>`.
-pub fn quarantine_name(path: &Path) -> PathBuf {
-    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    let mut name = path.file_name().map(|n| n.to_os_string()).unwrap_or_default();
-    name.push(format!(".corrupt-{secs}"));
-    path.with_file_name(name)
 }
 
 /// Writes "my settings and taste" to `path` (see `taste.rs`): the settings object the frontend passes, every style's examples as
@@ -1101,21 +1020,6 @@ struct ExportResult {
     dest: String,
 }
 
-/// A path in `dir` that does not exist yet: `name.jpg`, then `name (2).jpg`, `name (3).jpg`, ...
-fn unique_path(dir: &Path, name: &std::ffi::OsStr) -> PathBuf {
-    let first = dir.join(name);
-    if !first.exists() {
-        return first;
-    }
-    let p = Path::new(name);
-    let stem = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-    let ext = p.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
-    (2..)
-        .map(|n| dir.join(format!("{stem} ({n}){ext}")))
-        .find(|c| !c.exists())
-        .unwrap()
-}
-
 /// Copies the given photos into `dest`. Originals are never touched and nothing is overwritten.
 #[tauri::command]
 async fn export_photos(app: AppHandle, paths: Vec<String>, dest: String) -> Result<ExportResult, String> {
@@ -1211,9 +1115,9 @@ fn trash_photos_in(app: Option<&AppHandle>, paths: Vec<String>) -> TrashResult {
     }
     for path in local {
         // a network volume the person mounted in the Finder has no Trash: the photo goes to a recycle folder at the root of that volume instead
-        let ok = match nas::volume_of(&path).filter(|(_, fstype)| nas::is_network_fs(fstype)) {
+        let ok = match mounts::volume_of(&path).filter(|(_, fstype)| mounts::is_network_fs(fstype)) {
             Some((root, _)) => {
-                let target = nas::network_bin_target(&root, &path);
+                let target = mounts::network_bin_target(&root, &path);
                 let bin = target.parent().and_then(|d| d.parent()).map(|d| d.to_string_lossy().into_owned()).unwrap_or_default();
                 let done = target.parent().map(std::fs::create_dir_all).map_or(false, |r| r.is_ok()) && std::fs::rename(&path, &target).is_ok();
                 if done && !network_bins.contains(&bin) {
@@ -1965,7 +1869,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let dir = data_dir(app.handle());
-            imageio::init(image_bin(app.handle()));
+            imageio_macos::Helper::register(image_bin(app.handle()));
+            fg_core::platform::set_gpu_clip(Box::new(clipgpu::Factory));
             app.manage(Downloads::default());
             app.manage(AppState { text: Mutex::new(None), cache: Mutex::new(None), prefs: Mutex::new(prefs::Styles::load(&dir)), mediapipe_eyes: Mutex::new(None), face_embedder: Mutex::new(None), last_photos: Mutex::new((String::new(), Vec::new())), scan_job: AtomicU64::new(0), retrain_gen: AtomicU64::new(0), captioner: Mutex::new(None), translator: Mutex::new(None), scene_sentences: Mutex::new(None), scene_job: AtomicU64::new(0), nas: nas::Pool::start() });
             let menu = build_menu(app.handle(), "en")?;
@@ -2023,17 +1928,6 @@ mod organize_tests {
     use super::*;
 
     #[test]
-    fn unique_names_never_overwrite() {
-        let dir = std::env::temp_dir().join(format!("fg_unique_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("a.jpg"), b"1").unwrap();
-        std::fs::write(dir.join("a (2).jpg"), b"2").unwrap();
-        assert_eq!(unique_path(&dir, std::ffi::OsStr::new("a.jpg")), dir.join("a (3).jpg"));
-        assert_eq!(unique_path(&dir, std::ffi::OsStr::new("b.jpg")), dir.join("b.jpg"));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
     fn trash_accepts_only_photos() {
         let dir = std::env::temp_dir().join(format!("fg_trash_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -2047,41 +1941,6 @@ mod organize_tests {
         assert_eq!(r.failed.len(), 1);
         assert!(!photo.exists(), "the photo should be in the trash now");
         assert!(other.exists(), "a non-photo must never be touched");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-}
-
-
-#[cfg(test)]
-mod filter_tests {
-    use super::*;
-
-    #[test]
-    fn hidden_and_system_names_are_junk() {
-        for n in [".DS_Store", "._IMG_0001.jpg", ".Trashes", "__MACOSX", "@eaDir", "Thumbs.db"] {
-            assert!(is_junk(n), "{n}");
-        }
-        for n in ["IMG_0001.jpg", "Trip 2026", "DSCF2586.JPG"] {
-            assert!(!is_junk(n), "{n}");
-        }
-    }
-
-    #[test]
-    fn only_readable_photos_are_listed() {
-        let dir = std::env::temp_dir().join(format!("fg-filter-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join(".hidden")).unwrap();
-        let img = image::RgbImage::from_fn(400, 300, |x, y| image::Rgb([(x % 256) as u8, (y % 256) as u8, ((x * y) % 256) as u8]));
-        img.save(dir.join("good.jpg")).unwrap();
-        img.save(dir.join(".hidden").join("inside.jpg")).unwrap();
-        img.save(dir.join("._good.jpg")).unwrap();
-        std::fs::write(dir.join("fake.jpg"), vec![7u8; 20_000]).unwrap(); // not an image
-        std::fs::write(dir.join("tiny.jpg"), b"x").unwrap();
-        std::fs::write(dir.join("notes.txt"), b"hello").unwrap();
-        std::fs::write(dir.join("clip.mov"), vec![0u8; 20_000]).unwrap();
-        let found = list_all(&[dir.to_string_lossy().into_owned()]);
-        let names: Vec<_> = found.iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
-        assert_eq!(names, vec!["good.jpg"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

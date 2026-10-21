@@ -62,7 +62,7 @@ impl MediapipeEyes {
 
     /// Openness of the most closed eye among the given faces (1.0 open .. 0.0 closed), matching the scale
     /// `scoring::MEDIAPIPE_EYES_CLOSED` is calibrated against. `boxes` are `[x, y, w, h]`, top-left origin, normalised
-    /// to `img`, one per face (see `vision::VisionOut::eye_boxes`). `None` when no face was confident enough to read.
+    /// to `img`, one per face (see `platform::VisionOut::eye_boxes`). `None` when no face was confident enough to read.
     pub fn openness(&self, img: &DynamicImage, boxes: &[[f32; 4]]) -> Option<f32> {
         boxes.iter().filter_map(|b| self.face_openness(img, *b)).reduce(f32::min)
     }
@@ -129,7 +129,7 @@ mod tests {
     #[test]
     #[ignore = "needs models/ and a real photo (set PROBE_IMG); prints its own openness, no assertion on a value we cannot pin down"]
     fn eyes_on_a_real_photo() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../models");
+        let dir = crate::dev_models_dir();
         let m = MediapipeEyes::load(&dir).expect("load");
         let path = std::env::var("PROBE_IMG").expect("set PROBE_IMG=<path> and PROBE_BOX=x,y,w,h (from fg-vision's eyeBoxes)");
         let img = image::open(&path).expect("open");

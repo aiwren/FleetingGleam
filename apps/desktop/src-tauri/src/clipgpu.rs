@@ -9,6 +9,26 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex};
 
+use fg_core::platform::{GpuClipFactory, GpuEncoder};
+
+/// 注册给核心库的工厂：`scorer.rs` 通过它把 ONNX 的权重建到 GPU 上。
+pub struct Factory;
+
+impl GpuClipFactory for Factory {
+    fn from_onnx(&self, model: &[u8]) -> Result<Box<dyn GpuEncoder>, String> {
+        GpuClip::from_onnx(model).map(|g| Box::new(g) as Box<dyn GpuEncoder>)
+    }
+}
+
+impl GpuEncoder for GpuClip {
+    fn embed(&self, pixels: &[f32]) -> Result<Vec<f32>, String> {
+        GpuClip::embed(self, pixels)
+    }
+    fn embed_dim(&self) -> usize {
+        self.embed_dim
+    }
+}
+
 /// The most pictures one GPU run takes: ViT-L/14 is 35 ms a picture alone and about 26 ms in a run of four (the GPU is nearly full by then),
 /// ViT-B/32 is 9 ms against 3.6 ms.
 const MAX_BATCH: usize = 4;
@@ -408,7 +428,7 @@ mod tests {
         }).unwrap_or_default();
         let mut inputs: Vec<Vec<f32>> = vec![(0..3 * 224 * 224).map(|i| ((i * 7919) % 255) as f32 / 127.0 - 1.0).collect()];
         for p in &photos {
-            inputs.push(crate::scorer::preprocess(&image::open(p).unwrap()));
+            inputs.push(fg_core::scorer::preprocess(&image::open(p).unwrap()));
         }
         let cos = |a: &[f32], b: &[f32]| { let d: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum(); d / (a.iter().map(|x| x * x).sum::<f32>().sqrt() * b.iter().map(|x| x * x).sum::<f32>().sqrt()) };
         for file in ["clip_vit_b32_vision_fp16.onnx", "clip_vit_l14_vision_fp16.onnx"] {

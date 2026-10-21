@@ -132,7 +132,7 @@ mod tests {
     #[test]
     #[ignore = "needs models/ with the scene-text pack"]
     fn translates_a_scene() {
-        let t = Translator::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../models")).unwrap();
+        let t = Translator::load(&crate::dev_models_dir()).unwrap();
         let zh = t.zh("A large white building with a steeple on top of it.").unwrap();
         println!("{zh}");
         assert!(zh.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)));
@@ -141,7 +141,7 @@ mod tests {
     #[test]
     #[ignore = "needs models/ with the scene-text pack"]
     fn short_scene_phrases() {
-        let t = Translator::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../models")).unwrap();
+        let t = Translator::load(&crate::dev_models_dir()).unwrap();
         for e in ["A large sculpture of a tree", "A large white building", "Pink flowers in a field", "A field of flowers", "A table and chairs", "A large white archway", "A tree in front of a lake", "A person sitting in front of a tree", "A large beer in front of a city", "A rectangular sky in front of a tree", "A street", "A large balloon sculpture in front of a building", "A garden", "A room"] {
             println!("{e} => {}", t.zh(e).unwrap());
         }

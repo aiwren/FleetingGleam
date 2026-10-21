@@ -11,9 +11,9 @@ use crate::faces::FaceEmbedder;
 use crate::mediapipe::MediapipeEyes;
 use crate::scoring;
 use crate::scorer::AiScorer;
-use crate::vision::Vision;
+use crate::platform::SystemVision;
 
-const ANALYZE_SIZE: u32 = 1024;
+pub const ANALYZE_SIZE: u32 = 1024;
 const THUMB_SIZE: u32 = 640;
 
 /// Which signal `eyes_open` comes from. The geometric ratio is Apple Vision's own landmarks (macOS only, always
@@ -125,7 +125,7 @@ pub struct Photo {
 /// Eye openness for a photo whose cached value is missing or was computed by the other method: asks Vision about the
 /// saved analysis copy, then (for `Mediapipe`) hands Vision's face crops to the learned model instead of trusting
 /// Vision's own ratio.
-pub fn measure_eyes(path: &Path, cache_dir: &Path, vision: &Vision, method: EyeMethod, mp: Option<&MediapipeEyes>) -> Option<(f32, &'static str)> {
+pub fn measure_eyes(path: &Path, cache_dir: &Path, vision: &dyn SystemVision, method: EyeMethod, mp: Option<&MediapipeEyes>) -> Option<(f32, &'static str)> {
     let copy = cache_name(path, ".a.jpg", cache_dir);
     let copy = if copy.exists() { copy } else { return None };
     let v = vision.analyze(&copy)?;
@@ -144,7 +144,7 @@ pub fn measure_eyes(path: &Path, cache_dir: &Path, vision: &Vision, method: EyeM
 }
 
 /// Faces of a photo analysed before the recognition model was there: looked at again on its saved analysis copy.
-pub fn measure_faces(path: &Path, cache_dir: &Path, vision: &Vision, faces: &FaceEmbedder) -> Option<(Vec<[f32; 4]>, Vec<Vec<f32>>)> {
+pub fn measure_faces(path: &Path, cache_dir: &Path, vision: &dyn SystemVision, faces: &FaceEmbedder) -> Option<(Vec<[f32; 4]>, Vec<Vec<f32>>)> {
     let copy = cache_name(path, ".a.jpg", cache_dir);
     if !copy.exists() {
         return None;
@@ -164,7 +164,7 @@ pub fn analyze(
     path: &Path,
     cache_dir: &Path,
     scorer: Option<&dyn AiScorer>,
-    vision: Option<&Vision>,
+    vision: Option<&dyn SystemVision>,
     eye_method: EyeMethod,
     mp: Option<&MediapipeEyes>,
     faces: Option<&FaceEmbedder>,
@@ -347,7 +347,7 @@ fn load_with_size(path: &Path, max: u32) -> Result<(DynamicImage, u32, u32), Str
 }
 
 /// Decodes and applies the EXIF orientation, so portrait shots are upright and sizes are the displayed ones.
-fn load_oriented(path: &Path) -> Result<DynamicImage, String> {
+pub fn load_oriented(path: &Path) -> Result<DynamicImage, String> {
     use image::ImageDecoder;
     let err = |e: &dyn std::fmt::Display| format!("{}: {e}", path.display());
     let reader = image::ImageReader::open(path).map_err(|e| err(&e))?.with_guessed_format().map_err(|e| err(&e))?;
@@ -359,7 +359,7 @@ fn load_oriented(path: &Path) -> Result<DynamicImage, String> {
 }
 
 /// SIMD box/bilinear downscale; several times faster than `DynamicImage::resize` on large photos.
-fn fast_resize(img: &DynamicImage, max: u32) -> DynamicImage {
+pub fn fast_resize(img: &DynamicImage, max: u32) -> DynamicImage {
     use fast_image_resize as fir;
     let (w, h) = (img.width(), img.height());
     if w <= max && h <= max {
@@ -384,7 +384,7 @@ pub fn cache_name(src: &Path, suffix: &str, cache_dir: &Path) -> PathBuf {
     cache_dir.join(format!("{:016x}{suffix}", h.finish()))
 }
 
-fn save_analysis_copy(img: &DynamicImage, src: &Path, cache_dir: &Path) -> Option<PathBuf> {
+pub fn save_analysis_copy(img: &DynamicImage, src: &Path, cache_dir: &Path) -> Option<PathBuf> {
     let out = cache_name(src, ".a.jpg", cache_dir);
     let file = std::fs::File::create(&out).ok()?;
     image::codecs::jpeg::JpegEncoder::new_with_quality(std::io::BufWriter::new(file), 90)
@@ -393,7 +393,7 @@ fn save_analysis_copy(img: &DynamicImage, src: &Path, cache_dir: &Path) -> Optio
     Some(out)
 }
 
-fn save_thumb(img: &DynamicImage, src: &Path, cache_dir: &Path) -> Result<PathBuf, String> {
+pub fn save_thumb(img: &DynamicImage, src: &Path, cache_dir: &Path) -> Result<PathBuf, String> {
     let out = cache_name(src, ".jpg", cache_dir);
     img.thumbnail(THUMB_SIZE, THUMB_SIZE).to_rgb8().save(&out).map_err(|e| e.to_string())?;
     Ok(out)
@@ -437,7 +437,7 @@ pub fn subject_sharpness(g: &GrayImage) -> f32 {
 }
 
 /// Returns (mean brightness 0..1, fraction near white, fraction near black).
-fn exposure_stats(g: &GrayImage) -> (f32, f32, f32) {
+pub fn exposure_stats(g: &GrayImage) -> (f32, f32, f32) {
     let n = (g.width() * g.height()) as f32;
     let (mut sum, mut hi, mut lo) = (0u64, 0u32, 0u32);
     for p in g.pixels() {
@@ -449,7 +449,7 @@ fn exposure_stats(g: &GrayImage) -> (f32, f32, f32) {
     (sum as f32 / n / 255.0, hi as f32 / n, lo as f32 / n)
 }
 
-fn dhash(img: &DynamicImage) -> u64 {
+pub fn dhash(img: &DynamicImage) -> u64 {
     let g = img.resize_exact(9, 8, FilterType::Triangle).to_luma8();
     let mut bits = 0u64;
     for y in 0..8 {
@@ -462,7 +462,7 @@ fn dhash(img: &DynamicImage) -> u64 {
 }
 
 /// EXIF DateTimeOriginal as naive seconds (no timezone; only differences are used).
-fn exif_time(path: &Path) -> Option<i64> {
+pub fn exif_time(path: &Path) -> Option<i64> {
     let file = std::fs::File::open(path).ok()?;
     let ex = exif::Reader::new().read_from_container(&mut std::io::BufReader::new(file)).ok()?;
     let f = ex
@@ -740,73 +740,6 @@ mod tests {
         }
     }
 
-    /// End to end: original + degraded copies through the real pipeline (CLIP, Apple helper, grouping).
-    #[test]
-    #[ignore = "needs PROBE_IMG, TMP_DIR, models/ and bin/fg-vision"]
-    fn pipeline_smoke() {
-        let (Ok(p), Ok(tmp)) = (std::env::var("PROBE_IMG"), std::env::var("TMP_DIR")) else { return };
-        let tmp = PathBuf::from(tmp);
-        let base = image::open(p).unwrap().resize(1600, 1600, FilterType::Triangle).to_rgb8();
-        let variants: Vec<(&str, image::RgbImage)> = vec![
-            ("a_original", base.clone()),
-            ("b_blur_light", image::imageops::blur(&base, 1.5)),
-            ("c_blur_heavy", image::imageops::blur(&base, 6.0)),
-            ("d_dark", image::imageops::brighten(&base, -90)),
-            ("e_over", image::imageops::brighten(&base, 110)),
-        ];
-        let mut paths = Vec::new();
-        for (n, im) in &variants {
-            let path = tmp.join(format!("{n}.jpg"));
-            im.save(&path).unwrap();
-            paths.push(path);
-        }
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let scorer = crate::scorer::ClipScorer::load(&root.join("../models"), true, crate::scorer::Quality::Fast).ok();
-        let vision = Vision::start(&root.join("bin/fg-vision"), 2, false);
-        println!("clip={} vision={}", scorer.is_some(), vision.is_some());
-        let mut photos: Vec<Photo> = paths
-            .iter()
-            .map(|p| analyze(p, &tmp, scorer.as_ref().map(|s| s as &dyn AiScorer), vision.as_ref(), EyeMethod::Vision, None, None, &|_, _, _| {}).unwrap())
-            .collect();
-        group_and_score(&mut photos, None);
-        for p in &photos {
-            println!(
-                "{:<14} score={:.2} sharp={:.2} expo={:.2} clip={:?} sys={:?} faces={} flags={:?} group={} scene={} best={}",
-                p.name, p.score, p.sharp_score, p.expo_score,
-                p.clip_score.map(|v| (v * 100.0).round() / 100.0), p.sys_score.map(|v| (v * 100.0).round() / 100.0),
-                p.face_count, p.flags, p.group, p.scene, p.group_best
-            );
-        }
-    }
-
-    /// The real code path (`analyze()`, not a hand-rolled crop) on real photos, both eye methods side by side: this is
-    /// what actually ships, not a numeric spot check of the models in isolation.
-    #[test]
-    #[ignore = "needs FG_LIBRARY (a folder of real photos with faces), models/ and bin/fg-vision"]
-    fn eye_methods_on_real_photos() {
-        let Ok(dir) = std::env::var("FG_LIBRARY") else { return };
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let model_dir = root.join("../models");
-        let vision = Vision::start(&root.join("bin/fg-vision"), 2, false).expect("fg-vision (macOS only)");
-        let mp = MediapipeEyes::load(&model_dir).expect("load MediaPipe eyes (needs models/ from the `eyes` pack)");
-        let tmp = std::env::temp_dir().join("fg_eye_methods_test");
-        std::fs::create_dir_all(&tmp).unwrap();
-        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| is_image(p)).collect();
-        files.sort();
-        files.truncate(40);
-        println!("{} photos", files.len());
-        for f in &files {
-            let a = analyze(f, &tmp, None, Some(&vision), EyeMethod::Vision, None, None, &|_, _, _| {});
-            let b = analyze(f, &tmp, None, Some(&vision), EyeMethod::Mediapipe, Some(&mp), None, &|_, _, _| {});
-            match (a, b) {
-                (Ok(a), Ok(b)) if a.face_count > 0 => {
-                    println!("{:<28} faces={} vision={:>6.3} mediapipe={:>6.3}", a.name, a.face_count, a.eyes_open.unwrap_or(-1.0), b.eyes_open.unwrap_or(-1.0));
-                }
-                _ => {}
-            }
-        }
-    }
-
     /// The CPU side of analysing one photo, step by step (no models): FG_PHOTO=<a jpeg>; run with --ignored --nocapture.
     #[test]
     #[ignore = "timing only: FG_PHOTO=<a photo>; run with --ignored --nocapture"]
@@ -861,138 +794,6 @@ mod tests {
         }
     }
 
-    /// Where the time of a scan goes, on real photos: one at a time (per stage), then all at once the way a scan runs them.
-    #[test]
-    #[ignore = "timing only: FG_LIBRARY=<folder of photos> [FG_N=24] [FG_QUALITY=fast|high|ultra] [FG_COPIES=n] [FG_VISION=workers], models/ and bin/fg-vision; run with --ignored --nocapture"]
-    fn where_the_scan_time_goes() {
-        use rayon::prelude::*;
-        use std::time::Instant;
-        let Ok(dir) = std::env::var("FG_LIBRARY") else { return };
-        let n: usize = std::env::var("FG_N").ok().and_then(|v| v.parse().ok()).unwrap_or(16);
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let model_dir = root.join("../models");
-        let quality = crate::scorer::Quality::parse(std::env::var("FG_QUALITY").ok().as_deref());
-        let copies = std::env::var("FG_COPIES").ok().and_then(|v| v.parse().ok());
-        let scorer = crate::scorer::ClipScorer::load_with(&model_dir, std::env::var("FG_ACCEL").map_or(true, |v| v != "0"), quality, copies).expect("models/");
-        println!("CLIP: {} via {}", scorer.model, scorer.backend);
-        let workers: usize = std::env::var("FG_VISION").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
-        let vision = Vision::start(&root.join("bin/fg-vision"), workers, false).expect("fg-vision (macOS only)");
-        let tmp = std::env::temp_dir().join("fg_timing_test");
-        let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir_all(&tmp).unwrap();
-        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| is_image(p)).collect();
-        files.sort();
-        files.truncate(n);
-        // warm up the models (the first call pays for loading and compiling them)
-        let _ = analyze(&files[0], &tmp, Some(&scorer), Some(&vision), EyeMethod::Vision, None, None, &|_, _, _| {});
-        // marks: [start, "decode" (the first call), "quality" (decode, resize and the thumbnail are done), "ai" (stats done), "system" (CLIP done), "thumb" (Vision, faces done)], then the end
-        let names = ["decode+resize+thumb", "quality stats", "CLIP", "Vision+faces", "tail (exif, media)"];
-        let timed = |f: &PathBuf| -> Option<[f64; 5]> {
-            let marks: std::sync::Mutex<Vec<Instant>> = std::sync::Mutex::new(vec![Instant::now()]);
-            let r = analyze(f, &tmp, Some(&scorer), Some(&vision), EyeMethod::Vision, None, None, &|_, _, _| marks.lock().unwrap().push(Instant::now()));
-            let end = Instant::now();
-            r.ok()?;
-            let m = marks.lock().unwrap();
-            let at = [m[1], m[2], m[3], m[4], m[5], end];
-            let mut out = [0f64; 5];
-            for i in 0..5 { out[i] = at[i + 1].duration_since(at[i]).as_secs_f64() * 1000.0; }
-            Some(out)
-        };
-        let report = |label: &str, wall: std::time::Duration, rows: &[[f64; 5]]| {
-            let n = rows.len() as f64;
-            let mut sum = [0f64; 5];
-            for r in rows { for i in 0..5 { sum[i] += r[i]; } }
-            println!("\n{label}: {} photos, {:?} wall ({:.0} ms per photo)", rows.len(), wall, wall.as_secs_f64() * 1000.0 / n);
-            for i in 0..5 { println!("  {:<22} {:>7.0} ms/photo", names[i], sum[i] / n); }
-        };
-        let one = Instant::now();
-        let rows: Vec<[f64; 5]> = files.iter().filter_map(|f| timed(f)).collect();
-        let seq = one.elapsed();
-        report("one at a time", seq, &rows);
-        let par = Instant::now();
-        let rows: Vec<[f64; 5]> = files.par_iter().filter_map(|f| timed(f)).collect();
-        let pt = par.elapsed();
-        report(&format!("all at once ({} threads)", rayon::current_num_threads()), pt, &rows);
-        println!("  -> {:.1}x faster than one at a time", seq.as_secs_f64() / pt.as_secs_f64());
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    /// Per-stage wall time on one full-size photo, and CLIP on CPU vs the CoreML provider.
-    #[test]
-    #[ignore = "needs PROBE_IMG, models/ and bin/fg-vision"]
-    fn bench_stages() {
-        use std::time::Instant;
-        let Ok(p) = std::env::var("PROBE_IMG") else { return };
-        let ms = |t: Instant| t.elapsed().as_secs_f64() * 1000.0;
-        let t = Instant::now();
-        let full = load_oriented(Path::new(&p)).unwrap();
-        println!("decode {}x{}      {:>7.1} ms", full.width(), full.height(), ms(t));
-        let t = Instant::now();
-        let work = fast_resize(&full, ANALYZE_SIZE);
-        println!("resize to 1024       {:>7.1} ms  -> {}x{}", ms(t), work.width(), work.height());
-        let gray = work.to_luma8();
-        let t = Instant::now();
-        let _ = subject_sharpness(&gray);
-        println!("sharpness (tiles)    {:>7.1} ms", ms(t));
-        let t = Instant::now();
-        let _ = dhash(&work);
-        println!("dhash                {:>7.1} ms", ms(t));
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        for (label, accel) in [("CLIP  CPU only      ", false), ("CLIP  CoreML provider", true)] {
-            let load = Instant::now();
-            let s = crate::scorer::ClipScorer::load(&root.join("../models"), accel, crate::scorer::Quality::Fast).unwrap();
-            let load_ms = ms(load);
-            let _ = s.analyze(&work); // warm-up (CoreML compiles on first run)
-            let t = Instant::now();
-            for _ in 0..8 { s.analyze(&work).unwrap(); }
-            println!("{label} load {:>7.0} ms, per image {:>7.1} ms", load_ms, ms(t) / 8.0);
-        }
-        if let Some(v) = Vision::start(&root.join("bin/fg-vision"), 1, false) {
-            let small = save_analysis_copy(&work, Path::new(&p), &std::env::temp_dir()).unwrap();
-            let _ = v.analyze(&small);
-            let t = Instant::now();
-            for _ in 0..4 { v.analyze(&small); }
-            println!("Apple Vision (1024px copy) {:>7.1} ms per image", ms(t) / 4.0);
-            let t = Instant::now();
-            for _ in 0..2 { v.analyze(Path::new(&p)); }
-            println!("Apple Vision (full original) {:>5.1} ms per image", ms(t) / 2.0);
-        }
-    }
-
-    /// Whole-pipeline throughput on N copies of one full-size photo: CPU int8 vs CoreML fp16 (with and without Apple Vision).
-    #[test]
-    #[ignore = "needs PROBE_IMG, TMP_DIR, models/ (incl. fp16) and bin/fg-vision"]
-    fn pipeline_throughput() {
-        use rayon::prelude::*;
-        use std::time::Instant;
-        let (Ok(p), Ok(tmp)) = (std::env::var("PROBE_IMG"), std::env::var("TMP_DIR")) else { return };
-        let tmp = PathBuf::from(tmp);
-        let n = 30;
-        let paths: Vec<PathBuf> = (0..n)
-            .map(|i| {
-                let d = tmp.join(format!("tp_{i}.jpg"));
-                if !d.exists() {
-                    std::fs::copy(&p, &d).unwrap();
-                }
-                d
-            })
-            .collect();
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        for with_vision in [false, true] {
-            for accel in [false, true] {
-                let scorer = crate::scorer::ClipScorer::load(&root.join("../models"), accel, crate::scorer::Quality::Fast).unwrap();
-                let vision = if with_vision { Vision::start(&root.join("bin/fg-vision"), 2, false) } else { None };
-                let t = Instant::now();
-                let done: usize = paths
-                    .par_iter()
-                    .map(|q| analyze(q, &tmp, Some(&scorer as &dyn AiScorer), vision.as_ref(), EyeMethod::Vision, None, None, &|_, _, _| {}).is_ok() as usize)
-                    .sum();
-                let secs = t.elapsed().as_secs_f64();
-                println!("vision={:<5} clip={:<12} {done} photos in {secs:>5.1}s  ({:.0} ms/photo)", with_vision, scorer.backend, secs * 1000.0 / done as f64);
-            }
-        }
-    }
-
     /// Same photo, degraded in known ways, scored by both model tiers. Shows whether each tier reacts sensibly.
     #[test]
     #[ignore = "needs PROBE_IMG, models/ (both tiers)"]
@@ -1011,10 +812,9 @@ mod tests {
             ("tiny crop", DynamicImage::ImageRgb8(crop)),
             ("flat grey", DynamicImage::ImageRgb8(image::RgbImage::from_pixel(512, 512, image::Rgb([128, 128, 128])))),
         ];
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         for q in [Quality::Fast, Quality::High] {
             let load = Instant::now();
-            let s = crate::scorer::ClipScorer::load(&root.join("../models"), true, q).unwrap();
+            let s = crate::scorer::ClipScorer::load(&crate::dev_models_dir(), true, q).unwrap();
             println!("== {} via {}  (loaded in {:.0} ms)", s.model, s.backend, load.elapsed().as_secs_f64() * 1000.0);
             let _ = s.analyze(&variants[0].1); // warm-up
             for (name, img) in &variants {
@@ -1024,23 +824,6 @@ mod tests {
                     Err(e) => println!("   {name:<13} rejected: {e}"),
                 }
             }
-        }
-    }
-
-    /// Every format in a folder goes through the real analysis: HEIC, TIFF, BMP, PNG and an HDR JPEG here, camera RAW on a photographer's machine.
-    #[test]
-    #[ignore = "needs FG_FORMATS (a folder with one file of each format) and bin/fg-image (macOS)"]
-    fn every_format_is_analysed() {
-        let Ok(dir) = std::env::var("FG_FORMATS") else { return };
-        let tmp = std::env::temp_dir().join("fg_formats_test");
-        std::fs::create_dir_all(&tmp).unwrap();
-        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| is_image(p)).collect();
-        files.sort();
-        assert!(!files.is_empty());
-        for f in files {
-            let p = analyze(&f, &tmp, None, None, EyeMethod::Vision, None, None, &|_, _, _| {}).unwrap_or_else(|e| panic!("{}: {e}", f.display()));
-            assert!(p.width > 0 && p.height > 0 && Path::new(&p.thumb).exists(), "{}", f.display());
-            println!("{:<10} {}x{} hdr={} motion={} score={:.2}", f.file_name().unwrap().to_string_lossy(), p.width, p.height, p.hdr, p.motion, p.score);
         }
     }
 

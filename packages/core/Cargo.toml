@@ -1,0 +1,48 @@
+[package]
+name = "fleetinggleam-core"
+description = "FleetingGleam 的核心：分析、分组、打分、决策、喜好学习、搜索、场景描述、模型包、NAS 直连、云备份与本机加密仓库。平台无关，桌面端与 Android 共用。"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+edition.workspace = true
+
+[lib]
+name = "fg_core"
+crate-type = ["rlib"]
+
+[dependencies]
+# 纯 Rust 的 SMB2/3 客户端：应用自己连 NAS，Mac 与 Android 共用一份实现（不依赖系统挂载）
+smb2 = "0.34"
+# 给 NAS 客户端一个自己的单线程运行时（见 nas.rs）
+tokio.workspace = true
+image.workspace = true
+rayon.workspace = true
+walkdir.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+kamadak-exif.workspace = true
+# ONNX Runtime：macOS 上加 CoreML 提供者，Android 上加 NNAPI（见下面的 target 表）
+ort.workspace = true
+fast_image_resize = "6.1.0"
+tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"] }
+ureq = { version = "2", features = ["tls"] }
+sha2 = "0.10"
+# 云备份到 Cloudflare R2：S3 兼容接口的 SigV4 签名
+hmac = "0.12"
+# 本地加密的小秘密仓库（NAS 密码、备份密钥）：AES-256-GCM，密钥文件随机生成
+aes-gcm = "0.11"
+getrandom = "0.3"
+base64 = "0.22"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+ort = { workspace = true, features = ["coreml"] }
+# 读物理内存大小（sysctl）
+libc.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+# pyke 只提供带 NNAPI 的 aarch64-linux-android 预编译包
+ort = { workspace = true, features = ["nnapi"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

@@ -10,7 +10,7 @@ target
 *.local
 *.log
 
-# models never go into the repo (see docs/MODELS.md); the few small converted files that ship with the app are in src-tauri/model-data/
+# models never go into the repo (see docs/MODELS.md); the few small converted files that ship with the app are in packages/core/model-data/
 apps/desktop/models/
 *.onnx
 .env

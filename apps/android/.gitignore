@@ -1,0 +1,9 @@
+# Gradle 与 Android Studio 的产物
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+.kotlin/
+# 由 cargo-ndk 从 rust/ 编出来的库，不提交
+app/src/main/jniLibs/

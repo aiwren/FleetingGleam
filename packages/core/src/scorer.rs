@@ -1,11 +1,12 @@
-use crate::clipgpu::GpuClip;
 use crate::modelfiles;
+use crate::platform::GpuEncoder;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use image::imageops::FilterType;
 use image::DynamicImage;
+#[cfg(target_os = "macos")]
 use ort::ep::CoreML;
 use ort::session::Session;
 use ort::value::Tensor;
@@ -93,8 +94,11 @@ pub struct SiglipAesthetic {
 }
 
 impl SiglipAesthetic {
+    #[cfg_attr(not(target_os = "macos"), allow(unused_variables, unused_mut))]
     fn load(dir: &Path, gpu: bool) -> Result<Self, String> {
         let mut b = Session::builder().map_err(|e| e.to_string())?;
+        // 加速只在 macOS 有（CoreML 提供者）；其它平台先用 CPU，Android 的 NNAPI 在阶段 B 第 2 步接上
+        #[cfg(target_os = "macos")]
         if gpu {
             b = b.with_execution_providers([CoreML::default().build()]).map_err(|e| e.to_string())?;
         }
@@ -153,19 +157,7 @@ impl Pool {
     }
 }
 
-/// How much memory the machine has (bytes); 0 when it cannot be told.
-pub fn physical_memory() -> u64 {
-    #[cfg(target_os = "macos")]
-    unsafe {
-        let mut v: u64 = 0;
-        let mut len = std::mem::size_of::<u64>();
-        let name = std::ffi::CString::new("hw.memsize").unwrap();
-        if libc::sysctlbyname(name.as_ptr(), &mut v as *mut u64 as *mut libc::c_void, &mut len, std::ptr::null_mut(), 0) == 0 {
-            return v;
-        }
-    }
-    0
-}
+pub use crate::platform::physical_memory;
 
 /// How many copies of the model are worth their memory. Measured: every copy of the small model holds about 600 MB (the float16 weights are
 /// widened for the CPU) and a second one makes the encoder about 1.4x quicker, a third hardly more; the large model takes more than a
@@ -219,8 +211,10 @@ fn cosine(a: &[f32], b: &[f32]) -> f32 {
 
 /// The encoder on the GPU, when this machine can run it and it agrees with ONNX Runtime. The first time on a machine the two are compared on a fixed
 /// input (a marker file remembers the verdict, so later starts skip the comparison and never load the CPU copy at all).
-fn gpu_encoder(model_dir: &Path, file: &str, spec: &CpuSpec) -> Option<GpuClip> {
-    if !cfg!(target_os = "macos") || std::env::var_os("FG_NO_GPU").is_some() {
+fn gpu_encoder(model_dir: &Path, file: &str, spec: &CpuSpec) -> Option<Box<dyn GpuEncoder>> {
+    // 宿主没注册 GPU 编码器（Android 现在就是这样）就没有这条路
+    let factory = crate::platform::gpu_clip()?;
+    if std::env::var_os("FG_NO_GPU").is_some() {
         return None;
     }
     let bytes = modelfiles::read_model(model_dir, file).ok()?;
@@ -229,7 +223,7 @@ fn gpu_encoder(model_dir: &Path, file: &str, spec: &CpuSpec) -> Option<GpuClip> 
     if bad_marker.exists() {
         return None;
     }
-    let gpu = match GpuClip::from_onnx(&bytes) {
+    let gpu = match factory.from_onnx(&bytes) {
         Ok(g) => g,
         Err(e) => {
             eprintln!("GPU encoder not used: {e}");
@@ -264,12 +258,12 @@ fn gpu_encoder(model_dir: &Path, file: &str, spec: &CpuSpec) -> Option<GpuClip> 
 }
 
 /// CLIP image encoder + LAION aesthetic head.
-/// Where it runs is measured, not assumed. On a Mac the network is built on the GPU from the weights of the ONNX file (clipgpu.rs): ViT-L/14 takes
+/// Where it runs is measured, not assumed. On a Mac the network is built on the GPU from the weights of the ONNX file (the desktop crate's clipgpu.rs, registered through `platform::GpuClipFactory`): ViT-L/14 takes
 /// about 35 ms a picture there, against about 450 ms on the CPU. ONNX Runtime's CoreML provider is no way to get there: it refuses every node of
 /// a float16 graph (the model then runs on the CPU, the GPU idle), and compiling the graph for it takes minutes and gigabytes. The CPU path is
 /// the fallback (no GPU, an unfamiliar model, a mismatch), and then what made scanning faster was running several copies at once (see `Pool`).
 pub struct ClipScorer {
-    gpu: Option<GpuClip>,
+    gpu: Option<Box<dyn GpuEncoder>>,
     /// The CPU sessions: built at once when there is no GPU path, otherwise only if the GPU ever fails.
     cpu: std::sync::OnceLock<Result<Pool, String>>,
     spec: CpuSpec,
@@ -314,7 +308,7 @@ impl ClipScorer {
 }
 
 /// Resize the short side to 224 (bicubic), centre-crop, normalise to CHW floats — CLIP's own preprocessing.
-pub(crate) fn preprocess(img: &DynamicImage) -> Vec<f32> {
+pub fn preprocess(img: &DynamicImage) -> Vec<f32> {
     let (w, h) = (img.width() as f32, img.height() as f32);
     let scale = CLIP_SIZE as f32 / w.min(h);
     let (nw, nh) = ((w * scale).round().max(224.0) as u32, (h * scale).round().max(224.0) as u32);
@@ -376,7 +370,7 @@ impl AiScorer for ClipScorer {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
 
@@ -387,7 +381,7 @@ mod tests {
     fn clip_provider_options() {
         use ort::ep::coreml::{ComputeUnits, ModelFormat};
         use std::time::Instant;
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../models");
+        let dir = crate::dev_models_dir();
         type Make = Box<dyn Fn() -> CoreML>;
         let configs: Vec<(&str, Option<Make>)> = vec![
             ("current: CoreML default", Some(Box::new(|| CoreML::default()))),
@@ -451,7 +445,7 @@ mod tests {
     #[ignore = "timing only: models/; run with --ignored --nocapture"]
     fn clip_session_pool_size() {
         use std::time::Instant;
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../models");
+        let dir = crate::dev_models_dir();
         let rss = || -> u64 { String::from_utf8_lossy(&std::process::Command::new("ps").args(["-o", "rss=", "-p", &std::process::id().to_string()]).output().unwrap().stdout).trim().parse::<u64>().unwrap_or(0) / 1024 };
         let input: Vec<f32> = (0..3 * 224 * 224).map(|i| ((i * 7919) % 255) as f32 / 127.0 - 1.0).collect();
         let build = || -> Mutex<Session> {
@@ -487,7 +481,7 @@ mod tests {
     #[ignore = "timing only: models/; run with --ignored --nocapture"]
     fn clip_batches() {
         use std::time::Instant;
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../models");
+        let dir = crate::dev_models_dir();
         for (name, file, gpu) in [("B/32 fp16 CoreML", B32_FP16_FILE, true), ("B/32 int8 CPU", INT8_FILE, false)] {
             let mut b = Session::builder().unwrap();
             if gpu { b = b.with_execution_providers([CoreML::default().build()]).unwrap(); }
@@ -514,7 +508,7 @@ mod tests {
     fn clip_l14_options() {
         use ort::ep::coreml::{ComputeUnits, ModelFormat};
         use std::time::Instant;
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../models");
+        let dir = crate::dev_models_dir();
         type Make = Box<dyn Fn() -> Option<CoreML>>;
         let mut configs: Vec<(&str, bool, Make)> = vec![
             ("current: CoreML default", false, Box::new(|| Some(CoreML::default()))),
@@ -583,7 +577,7 @@ mod tests {
     #[test]
     #[ignore = "needs models/ and downloads ONNX Runtime on first build"]
     fn clip_smoke() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../models");
+        let dir = crate::dev_models_dir();
         let s = ClipScorer::load(&dir, true, Quality::Fast).expect("load");
         let flat = DynamicImage::new_rgb8(640, 480);
         let noise = DynamicImage::ImageRgb8(image::RgbImage::from_fn(640, 480, |x, y| {
@@ -616,7 +610,7 @@ mod ultra_tests {
     #[test]
     #[ignore = "needs models/ (incl. the SigLIP scorer) and reference scores"]
     fn ultra_matches_reference() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../models");
+        let dir = crate::dev_models_dir();
         let refs: Vec<(String, String, f64)> = serde_json::from_slice(&std::fs::read(std::env::var("FG_V25").unwrap()).unwrap()).unwrap();
         let n: usize = std::env::var("FG_N").ok().and_then(|v| v.parse().ok()).unwrap_or(5);
         let s = ClipScorer::load(&dir, true, Quality::Ultra).expect("load ultra");
@@ -644,7 +638,7 @@ mod search_tests {
     #[test]
     #[ignore = "needs models/ and a real analysis cache"]
     fn search_quality_on_real_photos() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../models");
+        let dir = crate::dev_models_dir();
         let cache = std::env::var("FG_CACHE").unwrap_or_default();
         let raw: serde_json::Value = serde_json::from_slice(&std::fs::read(&cache).expect("FG_CACHE")).unwrap();
         let scorer = ClipScorer::load(&dir, true, Quality::Fast).unwrap();
