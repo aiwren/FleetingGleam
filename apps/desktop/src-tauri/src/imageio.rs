@@ -15,7 +15,11 @@ pub fn init(bin: PathBuf) {
 }
 
 fn bin() -> Option<&'static PathBuf> {
+    // a development build may run before `init` and finds the helper next to the sources; a release build carries no such path
+    #[cfg(debug_assertions)]
     let b = BIN.get_or_init(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("bin/fg-image"));
+    #[cfg(not(debug_assertions))]
+    let b = BIN.get()?;
     b.exists().then_some(b)
 }
 

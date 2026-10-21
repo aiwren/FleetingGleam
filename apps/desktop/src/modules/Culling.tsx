@@ -71,7 +71,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
 }) {
   const { t, i18n } = useTranslation();
   const store = useProjects();
-  const { saveError } = useProjectsStatus();
+  const { saveError, loadError } = useProjectsStatus();
   const project: Project | null = store.projects.find((p) => p.id === store.activeId && !p.trashed) ?? null;
   const settings = useSettings();
 
@@ -716,6 +716,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
         <div className="scroll" ref={scrollRef}>
           {error && <p className="error">{t(error, { defaultValue: error })}</p>}
           {saveError && <p className="error">{t("cull.saveFailed", { error: saveError })}</p>}
+          {loadError === "corrupt" && <p className="error">{t("cull.loadCorrupt")}</p>}
 
           {(phase === "probing" || phase === "loading") && <p className="ash pad loading">{phase === "loading" && mediaProg && mediaProg.done < mediaProg.total ? t("cull.preparingMedia", { done: mediaProg.done, total: mediaProg.total }) : phase === "loading" && peopleProg && peopleProg.done < peopleProg.total ? t("cull.recognising", { done: peopleProg.done, total: peopleProg.total }) : t(phase === "probing" ? "cull.probing" : "cull.loading")}</p>}
 

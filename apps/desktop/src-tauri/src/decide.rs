@@ -252,6 +252,9 @@ pub fn decide(photos: &[Photo], keep_ratio: f32, pick_mode: PickMode, one_per_gr
                 } else {
                     reason_with("reason.keepSolo", &[("score", Value::from(pct(p.score)))])
                 });
+            } else if p.score >= GOOD_LINE {
+                // a good photo that only the keep ceiling kept out: not a borderline one
+                reasons.push(reason_with("reason.capCut", &[("score", Value::from(pct(p.score)))]));
             } else {
                 reasons.push(reason_with("reason.reviewEdge", &[("score", Value::from(pct(p.score)))]));
             }
@@ -494,6 +497,17 @@ mod tests {
         let photos: Vec<Photo> = (0..10).map(|i| solo(&format!("p{i}"), 0.4 + i as f32 * 0.01, i, &[])).collect();
         let out = decide(&photos, 1.0, PickMode::Diverse, false, &HashMap::new());
         assert!(out.values().all(|d| d.state != State::Keep));
+    }
+
+    #[test]
+    fn a_good_photo_the_ceiling_left_out_is_not_called_borderline() {
+        let photos: Vec<Photo> = [("a.jpg", 0.92), ("b.jpg", 0.88), ("c.jpg", 0.84), ("d.jpg", 0.80)].iter().enumerate().map(|(i, (p, s))| solo(p, *s, i, &[])).collect();
+        let out = decide(&photos, 0.25, PickMode::Best, false, &HashMap::new());
+        assert_eq!(out["a.jpg"].state, State::Keep);
+        for p in ["b.jpg", "c.jpg", "d.jpg"] {
+            assert_eq!(out[p].state, State::Review, "{p} is good but over the ceiling");
+            assert_eq!(out[p].reasons[0].k, "reason.capCut", "{p} got {}", out[p].reasons[0].k);
+        }
     }
 
     #[test]

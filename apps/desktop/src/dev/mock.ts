@@ -186,6 +186,7 @@ w.__TAURI_INTERNALS__ = {
       case "scan_cancel": return null;
       case "projects_load": return localStorage.getItem("fg.projects");
       case "projects_save": localStorage.setItem("fg.projects", String(args.json)); return null;
+      case "projects_quarantine": localStorage.removeItem("fg.projects"); return "fg.projects.corrupt";
       // The native HDR layer exists only in the app; here the calls are just recorded (window.__hdrCalls) so the page's side can be checked.
       case "hdr_overlay_supported": return true;
       case "hdr_overlay_show": case "hdr_overlay_move": case "hdr_overlay_hide": {

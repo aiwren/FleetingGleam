@@ -64,13 +64,36 @@ pub struct PrefsInfo {
     pub full_at: usize,
 }
 
+/// Reads a JSON file into its type. A file that is there but cannot be parsed is set aside under a timestamped name instead of
+/// being replaced by the defaults on the next save: months of labels are worth a look by hand.
+fn read_or_quarantine<T: serde::de::DeserializeOwned + Default>(path: &std::path::Path) -> T {
+    let Ok(bytes) = std::fs::read(path) else { return T::default() };
+    match serde_json::from_slice(&bytes) {
+        Ok(v) => v,
+        Err(e) => {
+            let aside = crate::quarantine_name(path);
+            eprintln!("{}: {e}; set aside as {}", path.display(), aside.display());
+            let _ = std::fs::rename(path, &aside);
+            T::default()
+        }
+    }
+}
+
+/// Written and synced to disk before the caller renames it into place.
+fn write_synced(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut f = std::fs::File::create(path)?;
+    f.write_all(bytes)?;
+    f.sync_all()
+}
+
 fn sigmoid(z: f32) -> f32 {
     1.0 / (1.0 + (-z).exp())
 }
 
 impl Prefs {
     pub fn load(path: PathBuf) -> Self {
-        let mut p: Prefs = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        let mut p: Prefs = read_or_quarantine(&path);
         p.path = path;
         p
     }
@@ -211,7 +234,7 @@ impl Styles {
     /// Loads `styles.json`; the single preferences file of earlier versions becomes the default style.
     pub fn load(dir: &std::path::Path) -> Self {
         let path = dir.join("styles.json");
-        let mut s: Styles = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        let mut s: Styles = read_or_quarantine(&path);
         s.path = path;
         if s.list.is_empty() {
             let old = Prefs::load(dir.join("preferences.json"));
@@ -231,7 +254,7 @@ impl Styles {
         }
         if let Ok(bytes) = serde_json::to_vec(self) {
             let tmp = self.path.with_extension("tmp");
-            if std::fs::write(&tmp, bytes).is_ok() {
+            if write_synced(&tmp, &bytes).is_ok() {
                 let _ = std::fs::rename(&tmp, &self.path);
             }
         }
@@ -349,6 +372,23 @@ mod style_tests {
     fn unit(v: Vec<f32>) -> Vec<f32> {
         let n = v.iter().map(|x| x * x).sum::<f32>().sqrt();
         v.into_iter().map(|x| x / n).collect()
+    }
+
+    #[test]
+    fn a_styles_file_that_cannot_be_read_is_set_aside_not_replaced() {
+        let dir = std::env::temp_dir().join(format!("fg_styles_corrupt_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("styles.json"), b"{ this is not json").unwrap();
+        let s = Styles::load(&dir);
+        assert_eq!(s.get(None).prefs.labels.len(), 0, "starts from the defaults");
+        let names: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        let aside = names.iter().find(|n| n.starts_with("styles.json.corrupt-")).expect("the unreadable file is kept under another name");
+        assert_eq!(std::fs::read(dir.join(aside)).unwrap(), b"{ this is not json", "byte for byte");
+        if let Ok(b) = std::fs::read(dir.join("styles.json")) {
+            assert!(serde_json::from_slice::<serde_json::Value>(&b).is_ok(), "whatever sits there now is a fresh, readable file");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

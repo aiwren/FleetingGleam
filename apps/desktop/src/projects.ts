@@ -36,8 +36,12 @@ export type Project = {
 /** The recycle bin only holds what was deleted within this many days; older items are removed when the app opens. */
 export const TRASH_DAYS = 7;
 type Store = { projects: Project[]; activeId: string | null };
-/** Whether the projects have been read yet, and the last error writing them (null when the last write went through). */
-export type ProjectsStatus = { loaded: boolean; saveError: string | null };
+/**
+ * Whether the projects have been read yet, and what went wrong: `saveError` is the last write that failed (null when the last one went
+ * through), `loadError` is "corrupt" when the file was there but unreadable (set aside, started empty) or the backend's message when it
+ * could not be read at all; in that case `readOnly` is true and nothing is written this session, so the file is not replaced.
+ */
+export type ProjectsStatus = { loaded: boolean; saveError: string | null; loadError: string | null; readOnly: boolean };
 
 /*
  * The projects are the person's own work (hours of keep / reject decisions), so they are kept by the backend in
@@ -51,9 +55,9 @@ const notify = () => subs.forEach((f) => f());
 const subscribe = (f: () => void) => { subs.add(f); return () => { subs.delete(f); }; };
 
 let store: Store = { projects: [], activeId: null };
-let status: ProjectsStatus = { loaded: false, saveError: null };
-/** false once the backend turned out not to be there (the browser preview): the WebView's storage is all there is. */
-let backend = true;
+let status: ProjectsStatus = { loaded: false, saveError: null, loadError: null, readOnly: false };
+/** Without the app's backend (the plain browser preview) the WebView's storage is all there is. */
+const backend = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 /** The stored form, checked and with the recycle bin's expired items removed; null when it is not a projects store at all. */
 function parse(raw: string): { store: Store; purged: boolean } | null {
@@ -88,29 +92,47 @@ export function loadProjects(): Promise<void> {
 async function load() {
   let got: { store: Store; purged: boolean } | null = null;
   let carriedOver = false;
-  try {
-    const raw = await invoke<string | null>("projects_load");
-    got = raw ? parse(raw) : null;
-    if (!got) {
-      // first run of this version: whatever the previous one kept in the WebView's storage becomes the file
-      got = fromLocalStorage();
-      carriedOver = !!got;
-    }
-  } catch {
-    backend = false;
+  let loadError: string | null = null;
+  let readOnly = false;
+  if (!backend) {
     got = fromLocalStorage();
+  } else {
+    try {
+      const raw = await invoke<string | null>("projects_load");
+      if (raw == null) {
+        // first run of this version: whatever the previous one kept in the WebView's storage becomes the file
+        got = fromLocalStorage();
+        carriedOver = !!got;
+      } else {
+        got = parse(raw);
+        if (!got) {
+          // the file is there but is not a projects store: set it aside for repair by hand, start empty
+          try { await invoke("projects_quarantine"); } catch (e) { loadError = String(e); readOnly = true; }
+          if (!readOnly) loadError = "corrupt";
+        }
+      }
+    } catch (e) {
+      // the file could not be read at all (permissions, a disk error): nothing is written this session, or the next write would replace it
+      loadError = String(e);
+      readOnly = true;
+    }
   }
   store = got?.store ?? { projects: [], activeId: null };
-  status = { ...status, loaded: true };
+  status = { loaded: true, saveError: null, loadError, readOnly };
   notify();
   // what the launch-time clean-up removed, and anything carried over, is written back right away
-  if (carriedOver || got?.purged) void persist();
+  if (!readOnly && (carriedOver || got?.purged)) void persist();
 }
 
 /* Writes go one at a time: a change made while one is in flight is written once it is done, as the latest state. */
 let saving = false;
 let again = false;
 async function persist() {
+  if (status.readOnly) {
+    // the file could not be read at start-up; refusing to write keeps it from being replaced, and the person is told
+    if (status.saveError !== status.loadError) { status = { ...status, saveError: status.loadError }; notify(); }
+    return;
+  }
   if (!backend) {
     try {
       localStorage.setItem(KEY, JSON.stringify(store));

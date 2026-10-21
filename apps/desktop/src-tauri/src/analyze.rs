@@ -206,9 +206,10 @@ pub fn analyze(
     let (eyes_open, eye_method_used) = match (eye_method, &sys) {
         (EyeMethod::Mediapipe, Some(s)) => match mp.and_then(|m| m.openness(&work, &s.eye_boxes)) {
             Some(e) => (Some(e), Some("mediapipe")),
-            None => (s.eyes.iter().cloned().reduce(f32::min), Some(MEDIAPIPE_FALLBACK)),
+            None => (Some(s.eyes.iter().cloned().reduce(f32::min).unwrap_or(1.0)), Some(MEDIAPIPE_FALLBACK)),
         },
-        (_, Some(s)) => (s.eyes.iter().cloned().reduce(f32::min), Some("vision")),
+        // a face with no eye that could be located is remembered as "very open" (the same as `measure_eyes` does), so it is not measured again
+        (_, Some(s)) => (Some(s.eyes.iter().cloned().reduce(f32::min).unwrap_or(1.0)), Some("vision")),
         (_, None) => (None, None),
     };
     let eye_method_used = eyes_open.and(eye_method_used).map(str::to_string);

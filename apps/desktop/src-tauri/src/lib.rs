@@ -356,11 +356,13 @@ async fn scan_project(app: AppHandle, key: String, dirs: Vec<String>, compute: O
                         let _ = app.emit("scan-progress", Progress { done: d, total });
                     }
                     if let Ok(photo) = &r {
-                        // a batch is written once there are 100 and at least half a minute has passed (writing the file takes longer the bigger the project)
+                        // a batch is written once there are 100 and half a minute has passed (writing the file takes longer the bigger the
+                        // project), and in any case once a minute: a small project, or a slow format, must not lose everything on a quit
                         let batch = {
                             let mut g = pending.lock().unwrap_or_else(|e| e.into_inner());
                             g.0.push(photo.clone());
-                            if g.0.len() >= 100 && g.1.elapsed() >= std::time::Duration::from_secs(30) {
+                            let age = g.1.elapsed();
+                            if (g.0.len() >= 100 && age >= std::time::Duration::from_secs(30)) || age >= std::time::Duration::from_secs(60) {
                                 g.1 = std::time::Instant::now();
                                 Some(std::mem::take(&mut g.0))
                             } else {
@@ -488,7 +490,15 @@ async fn scan_project(app: AppHandle, key: String, dirs: Vec<String>, compute: O
         photos.sort_by(|a, b| a.path.cmp(&b.path));
         let prefs = if learn { Some(app.state::<AppState>().prefs.lock().unwrap().get(style.as_deref()).prefs.clone()) } else { None };
         analyze::group_and_score(&mut photos, prefs.as_ref().filter(|p| p.active()));
-        *app.state::<AppState>().last_photos.lock().unwrap() = (key, photos.clone());
+        {
+            // grouping took a while; a newer scan may have written its project meanwhile, and this one must not replace it
+            let st = app.state::<AppState>();
+            let mut last = st.last_photos.lock().unwrap();
+            if st.scan_job.load(Ordering::Relaxed) != job {
+                return Err("cancelled".to_string());
+            }
+            *last = (key, photos.clone());
+        }
         Ok(photos)
     })
     .await
@@ -540,11 +550,43 @@ async fn projects_save(app: AppHandle, json: String) -> Result<(), String> {
             std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         }
         let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, json.as_bytes()).map_err(|e| format!("{}: {e}", tmp.display()))?;
+        write_synced(&tmp, json.as_bytes()).map_err(|e| format!("{}: {e}", tmp.display()))?;
         std::fs::rename(&tmp, &path).map_err(|e| format!("{}: {e}", path.display()))
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Writes the bytes and waits until they are on disk, so the rename that follows can never point at an empty or half-written file
+/// after a power cut.
+fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut f = std::fs::File::create(path)?;
+    f.write_all(bytes)?;
+    f.sync_all()
+}
+
+/// Sets aside a `projects.json` the frontend could not read (renamed with a timestamp, never deleted), so a fresh one can be started
+/// without destroying what might still be repaired by hand.
+#[tauri::command]
+async fn projects_quarantine(app: AppHandle) -> Result<String, String> {
+    let path = data_dir(&app).join("projects.json");
+    tauri::async_runtime::spawn_blocking(move || {
+        let _one_at_a_time = PROJECTS_WRITE.lock().unwrap_or_else(|e| e.into_inner());
+        let aside = quarantine_name(&path);
+        std::fs::rename(&path, &aside).map_err(|e| format!("{}: {e}", path.display()))?;
+        Ok(aside.to_string_lossy().into_owned())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// `name.json` → `name.json.corrupt-<unix seconds>`.
+pub fn quarantine_name(path: &Path) -> PathBuf {
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let mut name = path.file_name().map(|n| n.to_os_string()).unwrap_or_default();
+    name.push(format!(".corrupt-{secs}"));
+    path.with_file_name(name)
 }
 
 /// Stops the scan in progress: it ends at the next photo, and what it analysed by then is already in the cache. Called when
@@ -642,12 +684,14 @@ async fn trash_photos(paths: Vec<String>) -> Result<TrashResult, String> {
 async fn large_preview(app: AppHandle, path: String, full: Option<bool>) -> Result<String, String> {
     let dir = thumbs_dir(&app)?.join("large");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    // the web view may only load files inside the asset scope; anything else (a mounted share under /private, a symlink target) gets a copy
+    let showable = app.asset_protocol_scope().is_allowed(&path);
     tauri::async_runtime::spawn_blocking(move || {
         let src = Path::new(&path);
         // The original file itself whenever the web view can show it: that is the only way to see what the camera recorded (HDR, wide
         // colour, every pixel). Only formats it cannot show (camera RAW) or enormous files get a rendered preview.
         // Only the full-size viewer gets it (decoding a 15-30 MB original is too heavy for the several previews on screen in compare or single).
-        if full.unwrap_or(false) && imageio::web_can_show(src) && std::fs::metadata(src).map_or(false, |m| m.len() < 120 * 1024 * 1024) {
+        if full.unwrap_or(false) && showable && imageio::web_can_show(src) && std::fs::metadata(src).map_or(false, |m| m.len() < 120 * 1024 * 1024) {
             return Ok(path);
         }
         let out = analyze::cache_name(src, ".l.jpg", &dir);
@@ -860,9 +904,9 @@ async fn search_photos(app: AppHandle, dirs: Vec<String>, query: String) -> Resu
         };
         let keys = image_keys(&dirs);
         let hits: Vec<Hit> = with_cache(&app, |c| {
-            let rows: Vec<(&Photo, Option<Vec<f32>>, Option<Vec<u8>>)> =
-                keys.iter().filter_map(|k| c.photo(k).map(|p| (p, c.semantic(k), c.color(k).map(|x| x.to_vec())))).collect();
-            let items: Vec<textsearch::Item> = rows.iter().map(|(p, s, col)| textsearch::Item { sem: s.as_deref(), color: col.as_deref(), faces: p.face_count }).collect();
+            let rows: Vec<(&Photo, Option<&[f32]>, Option<&[u8]>)> =
+                keys.iter().filter_map(|k| c.photo(k).map(|p| (p, c.semantic(k), c.color(k)))).collect();
+            let items: Vec<textsearch::Item> = rows.iter().map(|(p, s, col)| textsearch::Item { sem: *s, color: *col, faces: p.face_count }).collect();
             textsearch::rank(&q, qv.as_deref(), &items)
                 .into_iter()
                 .map(|(i, score)| {
@@ -908,7 +952,7 @@ async fn scene_text(app: AppHandle, scenes: Vec<SceneReq>, zh: bool, caption: bo
 
         // 1. the vocabulary: the mean ViT-B/32 embedding of up to six photos of each scene
         const PER_SCENE: usize = 6;
-        let known: Vec<Vec<Option<Vec<f32>>>> = with_cache(&app, |c| scenes.iter().map(|s| s.paths.iter().take(PER_SCENE).map(|k| c.semantic(k)).collect()).collect());
+        let known: Vec<Vec<Option<Vec<f32>>>> = with_cache(&app, |c| scenes.iter().map(|s| s.paths.iter().take(PER_SCENE).map(|k| c.semantic(k).map(|v| v.to_vec())).collect()).collect());
         let thumbs: Vec<Vec<Option<String>>> = with_cache(&app, |c| {
             scenes.iter().zip(&known).map(|(s, kn)| s.paths.iter().take(PER_SCENE).zip(kn).map(|(k, v)| if v.is_some() { None } else { c.photo(k).map(|p| p.thumb.clone()) }).collect()).collect()
         });
@@ -1361,7 +1405,7 @@ pub fn run() {
         .on_menu_event(|app, event| {
             let _ = app.emit("menu", event.id().0.clone());
         })
-        .invoke_handler(tauri::generate_handler![probe_folder, scan_project, scan_cancel, decide_photos, projects_load, projects_save, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, trash_photos, reveal, preview_thumbs, photo_info, large_preview, motion_clip, hdrview::hdr_overlay_supported, hdrview::hdr_overlay_show, hdrview::hdr_overlay_move, hdrview::hdr_overlay_hide, hdrview::hdr_overlay_detail, hdrview::hdr_overlay_detail_hide, photo_detail, machine_info, search_status, search_index, search_photos, scene_text, packs_status, pack_size, pack_download, pack_cancel, pack_remove])
+        .invoke_handler(tauri::generate_handler![probe_folder, scan_project, scan_cancel, decide_photos, projects_load, projects_save, projects_quarantine, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, trash_photos, reveal, preview_thumbs, photo_info, large_preview, motion_clip, hdrview::hdr_overlay_supported, hdrview::hdr_overlay_show, hdrview::hdr_overlay_move, hdrview::hdr_overlay_hide, hdrview::hdr_overlay_detail, hdrview::hdr_overlay_detail_hide, photo_detail, machine_info, search_status, search_index, search_photos, scene_text, packs_status, pack_size, pack_download, pack_cancel, pack_remove])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

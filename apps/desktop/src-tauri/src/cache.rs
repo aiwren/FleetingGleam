@@ -179,9 +179,9 @@ impl Cache {
     }
 
     /// The vector to search with: the dedicated one, or the analysis embedding itself when that already is ViT-B/32 (512 numbers).
-    pub fn semantic(&self, key: &str) -> Option<Vec<f32>> {
+    pub fn semantic(&self, key: &str) -> Option<&[f32]> {
         let e = self.entries.get(key)?;
-        if !e.sem.is_empty() { Some(e.sem.clone()) } else if e.emb.len() == 512 { Some(e.emb.clone()) } else { None }
+        if !e.sem.is_empty() { Some(&e.sem) } else if e.emb.len() == 512 { Some(&e.emb) } else { None }
     }
 
     pub fn set_index(&mut self, key: &str, size: u64, mtime: i64, sem: Option<Vec<f32>>, color: Vec<u8>) {
@@ -244,7 +244,8 @@ impl Cache {
         // written straight to the file as it is produced (no second copy of a file that can be hundreds of MB in memory)
         if let Ok(f) = std::fs::File::create(&tmp) {
             let mut w = std::io::BufWriter::with_capacity(1 << 20, f);
-            if serde_json::to_writer(&mut w, self).is_ok() && std::io::Write::flush(&mut w).is_ok() {
+            // flushed and synced before the rename: a power cut must leave either the old file or the new one, never a torn one
+            if serde_json::to_writer(&mut w, self).is_ok() && std::io::Write::flush(&mut w).is_ok() && w.get_ref().sync_all().is_ok() {
                 let _ = std::fs::rename(&tmp, &self.path);
             }
         }
