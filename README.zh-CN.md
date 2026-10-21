@@ -88,6 +88,8 @@ DESIGN.md         设计系统：配色、字体、动效规范
 | [docs/MODELS.md](docs/MODELS.md) | 每个模型文件从哪里下载、多大、什么许可，怎么校验 |
 | [docs/RESEARCH.md](docs/RESEARCH.md) | 选片方法与模型的调研笔记（含美学模型调研） |
 | [docs/REVIEW-2026-10-20.md](docs/REVIEW-2026-10-20.md) | 桌面端代码审查：按优先级列出的改进清单 |
+| [docs/REVIEW-2026-10-21.md](docs/REVIEW-2026-10-21.md) | 第二轮审查：后端、前端、落地页与 CI |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | 路线图：先完善 macOS 端，再做 Android 端 |
 | [DESIGN.md](DESIGN.md) | 设计系统（英文） |
 | [CHANGELOG.md](CHANGELOG.md) | 版本更新记录 |
 | [SECURITY.md](SECURITY.md) | 如何报告安全问题 |
