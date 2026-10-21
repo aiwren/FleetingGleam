@@ -24,7 +24,7 @@ function useInfo(path: string) {
   return info;
 }
 
-const size = (b: number) => (b >= 1e6 ? `${(b / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1e3))} KB`);
+import { fmtBytes } from "../format";
 
 /** EXIF stores the date as "2026:06:13 14:31:17"; show it the way people write it, without the seconds. */
 const niceTime = (v: string) => v.replace(/^(\d{4}):(\d{2}):(\d{2})/, "$1-$2-$3").replace(/:\d{2}$/, "");
@@ -40,14 +40,14 @@ function niceShutter(v: string): string {
 
 /** File facts as an aligned list: what the file is, what shot it, and the shooting parameters as small tags. */
 export default function FileFacts({ photo }: { photo: Photo }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const info = useInfo(photo.path);
   const mp = (photo.width * photo.height) / 1e6;
   const color = info?.color_space && info.color_space !== "Uncalibrated" ? info.color_space : null;
   const depth = info?.bit_depth ? `${info.bit_depth.split(",")[0].trim()} bit` : null;
   const tags = [info?.focal, info?.aperture, info?.shutter ? niceShutter(info.shutter) : null, info?.iso ? `ISO ${info.iso}` : null].filter(Boolean) as string[];
   const rows: [string, ReactNode][] = [
-    [t("file.format"), [info?.format, info ? size(info.bytes) : null].filter(Boolean).join(" · ")],
+    [t("file.format"), [info?.format, info ? fmtBytes(i18n.language, info.bytes) : null].filter(Boolean).join(" · ")],
     [t("file.pixels"), `${photo.width} × ${photo.height} · ${mp.toFixed(1)} MP`],
     [t("file.color"), [color, depth].filter(Boolean).join(" · ")],
     [t("file.camera"), info?.camera ? <>{info.camera}{info.lens && <small>{info.lens}</small>}</> : info?.lens],
@@ -63,8 +63,8 @@ export default function FileFacts({ photo }: { photo: Photo }) {
 
 /** The file facts as a collapsible row; the summary shows the essentials (format and size) without opening it. */
 export function FileSection({ photo }: { photo: Photo }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const info = useInfo(photo.path);
-  const hint = info ? [info.format, size(info.bytes)].filter(Boolean).join(" · ") : undefined;
+  const hint = info ? [info.format, fmtBytes(i18n.language, info.bytes)].filter(Boolean).join(" · ") : undefined;
   return <Accordion icon="file" title={t("file.title")} hint={hint}><FileFacts photo={photo} /></Accordion>;
 }

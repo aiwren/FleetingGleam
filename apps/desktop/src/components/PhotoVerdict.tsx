@@ -24,9 +24,10 @@ function Bar({ label, value }: { label: string; value: number }) {
 export default function PhotoVerdict({ photo, decision, onDecide, reasonText, scoreTip }: {
   photo: Photo; decision?: Decision; onDecide: (s: State | null) => void; reasonText: (r: Reason) => string; scoreTip?: ReactNode;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const state = decision?.state ?? "review";
-  const reasons = decision?.reasons.map((r) => reasonText(r)).join("；");
+  // sentences joined the way the language joins them (a full-width semicolon in Chinese, a plain one elsewhere)
+  const reasons = decision?.reasons.map((r) => reasonText(r)).join(i18n.language.startsWith("zh") ? "；" : "; ");
   return (
     <>
       <h3 className="mono vname">{photo.name}{photo.kind && <span className="ktag">{t(`kind.${photo.kind}`)}</span>}</h3>

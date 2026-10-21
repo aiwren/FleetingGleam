@@ -1,3 +1,4 @@
+import { isModalOpen } from "../components/Modal";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -9,6 +10,8 @@ import { Decision, Photo, State, pct, thumbSrc } from "../types";
 import PhotoTags from "../components/PhotoTags";
 
 type Props = {
+  /** false while another page is in front: the keys belong to it then */
+  active?: boolean;
   photo: Photo;
   decision?: Decision;
   index: number;
@@ -39,7 +42,7 @@ const isBig = (p: Photo) => p.width * p.height >= BIG_PIXELS;
 const maybeHdr = (p: Photo) => p.hdr || !SDR_EXT.has((p.path.split(".").pop() ?? "").toLowerCase());
 const hdrSupported = () => (hdrSupport ??= invoke<boolean>("hdr_overlay_supported").catch(() => false));
 
-export default function Viewer({ photo, decision, index, total, onClose, onStep, onDecide, photos, decisions, onJump, from }: Props) {
+export default function Viewer({ photo, decision, index, total, onClose, onStep, onDecide, photos, decisions, onJump, from, active = true }: Props) {
   const { t } = useTranslation();
   const large = useLarge(photo.path, true, true);
   // The view that is on screen lives in `view` and is painted straight onto the elements once per frame, so zooming and panning never wait for a
@@ -339,7 +342,9 @@ export default function Viewer({ photo, decision, index, total, onClose, onStep,
   }, [nativeHdr]);
 
   useEffect(() => {
+    if (!active) return;
     const onKey = (e: KeyboardEvent) => {
+      if (isModalOpen()) return;
       const k = e.key.toLowerCase();
       if (k === "escape" || k === " ") { e.preventDefault(); onClose(); }
       else if (k === "arrowright") onStep(1);

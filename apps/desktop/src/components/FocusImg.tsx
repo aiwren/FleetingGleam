@@ -11,13 +11,17 @@ export const markSeen = (src: string) => { seen.add(src); };
  */
 export default function FocusImg({ src, className = "", quick = false }: { src: string; className?: string; quick?: boolean }) {
   const [ready, setReady] = useState(() => seen.has(src));
+  const [missing, setMissing] = useState(false);
   const ref = useRef<HTMLImageElement>(null);
+  useEffect(() => { setMissing(false); }, [src]);
 
   useEffect(() => {
     const el = ref.current;
     if (el && el.complete && el.naturalWidth > 0) { seen.add(src); setReady(true); }
   }, [src]);
 
+  // a thumbnail that is gone (the cache was cleared, the file damaged) shows as a quiet blank rather than an invisible tile
+  if (missing) return <span className={`focus in missing ${className}`} aria-hidden />;
   return (
     <img
       ref={ref}
@@ -27,6 +31,7 @@ export default function FocusImg({ src, className = "", quick = false }: { src: 
       draggable={false}
       decoding="async"
       onLoad={() => { seen.add(src); setReady(true); }}
+      onError={() => setMissing(true)}
     />
   );
 }

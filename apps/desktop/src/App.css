@@ -317,7 +317,7 @@ input[type=range]::-webkit-slider-thumb { appearance: none; width: 14px; height:
 .toolbar-title b { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .toolbar-title > span { flex: none; }
 .segmented, .toolbar-right { flex: none; }
-.tile:focus-visible { outline: none; }
+.tile:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
 .nav-inner { min-width: 0; }
 .nav-text { min-width: 0; white-space: nowrap; }
 .nav-text small { overflow: hidden; text-overflow: ellipsis; }
@@ -1259,3 +1259,5 @@ img { -webkit-user-drag: none; }
 .lm-status { margin: 0; font-size: 12.5px; line-height: 1.5; }
 .learn-meter.compact .lm-track { margin: 8px 0 26px; }
 .learn-meter.compact .lm-status { font-size: 12px; }
+
+.focus.missing { display: block; width: 100%; height: 100%; background: var(--surface-2); }

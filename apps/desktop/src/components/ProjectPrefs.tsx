@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import Segmented from "./Segmented";
 import Select from "./Select";
@@ -7,6 +8,15 @@ import { useStyles } from "../styles";
 
 /** The per-project choices that shape how photos are picked. Shared by the settings dialog and the screen before analysis. */
 export default function ProjectPrefs({ project }: { project: Project }) {
+  // the slider is shown from local state and written when the hand stops: every notch would otherwise re-decide the whole project
+  const [cap, setCapState] = useState(project.keepCap ?? 0.5);
+  useEffect(() => { setCapState(project.keepCap ?? 0.5); }, [project.keepCap]);
+  const capTimer = useRef<number | null>(null);
+  const setCap = (v: number) => {
+    setCapState(v);
+    if (capTimer.current !== null) window.clearTimeout(capTimer.current);
+    capTimer.current = window.setTimeout(() => { capTimer.current = null; updateProject(project.id, { keepCap: v }); }, 180);
+  };
   const { t } = useTranslation();
   const styles = useStyles();
   return (
@@ -16,10 +26,10 @@ export default function ProjectPrefs({ project }: { project: Project }) {
         <div className="keepcap">
           {project.keepCap !== undefined && (
             <label className="keepshare">
-              <input type="range" min={0.05} max={0.95} step={0.05} value={project.keepCap}
-                style={{ ["--fill" as string]: `${((project.keepCap - 0.05) / 0.9) * 100}%` }}
-                onChange={(e) => updateProject(project.id, { keepCap: Number(e.target.value) })} aria-label={t("pset.keepShare")} />
-              <span className="mono">{pct(project.keepCap)}%</span>
+              <input type="range" min={0.05} max={0.95} step={0.05} value={cap}
+                style={{ ["--fill" as string]: `${((cap - 0.05) / 0.9) * 100}%` }}
+                onChange={(e) => setCap(Number(e.target.value))} aria-label={t("pset.keepShare")} />
+              <span className="mono">{pct(cap)}%</span>
             </label>
           )}
           <button className="switch" role="switch" aria-checked={project.keepCap !== undefined} aria-label={t("pset.keepShareLimit")}

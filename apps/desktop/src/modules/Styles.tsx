@@ -246,7 +246,7 @@ export default function Styles({ active, from, onBack }: { active: boolean; from
           <>
             <p>{t("styles.confirmDeleteBody", { labels: confirming.info.labels, refs: confirming.info.refs })}</p>
             {(usedBy.get(confirming.id) ?? []).length > 0 && (
-              <p className="ash">{t("styles.confirmDeleteUsed", { count: usedBy.get(confirming.id)!.length, names: usedBy.get(confirming.id)!.join("、") })}</p>
+              <p className="ash">{t("styles.confirmDeleteUsed", { count: usedBy.get(confirming.id)!.length, names: new Intl.ListFormat(i18n.language, { type: "conjunction" }).format(usedBy.get(confirming.id)!) })}</p>
             )}
           </>
         )}

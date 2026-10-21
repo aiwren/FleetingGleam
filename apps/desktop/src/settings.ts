@@ -55,6 +55,10 @@ export const getSettings = () => state;
 export function setScanInfo(i: ScanInfo) { info = i; write(INFO_KEY, i); notify(); }
 
 export const useSettings = () => useSyncExternalStore(subscribe, () => state);
+/* Bumped when the thumbnail cache is cleared: the project in view reads its folders again (and finds everything needs analysing). */
+let cacheRev = 0;
+export function bumpCacheRev() { cacheRev += 1; notify(); }
+export const useCacheRev = () => useSyncExternalStore(subscribe, () => cacheRev);
 export const useScanInfo = () => useSyncExternalStore(subscribe, () => info);
 
 if (state.theme !== "system") applyTheme(state.theme);

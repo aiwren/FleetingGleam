@@ -54,7 +54,7 @@ const zh = {
     filters: "筛选", status: "状态", scenes: "场景", people: "人物", clearFilter: "清除", sceneCount: "{{count}} 张", personCount: "{{count}} 张照片", allScenes: "查看全部 {{count}} 个场景", describe: "为其余场景生成描述", describing: "正在描述场景 {{done}}/{{total}}", resizeHint: "拖动调整宽度，双击恢复", backToPhotos: "返回照片", morePeople: "展开全部 {{count}} 人", fewer: "收起", noPeopleHere: "这个筛选下没有识别到的人物",
   },
   file: { title: "文件信息", format: "格式", size: "文件大小", pixels: "像素", color: "色彩空间", depth: "位深", camera: "相机", lens: "镜头", exposure: "拍摄参数", taken: "拍摄时间" },
-  single: { pagePrev: "上一页", pageNext: "下一页" },
+  single: { pagePrev: "上一页", pageNext: "下一页", prev: "上一张", next: "下一张" },
   search: { label: "搜索照片", placeholder: "搜索照片：烟花、两个人、雨伞…", globalPlaceholder: "搜索所有项目里的照片", clear: "清除", indexing: "正在为搜索建立索引 {{pct}}%", none: "没有找到「{{q}}」", noneHint: "试试换个说法，比如描述画面里的东西或场景。", inProject: "在「{{name}}」", results: "{{count}} 张" },
   models: {
     ask: { bundle: "下载所需的模型", standard: "下载标准分析模型", high: "下载高质量分析模型", ultra: "下载极致分析模型", search: "下载照片搜索模型", eyes: "下载 MediaPipe 眼睛模型", faces: "下载人物识别模型", scenetext: "下载场景描述模型" },
@@ -182,7 +182,7 @@ const zh = {
     gpuTitle: "关于 GPU 加速",
     gpuHint: "自动模式会把本地 AI 模型交给系统的 GPU / 神经网络引擎，处理器就能同时做解码和缩图。实测整批分析约快 1.7 倍；只测模型本身时 CPU 反而略快。具体用 GPU 还是神经网络引擎由系统调度。",
     data: "数据",
-    cache: "缩略图缓存", cacheDesc: "清除后，下次分析会重新生成。",
+    cache: "缩略图缓存", cacheDesc: "清除后，所有项目下次打开都要重新分析。",
     clear: "清除缓存", cleared: "已清除",
     privacy: "隐私", privacyBody: "照片只在这台电脑上处理，不会上传。",
     learned: "已从 {{n}} 次选择中学习",

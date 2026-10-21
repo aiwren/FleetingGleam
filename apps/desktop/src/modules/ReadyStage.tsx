@@ -67,6 +67,19 @@ export default function ReadyStage({ project, count, sizeText, etaSeconds, files
   project: Project; count: number; sizeText: string; etaSeconds: number | null; files: ProbeFile[]; thumbs: Record<string, string>;
   onStart: () => void; onAddFolder: () => void; onRemoveFolder: (dir: string) => void;
 }) {
+  // typed into local state; written once the typing pauses or the field is left (every character would otherwise rewrite the projects file)
+  const [note, setNoteState] = useState(project.note ?? "");
+  useEffect(() => { setNoteState(project.note ?? ""); }, [project.id, project.note]);
+  const noteTimer = useRef<number | null>(null);
+  const flushNote = () => {
+    if (noteTimer.current !== null) { window.clearTimeout(noteTimer.current); noteTimer.current = null; }
+    if ((project.note ?? "") !== note) updateProject(project.id, { note });
+  };
+  const setNote = (v: string) => {
+    setNoteState(v);
+    if (noteTimer.current !== null) window.clearTimeout(noteTimer.current);
+    noteTimer.current = window.setTimeout(() => { noteTimer.current = null; if ((project.note ?? "") !== v) updateProject(project.id, { note: v }); }, 500);
+  };
   const { t } = useTranslation();
   const [name, setName] = useState(project.name);
   useEffect(() => setName(project.name), [project.id, project.name]);
@@ -122,8 +135,8 @@ export default function ReadyStage({ project, count, sizeText, etaSeconds, files
 
           <motion.section className="ready-card" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ ...SPRING.soft, delay: 0.34 }} exit={{ opacity: 0 }}>
             <h4>{t("pset.note")}</h4>
-            <textarea className="ready-note" rows={3} value={project.note ?? ""} placeholder={t("pset.notePh")}
-              onChange={(e) => updateProject(project.id, { note: e.target.value })} />
+            <textarea className="ready-note" rows={3} value={note} placeholder={t("pset.notePh")}
+              onChange={(e) => setNote(e.target.value)} onBlur={flushNote} />
           </motion.section>
         </div>
 

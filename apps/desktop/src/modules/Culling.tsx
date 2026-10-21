@@ -1,3 +1,4 @@
+import { isModalOpen } from "../components/Modal";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -27,7 +28,7 @@ import Tile, { StageInfo } from "../components/Tile";
 import { DUR, EASE_OUT, SPRING } from "../motion";
 import { newProjectFromDialog, pickFolder } from "../projectActions";
 import { Project, setActive, trashProject, updateProject, useProjects, useProjectsStatus } from "../projects";
-import { getSettings, ScanInfo, setScanInfo, useSettings } from "../settings";
+import { getSettings, ScanInfo, setScanInfo, useSettings, useCacheRev } from "../settings";
 import { Decision, Photo, Probe, ProbeFile, Reason, State, pct, thumbSrc } from "../types";
 import Organize from "./Organize";
 import ReadyStage from "./ReadyStage";
@@ -127,6 +128,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const pickLayout = (v: ViewStyle) => { setLayout(v); try { localStorage.setItem("fg.layout", v); } catch { /* storage unavailable */ } };
   const [from, setFrom] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const cacheRev = useCacheRev();
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
   const [searchRev, setSearchRev] = useState(0);
   const [previews, setPreviews] = useState<Record<string, string>>({});
@@ -204,6 +206,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     const tok = ++token.current;
     // whatever scan was running belonged to the project (or settings) just left; it stops at its next photo
     invoke("scan_cancel").catch(() => { /* not in Tauri */ });
+    undoStack.current = []; // the marks that could be undone belonged to the project just left
     setSelected(null); setQuery(""); setZoomed(false); setError(null); setMode("all"); setSceneFilter(null); setPersonFilter(null); setSceneView(false); setCelebrate(false); setDirty(0);
     if (!project || project.folders.length === 0) { setPhase("idle"); setPhotos([]); setFiles([]); return; }
     setPhase("probing");
@@ -221,7 +224,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [folderKey, reloadKey, settings.tierRev]);
+  }, [folderKey, reloadKey, settings.tierRev, cacheRev]);
 
   // how long the analysis will take, said before it starts (the model the app will use, the cores this machine has)
   useEffect(() => {
@@ -499,7 +502,8 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const openSceneView = useCallback(() => setSceneView(true), []);
   const tileSelect = useCallback((path: string) => { clickedPath.current = path; setSelected(path); }, []);
   const decide = useCallback((path: string, st: State | null, fromUndo = false) => {
-    if (!project) return;
+    // only photos of the project in view: a stale key press or undo must not write another project's path into this one
+    if (!project || !photos.some((p) => p.path === path)) return;
     const prev = project.overrides[path];
     const next = { ...project.overrides };
     if (st === null) delete next[path]; else next[path] = st;
@@ -539,7 +543,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     if (!active || zoomed || phase !== "done") return;
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement).tagName;
-      if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+      if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || isModalOpen()) return;
       const k = e.key.toLowerCase();
       if ((e.metaKey || e.ctrlKey) && k === "z") { e.preventDefault(); undoLast(); return; }
       if (layout === "compare" && ["arrowright", "arrowleft", "p", "r", "x"].includes(k)) return; // Compare handles these itself (groups; the photo under the pointer)
@@ -778,7 +782,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
             <Single photos={shown} selected={selected} decisions={decisions} onSelect={select} onStep={move} onOpen={openViewer} />
           )}
           {phase === "done" && !sceneView && layout === "compare" && shown.length > 0 && (
-            <Compare photos={shown} all={compareAll} scope={sceneFilter !== null ? "scene" : "group"} personFilter={personFilter} onPerson={setPersonFilter} selected={selected} decisions={decisions} onSelect={select} onDecide={decide} onOpen={openViewer} />
+            <Compare photos={shown} all={compareAll} scope={sceneFilter !== null ? "scene" : "group"} personFilter={personFilter} onPerson={setPersonFilter} selected={selected} decisions={decisions} onSelect={select} onDecide={decide} onOpen={openViewer} enabled={active && !zoomed} />
           )}
         </div>
         </div>
@@ -865,7 +869,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
       <AnimatePresence>
         {zoomed && sel && (
           <Viewer key="viewer" photo={sel} decision={decision} index={selIndex} total={shown.length}
-            onClose={() => setZoomed(false)} onStep={move} onDecide={(st) => decide(sel.path, st)} photos={shown} decisions={decisions} onJump={select} from={from} />
+            onClose={() => setZoomed(false)} onStep={move} onDecide={(st) => decide(sel.path, st)} photos={shown} decisions={decisions} onJump={select} from={from} active={active} />
         )}
       </AnimatePresence>
     </div>

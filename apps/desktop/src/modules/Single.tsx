@@ -75,7 +75,7 @@ export default function Single({ photos, selected, decisions, onSelect, onStep, 
           initial={{ opacity: 0 }} animate={{ opacity: 0.5 }} exit={{ opacity: 0 }} transition={{ duration: 0.7, ease: EASE_OUT }} />
       </AnimatePresence>
       <div className="single-main">
-        <button className="sarrow left" onClick={() => onStep(-1)} disabled={idx === 0} aria-label="←">
+        <button className="sarrow left" onClick={() => onStep(-1)} disabled={idx === 0} aria-label={t("single.prev")}>
           <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M10 3L5 8l5 5" /></svg>
         </button>
         <div className="sstage">
@@ -94,7 +94,7 @@ export default function Single({ photos, selected, decisions, onSelect, onStep, 
           </AnimatePresence>
           <span className="scount mono">{idx + 1} / {photos.length}</span>
         </div>
-        <button className="sarrow right" onClick={() => onStep(1)} disabled={idx === photos.length - 1} aria-label="→">
+        <button className="sarrow right" onClick={() => onStep(1)} disabled={idx === photos.length - 1} aria-label={t("single.next")}>
           <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M6 3l5 5-5 5" /></svg>
         </button>
 

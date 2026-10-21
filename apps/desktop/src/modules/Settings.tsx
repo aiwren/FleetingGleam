@@ -1,5 +1,6 @@
 import { PrefsInfo, bumpPrefsRevision, learnFromFolder, refreshStyles } from "../styles";
 import LearnMeter from "../components/LearnMeter";
+import { fmtBytes } from "../format";
 import { pickFolder, baseName } from "../projectActions";
 import { ensurePack, removePack, usePacks } from "../models";
 import { adopt, release } from "../strategy";
@@ -13,7 +14,7 @@ import Segmented from "../components/Segmented";
 import Select from "../components/Select";
 import { LANGS, Pref, setPref, storedPref } from "../i18n";
 import { SPRING } from "../motion";
-import { Theme, setSettings, useScanInfo, useSettings } from "../settings";
+import { Theme, bumpCacheRev, setSettings, useScanInfo, useSettings } from "../settings";
 
 
 function Group({ id, title, index, children }: { id: string; title: string; index: number; children: ReactNode }) {
@@ -92,12 +93,9 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
 
-  const bytes = (b: number) => {
-    const u = b >= 1e9 ? ["gigabyte", 1e9, 1] : b >= 1e6 ? ["megabyte", 1e6, 0] : ["kilobyte", 1e3, 0];
-    return new Intl.NumberFormat(i18n.language, { style: "unit", unit: u[0] as string, maximumFractionDigits: u[2] as number }).format(b / (u[1] as number));
-  };
+  const bytes = (b: number) => fmtBytes(i18n.language, b);
   const clear = async () => {
-    try { await invoke("clear_cache"); setCache(0); setCleared(true); } catch { /* ignore */ }
+    try { await invoke("clear_cache"); setCache(0); setCleared(true); bumpCacheRev(); } catch { /* ignore */ }
   };
   const resetPrefs = async () => {
     try { const v = await invoke<PrefsInfo>("prefs_reset"); setPrefs(v && typeof v === "object" ? v : null); setPrefsReset(true); bumpPrefsRevision(); } catch { /* ignore */ }

@@ -3,10 +3,19 @@ import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { EASE_OUT, SPRING } from "../motion";
 
+/* How many dialogs are open: the keyboard shortcuts of the pages underneath stay quiet while one is. */
+let openDialogs = 0;
+export const isModalOpen = () => openDialogs > 0;
+
 /** A centred dialog over a dimmed, blurred backdrop. `locked` stops it closing while work is running. */
 export default function Modal({ open, onClose, title, children, footer, locked = false, wide = false }: {
   open: boolean; onClose: () => void; title: string; children: ReactNode; footer: ReactNode; locked?: boolean; wide?: boolean;
 }) {
+  useEffect(() => {
+    if (!open) return;
+    openDialogs += 1;
+    return () => { openDialogs -= 1; };
+  }, [open]);
   useEffect(() => {
     if (!open) return;
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape" && !locked) onClose(); };

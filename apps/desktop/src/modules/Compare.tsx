@@ -1,3 +1,4 @@
+import { isModalOpen } from "../components/Modal";
 import { PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { useTranslation } from "react-i18next";
@@ -15,8 +16,8 @@ const FIT: View = { s: 1, x: 0, y: 0 };
 
 type Metric = { key: string; label: string; get: (p: Photo) => number | null };
 
-function Cell({ p, index, st, view, dragging, metrics, set, count, personFilter, onPerson, onDecide, onOpen, onHover, zoomAt, pan, endPan, resetOrZoom }: {
-  p: Photo; index: number; st: State; view: View; dragging: boolean; metrics: Metric[]; set: Photo[]; count: number;
+function Cell({ p, index, st, manual, view, dragging, metrics, set, count, personFilter, onPerson, onDecide, onOpen, onHover, zoomAt, pan, endPan, resetOrZoom }: {
+  p: Photo; index: number; st: State; manual: boolean; view: View; dragging: boolean; metrics: Metric[]; set: Photo[]; count: number;
   personFilter: number | null; onPerson: (id: number | null) => void;
   onDecide: (s: State | null) => void; onOpen: () => void; onHover: (path: string | null) => void;
   zoomAt: (e: { clientX: number; clientY: number; currentTarget: HTMLElement }, factor: number) => void;
@@ -91,8 +92,8 @@ function Cell({ p, index, st, view, dragging, metrics, set, count, personFilter,
             </div>
           </div>
           <div className="cmp2-act">
-            <button className={`cmp2-decide keep ${st === "keep" ? "on" : ""}`} aria-label={t("state.keep")} data-tip={`${t("state.keep")} · P`} onClick={() => onDecide(st === "keep" ? null : "keep")}><Star filled size={17} /></button>
-            <button className={`cmp2-decide reject ${st === "reject" ? "on" : ""}`} aria-label={t("state.reject")} data-tip={`${t("state.reject")} · X`} onClick={() => onDecide(st === "reject" ? null : "reject")}>
+            <button className={`cmp2-decide keep ${st === "keep" ? "on" : ""}`} aria-label={t("state.keep")} data-tip={`${t("state.keep")} · P`} onClick={() => onDecide(st === "keep" && manual ? null : "keep")}><Star filled size={17} /></button>
+            <button className={`cmp2-decide reject ${st === "reject" ? "on" : ""}`} aria-label={t("state.reject")} data-tip={`${t("state.reject")} · X`} onClick={() => onDecide(st === "reject" && manual ? null : "reject")}>
               <svg width="13" height="13" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden><path d="M3 3l6 6M9 3L3 9" /></svg>
             </button>
           </div>
@@ -108,12 +109,14 @@ function Cell({ p, index, st, view, dragging, metrics, set, count, personFilter,
  * pan all of them together, so the same detail (an eye, a hand) can be checked in every frame. The numbers sit on each photo.
  * Left / right step through groups of similar shots, the keys 1-4 choose a photo, P / X decide.
  */
-export default function Compare({ photos, all, scope: scopeProp, personFilter, onPerson, selected, decisions, onSelect, onDecide, onOpen }: {
+export default function Compare({ photos, all, scope: scopeProp, personFilter, onPerson, selected, decisions, onSelect, onDecide, onOpen, enabled = true }: {
   photos: Photo[]; all: Photo[];
   /** What counts as "the same shot": a burst of look-alikes, or (when a scene is picked in the filter) the whole scene. */
   scope: "group" | "scene";
   personFilter: number | null; onPerson: (id: number | null) => void; selected: string | null; decisions: Map<string, Decision>;
   onSelect: (path: string) => void; onDecide: (path: string, s: State | null) => void; onOpen: (path: string) => void;
+  /** false while another page is in front or a viewer / dialog is open: the keys belong to them then */
+  enabled?: boolean;
 }) {
   const { t } = useTranslation();
   const cur = photos.find((p) => p.path === selected) ?? photos[0];
@@ -233,9 +236,10 @@ export default function Compare({ photos, all, scope: scopeProp, personFilter, o
 
   const hover = useRef<string | null>(null);
   useEffect(() => {
+    if (!enabled) return;
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement).tagName;
-      if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || e.metaKey || e.ctrlKey) return;
+      if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || e.metaKey || e.ctrlKey || isModalOpen()) return;
       if (e.key === "ArrowRight") { e.preventDefault(); jump(1); }
       else if (e.key === "ArrowLeft") { e.preventDefault(); jump(-1); }
       else if (e.key === "ArrowDown" || e.key === "Tab") { e.preventDefault(); cycle(1); }
@@ -244,12 +248,14 @@ export default function Compare({ photos, all, scope: scopeProp, personFilter, o
       else if (hover.current && ["p", "r", "x"].includes(e.key.toLowerCase())) {
         // The photo under the pointer is the target of the keys.
         const path = hover.current, target = ({ p: "keep", r: "review", x: "reject" } as const)[e.key.toLowerCase() as "p" | "r" | "x"];
-        onDecide(path, decisions.get(path)?.state === target ? null : target);
+        // pressing the key of a state the app merely suggested confirms it; pressing it again on one you marked clears the mark
+        const d = decisions.get(path);
+        onDecide(path, d?.state === target && d.manual ? null : target);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [jump, apply, cycle, onDecide, decisions]);
+  }, [enabled, jump, apply, cycle, onDecide, decisions]);
 
   // Best-fit arrangement: the number of columns that lets the photos be largest in the space available.
   const stage = useRef<HTMLDivElement>(null);
@@ -311,7 +317,7 @@ export default function Compare({ photos, all, scope: scopeProp, personFilter, o
       </button>
       <div className="cmp2-stage" ref={stage} style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${Math.ceil(set.length / cols)}, minmax(0, 1fr))` }}>
         {set.map((p, i) => (
-          <Cell key={p.path} p={p} index={i} st={decisions.get(p.path)?.state ?? "review"} view={view} dragging={dragging || !glide} metrics={metrics} set={set} count={set.length} personFilter={personFilter} onPerson={onPerson}
+          <Cell key={p.path} p={p} index={i} st={decisions.get(p.path)?.state ?? "review"} manual={!!decisions.get(p.path)?.manual} view={view} dragging={dragging || !glide} metrics={metrics} set={set} count={set.length} personFilter={personFilter} onPerson={onPerson}
             onDecide={(s) => onDecide(p.path, s)} onOpen={() => onOpen(p.path)} onHover={(path) => { hover.current = path; }}
             zoomAt={zoomAt} pan={pan} endPan={endPan} resetOrZoom={resetOrZoom} />
         ))}
