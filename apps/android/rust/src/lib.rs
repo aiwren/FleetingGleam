@@ -313,4 +313,63 @@ mod tests {
         assert!(e.call("probe_folder".into(), "not json".into()).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    /// 两端一致性的固定用例（路线图阶段 B 第 6 步）：和核心库的同名测试比同一份基准。在 Mac 上 `cargo test -p fleetinggleam-android` 跑一次，
+    /// 在 Android（arm64）上由 apps/android/scripts/consistency.sh 编成测试程序推到手机 / 模拟器上跑——两边都通过，才说明分组与取舍两端一致。
+    #[test]
+    fn consistency_matches_the_golden() {
+        let work = std::env::temp_dir().join(format!("fg-consistency-android-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&work);
+        let r = fg_core::consistency::check(&work, &work.join("no-models"), fg_core::consistency::GOLDEN, None);
+        let _ = std::fs::remove_dir_all(&work);
+        if let Err(e) = r { panic!("没有模型时和基准不一致：\n{e}"); }
+    }
+
+    /// 装了标准档模型时（`FG_MODELS` 指向模型文件夹；没设就跳过）。
+    #[test]
+    fn consistency_with_models_matches_the_golden() {
+        let Ok(models) = std::env::var("FG_MODELS") else { return };
+        let work = std::env::temp_dir().join(format!("fg-consistency-android-m-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&work);
+        let r = fg_core::consistency::check(&work, std::path::Path::new(&models), fg_core::consistency::GOLDEN_MODELS, None);
+        let _ = std::fs::remove_dir_all(&work);
+        if let Err(e) = r { panic!("装了标准档模型时和基准不一致：\n{e}"); }
+    }
+
+    /// 我的设置与喜好两端互导：Mac 的界面（Tauri）用 `taste_export` 写文件、Android 用 `taste_export_bytes` 给字节交给系统存；
+    /// 两种都是同一份 `fleetinggleam-taste/1`。这里一个引擎扮 Mac（写文件、带 Mac 的设置字段），另一个扮 Android（按字节读），再反过来。
+    #[test]
+    fn taste_files_go_both_ways_between_mac_and_android() {
+        let root = std::env::temp_dir().join(format!("fg-taste-2way-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let engine = |side: &str| {
+            let d = root.join(side);
+            let p = |x: &str| d.join(x).to_string_lossy().into_owned();
+            let config = json!({ "data": p("data"), "thumbs": p("thumbs"), "models": p("models"), "scratch": p("scratch"), "version": side }).to_string();
+            FgEngine::new(config, Arc::new(Collect(Mutex::new(Vec::new())))).unwrap()
+        };
+        let (mac, android) = (engine("mac"), engine("android"));
+        // Mac：一个叫"街拍"的风格，桌面端前端存的设置（camelCase、眼睛用 Vision）
+        mac.call("style_create".into(), json!({ "name": "街拍" }).to_string()).unwrap();
+        let mac_settings = json!({ "compute": "auto", "theme": "dark", "learn": false, "quality": "high", "search": true, "customStyles": true, "eyeMethod": "vision", "tier": "high", "tierRev": 2 });
+        let file = root.join("fleetinggleam-taste.json").to_string_lossy().into_owned();
+        mac.call("taste_export".into(), json!({ "path": file, "settings": mac_settings }).to_string()).unwrap();
+        // Android：系统选择器给的是字节
+        let bytes = std::fs::read(&file).unwrap();
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        let back: Value = serde_json::from_str(&android.call("taste_import_bytes".into(), json!({ "base64": b64 }).to_string()).unwrap()).unwrap();
+        assert_eq!(back[1], mac_settings, "设置原样带过来（哪些采用由界面决定：Android 只取各平台通用的几项，眼睛固定 MediaPipe）");
+        let styles: Value = serde_json::from_str(&android.call("styles_list".into(), "{}".into()).unwrap()).unwrap();
+        assert!(styles.as_array().unwrap().iter().any(|s| s["name"] == "街拍"), "风格带过来了：{styles}");
+        // 反过来：Android 导出（字节）→ Mac 从文件导入
+        let android_settings = json!({ "theme": "light", "learn": true, "eyeMethod": "mediapipe", "tier": "fast" });
+        let x: Value = serde_json::from_str(&android.call("taste_export_bytes".into(), json!({ "settings": android_settings }).to_string()).unwrap()).unwrap();
+        let file2 = root.join("from-android.json");
+        std::fs::write(&file2, base64::engine::general_purpose::STANDARD.decode(x["base64"].as_str().unwrap()).unwrap()).unwrap();
+        let back2: Value = serde_json::from_str(&mac.call("taste_import".into(), json!({ "path": file2.to_string_lossy() }).to_string()).unwrap()).unwrap();
+        assert_eq!(back2[1], android_settings);
+        let raw: Value = serde_json::from_slice(&std::fs::read(&file2).unwrap()).unwrap();
+        assert_eq!(raw["format"], "fleetinggleam-taste/1");
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

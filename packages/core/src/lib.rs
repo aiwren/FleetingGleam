@@ -9,6 +9,7 @@
 pub mod analyze;
 pub mod cache;
 pub mod colorsig;
+pub mod consistency;
 pub mod decide;
 pub mod engine;
 pub mod facepipe;

@@ -144,7 +144,11 @@ Android 没有 Apple Vision，两端要一样就得两端用同样的东西：
    - 把淘汰的照片移走（"只移我手动淘汰的 / 包括系统建议的"，和 Mac 一样）：核心库先处理 NAS 上的（移进共享里的回收文件夹）；它交回来的本机照片里，相册里的用 `MediaStore.createTrashRequest` 一次请求系统回收站（系统弹确认框，30 天内能在相册的回收站恢复，拒绝就当没做）；从网盘等选来的镜像文件夹里的，在原处移进根目录的「.FleetingGleam Recycle Bin/日期」（`DocumentsContract.moveDocument`，不支持就复制再删），本机副本随之删掉。为此镜像文件夹现在要读写两种持久权限。已不在的照片从项目的改判里忘掉。
    - 修了一处：整理完重新载入项目时，照片列表和上次一模一样，StateFlow 不再发出，取舍没有重算（全显示 0）；现在相同时手动重算。
    - 已在模拟器上验证：导出到相册（文件在 Pictures/惊鸿/Burst、媒体库已收录）、系统回收站（确认框、文件移走、项目少一张）。没验证的：镜像文件夹的原处回收和导出到网盘文件夹（模拟器上本机文件夹都换得出路径，走不到这条路），NAS 的回收（核心库与 Mac 共用、Mac 端已验证）。
-6. [ ] **一致性测试**：同一组照片两端跑，决策与分组必须一致，作为 CI 固定用例；设置与喜好文件两端互导。
+6. [x] **一致性测试**（完成 2026-10-21）：同一组照片两端跑，决策与分组必须一致，作为 CI 固定用例；设置与喜好文件两端互导。
+   - 固定用例在 `packages/core/src/consistency.rs`：由代码画出 11 张照片（三组连拍——清晰的、挪了一点的、手抖的、过暗 / 过亮的——加两张单独的场景），按 Android 那条路分析（不注册任何平台能力、只用 CPU、标准档），记下每张的分组、场景、取舍、组内最佳与综合分，和仓库里的基准比：前四项必须一模一样，分数差不超过 0.02。分组和场景记成"组里名字最小的那张"，不依赖编号。
+   - 两份基准：`consistency.golden.json`（没有模型，CI 的 `cargo test --lib` 每次都跑）和 `consistency.models.golden.json`（装了标准档 CLIP ViT-B/32 与美学头；`FG_MODELS=apps/desktop/models cargo test -p fleetinggleam-core consistency -- --ignored`）。Android 绑定 crate 有同名测试比同一份基准；`apps/android/scripts/consistency.sh [模型文件夹]` 把它编成 arm64 测试程序推到手机 / 模拟器上跑。2026-10-21 在 Mac（arm64）与 Android 模拟器（arm64，API 36）上两份都通过。更新基准：`FG_WRITE_GOLDEN=1` 再跑一遍并说明原因。
+   - 这个用例比的是**同一条可移植的路**在两种系统、两套编译下是否一致；Mac 端默认还会用 Apple Vision 的美学分与人脸（A4 之前两端的分数本来就不同），那部分不在这个用例里——等 A4 把美学分蒸馏成可移植的头、人脸统一 MediaPipe 之后，Mac 的默认路就是这条路。用例里没有人脸，人脸流水线（Android 的 UltraFace + MediaPipe 与 Mac 的 Vision）的一致性另见第 2 步的 80 张对比。
+   - 设置与喜好两端互导：两端都是 `fleetinggleam-taste/1`（Mac 写文件，Android 经系统选择器给字节）。`taste_files_go_both_ways_between_mac_and_android` 测 Mac 导出 → Android 导入、Android 导出 → Mac 导入：设置原样带过去、命名风格带过去。采用哪些设置由界面决定：Android 只取各平台通用的几项（外观、学习、搜索、多风格、质量），眼睛固定 MediaPipe，模型档位与硬件照本机。模拟器上也手动导出、再导入过一次。
 
 ## 不做的事
 

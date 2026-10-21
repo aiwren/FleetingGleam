@@ -1,0 +1,90 @@
+[
+  {
+    "name": "a1",
+    "group": "a1",
+    "scene": "a1",
+    "state": "review",
+    "best": true,
+    "score": 0.614
+  },
+  {
+    "name": "a2",
+    "group": "a1",
+    "scene": "a2",
+    "state": "reject",
+    "best": false,
+    "score": 0.566
+  },
+  {
+    "name": "a3",
+    "group": "a1",
+    "scene": "a3",
+    "state": "reject",
+    "best": false,
+    "score": 0.255
+  },
+  {
+    "name": "a4",
+    "group": "a1",
+    "scene": "a4",
+    "state": "reject",
+    "best": false,
+    "score": 0.356
+  },
+  {
+    "name": "b1",
+    "group": "a1",
+    "scene": "b1",
+    "state": "reject",
+    "best": false,
+    "score": 0.279
+  },
+  {
+    "name": "b2",
+    "group": "b2",
+    "scene": "b2",
+    "state": "reject",
+    "best": true,
+    "score": 0.255
+  },
+  {
+    "name": "b3",
+    "group": "b2",
+    "scene": "b3",
+    "state": "reject",
+    "best": false,
+    "score": 0.255
+  },
+  {
+    "name": "c1",
+    "group": "c1",
+    "scene": "c1",
+    "state": "review",
+    "best": false,
+    "score": 0.559
+  },
+  {
+    "name": "c2",
+    "group": "c1",
+    "scene": "c2",
+    "state": "reject",
+    "best": false,
+    "score": 0.536
+  },
+  {
+    "name": "d1",
+    "group": "c1",
+    "scene": "d1",
+    "state": "reject",
+    "best": true,
+    "score": 0.568
+  },
+  {
+    "name": "e1",
+    "group": "c1",
+    "scene": "e1",
+    "state": "reject",
+    "best": false,
+    "score": 0.255
+  }
+]
