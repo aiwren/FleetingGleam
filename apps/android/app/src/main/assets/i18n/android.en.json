@@ -28,6 +28,18 @@
    "privacyBody": "Photos are processed on this phone only and are never uploaded.",
    "projectMade": "Project created; open it under Cull.",
    "modelsBody": "The models are downloaded to this phone only when needed and run fully offline afterwards: the same models and manifest as the Mac app."
+  },
+  "cull": {
+   "hint": "Tap a photo to select it, then ★ to keep or ✕ to reject; in Single view push up to keep and pull down to reject. Undo is in the bar below.",
+   "undo": "Undo"
+  },
+  "models": {
+   "background": "Download in background",
+   "channel": "Model downloads",
+   "downloading": "Downloading {{name}}",
+   "done": "{{name}} downloaded",
+   "bundle": "the analysis models",
+   "pill": "Downloading {{pct}}%"
   }
  },
  "models": {

@@ -227,7 +227,13 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                 packs.forEach { p ->
                     SettingRow(t("models.name.${p.id}"), "${if (p.installed) t("models.have") else t("models.none") + if (p.bytes > 0) " · " + fmtBytes(p.bytes) else ""} · ${t("models.desc.${p.id}")}") {
                         if (p.installed) FgButton(t("models.remove"), { scope.launch { runCatching { Models.remove(p.id) }; Strategy.release(p.id) } }, small = true)
-                        else FgButton(t("models.get"), { scope.launch { if (Models.ensurePack(p.id) != Answer.Cancelled) Strategy.adopt(p.id) } }, small = true)
+                        else {
+                            // 正在（后台）下载的这一包：显示进度，点一下把下载对话框叫回来
+                            val gate by Models.gate.collectAsState()
+                            val g = gate?.takeIf { it.phase == "downloading" && (it.id == p.id || it.ids?.contains(p.id) == true) }
+                            if (g != null) FgButton("${if (g.total > 0) Math.round(g.done * 100f / g.total) else 0}%", { Models.showGate() }, small = true)
+                            else FgButton(t("models.get"), { scope.launch { if (Models.ensurePack(p.id) != Answer.Cancelled) Strategy.adopt(p.id) } }, small = true)
+                        }
                     }
                 }
                 SettingRow(t("settings.cache"), t("settings.cacheDesc")) {

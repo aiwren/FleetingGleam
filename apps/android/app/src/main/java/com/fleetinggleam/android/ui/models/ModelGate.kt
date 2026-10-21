@@ -10,6 +10,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import kotlinx.coroutines.launch
 import androidx.compose.ui.unit.dp
 import com.fleetinggleam.android.core.Models
 import com.fleetinggleam.android.core.fmtBytes
@@ -25,10 +26,14 @@ import com.fleetinggleam.android.ui.theme.Type
 fun ModelGate() {
     val c = LocalFg.current
     val g by Models.gate.collectAsState()
-    val gate = g ?: return
+    val gate = g?.takeIf { !it.hidden } ?: return
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     val pct = if (gate.total > 0) minOf(100, Math.round(gate.done * 100f / gate.total)) else 0
     FgDialog(true, onDismiss = { Models.cancelGate() }, title = t("models.ask.${gate.id}"), locked = gate.phase == "downloading", footer = {
         FgButton(t("organize.cancel"), { Models.cancelGate() })
+        // 下载转到后台：对话框收起，通知栏里看进度（先要通知权限）
+        if (gate.phase == "downloading") FgButton(t("android.models.background"), { scope.launch { com.fleetinggleam.android.core.Pickers.notificationPermission(ctx); Models.hideGate() } }, primary = true)
         if (gate.phase == "ask") FgButton(t("models.download", "size" to fmtBytes(gate.bytes)), { Models.startDownload() }, primary = true)
         if (gate.phase == "error") FgButton(t("models.retry"), { Models.startDownload() }, primary = true)
     }) {

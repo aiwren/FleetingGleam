@@ -44,7 +44,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
     sourceSets {
         getByName("main") {
@@ -122,11 +121,11 @@ tasks.named("preBuild") { dependsOn(uniffiBindgen, copyLibcxx, exportI18n) }
 dependencies {
     implementation("androidx.core:core-ktx:1.17.0")
     implementation("androidx.activity:activity-compose:1.11.0")
-    implementation("androidx.compose.ui:ui:1.9.3")
-    implementation("androidx.compose.foundation:foundation:1.9.3")
+    implementation("androidx.compose.ui:ui:1.10.3")
+    implementation("androidx.compose.foundation:foundation:1.10.3")
     implementation("androidx.compose.material3:material3:1.4.0")
-    implementation("androidx.compose.ui:ui-tooling-preview:1.9.3")
-    implementation("androidx.compose.animation:animation:1.9.3")
+    implementation("androidx.compose.ui:ui-tooling-preview:1.10.3")
+    implementation("androidx.compose.animation:animation:1.10.3")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.4")
     implementation("androidx.lifecycle:lifecycle-process:2.9.4")
     // 照片墙的缩略图：异步解码、内存与磁盘缓存、按显示尺寸缩小
@@ -134,11 +133,16 @@ dependencies {
     // 系统文件选择器选的文件夹（SAF）
     implementation("androidx.documentfile:documentfile:1.1.0")
     // 和核心库之间的 JSON（方法的参数与结果、事件载荷、projects.json）
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     // 悬浮标签栏的玻璃材质：对后面的内容做实时模糊（Android 12+；更早的系统退为半透明）
     implementation("dev.chrisbanes.haze:haze:1.6.10")
     implementation("dev.chrisbanes.haze:haze-materials:1.6.10")
+    // 液态玻璃：对背后内容做透镜折射、高光与模糊（AGSL，Android 13+；Apache-2.0）
+    implementation("io.github.kyant0:backdrop:1.0.6")
     // UniFFI 生成的 Kotlin 绑定通过 JNA 调 Rust
     implementation("net.java.dev.jna:jna:5.17.0@aar")
 }
+
+// Kotlin 2.3 起 jvmTarget 只能在 compilerOptions 里设
+kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }

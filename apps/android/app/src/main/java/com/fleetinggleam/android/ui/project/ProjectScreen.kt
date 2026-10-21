@@ -90,10 +90,17 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
     var settingsOpen by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
 
+    // 选片界面的状态：换项目整个换一份
+    val cull = remember(project.id) { CullState() }
+    val sceneText by com.fleetinggleam.android.core.Scenes.texts.collectAsState()
+    val data = rememberCullData(cull, photos, decisions, project.sort ?: "group", sceneText)
+    SearchEffects(project, cull, phase == Phase.Done)
+
     val addFolder: () -> Unit = { scope.launch { Actions.pickFolder()?.let { Session.addFolder(it) } } }
     val start: () -> Unit = { scope.launch { Pickers.notificationPermission(ctx); Session.startScan() } }
     val scanning = phase == Phase.Scanning
 
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         // ---- 工具栏：← 项目 · 名字 · 数量；右边：重新评估、项目设置
         Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -109,7 +116,11 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
                 }
             }
             if (phase == Phase.Done && settings.learn && project.learn != false && dirty > 0) FgButton(t("cull.reeval"), { Session.reevaluate() }, small = true, modifier = Modifier.padding(end = 6.dp))
+            if (phase == Phase.Done && project.search != false) IconBtn(Icons.SEARCH, t("search.label"), { cull.searchOpen = !cull.searchOpen; if (!cull.searchOpen) cull.query = "" }, on = cull.searchOpen, plain = true)
             IconBtn(Icons.SLIDERS, t("pset.settings"), { settingsOpen = true }, enabled = !scanning, plain = true)
+        }
+        AnimatedVisibility(phase == Phase.Done && cull.searchOpen, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+            SearchField(cull, Modifier.padding(start = 12.dp, end = 12.dp, bottom = 8.dp))
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(c.line))
 
@@ -163,11 +174,15 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
                 when (phase) {
                     Phase.Ready -> ReadyStage(project, uncached, bytes, eta, files.filter { !it.cached }, previews, onStart = start, onAddFolder = addFolder, onRemoveFolder = { Session.removeFolder(it) })
                     Phase.Scanning -> ScanningWall()
-                    Phase.Done -> Culling(project, onOpenStyles)
+                    Phase.Done -> Culling(project, cull, data, onOpenStyles)
                     else -> {}
                 }
             }
         }
+    }
+
+    // 大图盖在整页上面（连工具栏一起）
+    if (phase == Phase.Done && cull.viewer && cull.selected != null) Viewer(cull, data, decisions) { path, st -> decideIn(cull, data, path, st) }
     }
 
     ProjectSettings(settingsOpen, project, onClose = { settingsOpen = false }, onAddFolder = addFolder, onRemoveFolder = { Session.removeFolder(it) },

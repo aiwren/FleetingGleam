@@ -92,6 +92,26 @@ fun ProjectHome(onOpenStyles: () -> Unit) {
         return
     }
     val list = if (view == "projects") live else bin
+    // 全局搜索（桌面端一样：搜索模型在时才出现）：所有项目的照片，按项目分组，点一张打开那个项目并选中它
+    val search = remember { com.fleetinggleam.android.ui.project.CullState() }
+    val index by com.fleetinggleam.android.core.Search.index.collectAsState()
+    val allFolders = remember(live) { live.filter { it.search != false }.flatMap { it.folders } }
+    LaunchedEffect(allFolders, search.searchRev) { com.fleetinggleam.android.core.Search.keep(allFolders, search.searchRev) }
+    LaunchedEffect(search.query, allFolders) {
+        val q = search.query.trim()
+        if (q.isEmpty() || allFolders.isEmpty()) { search.rawHits = null; return@LaunchedEffect }
+        delay(250)
+        search.rawHits = runCatching { com.fleetinggleam.android.core.Search.photos(allFolders, q) }.getOrDefault(emptyList())
+    }
+    val searching = view == "projects" && search.query.trim().isNotEmpty()
+    val groups = remember(search.rawHits, live) {
+        val by = LinkedHashMap<String, MutableList<com.fleetinggleam.android.core.Hit>>()
+        for (h in search.rawHits ?: emptyList()) {
+            val p = live.firstOrNull { pr -> pr.folders.any { f -> h.path.startsWith(f.trimEnd('/') + "/") } } ?: continue
+            by.getOrPut(p.id) { mutableListOf() }.add(h)
+        }
+        live.filter { by.containsKey(it.id) }.map { it to by[it.id]!! }
+    }
     LazyVerticalGrid(
         columns = GridCells.Adaptive(160.dp),
         modifier = Modifier.fillMaxSize().statusBarsPadding(),
@@ -112,9 +132,38 @@ fun ProjectHome(onOpenStyles: () -> Unit) {
                     if (view == "bin") FgButton(if (armed == "all") t("bin.emptyConfirm") else t("bin.emptyAll"), { if (armed == "all") { Projects.emptyTrash(); armed = null } else armed = "all" }, small = true, on = armed == "all")
                     else FgButton(t("nav.styles"), onOpenStyles, small = true)
                 }
+                if (view == "projects" && index.available && allFolders.isNotEmpty())
+                    com.fleetinggleam.android.ui.project.SearchField(search, Modifier.padding(top = 14.dp), placeholder = t("search.globalPlaceholder"), autoFocus = false)
                 if (status.saveError != null) Text(t("cull.saveFailed", "error" to status.saveError), style = Type.small.copy(color = c.ink), modifier = Modifier.padding(top = 12.dp))
                 if (status.loadError == "corrupt") Text(t("cull.loadCorrupt"), style = Type.small.copy(color = c.ink), modifier = Modifier.padding(top = 12.dp))
             }
+        }
+        if (searching) {
+            if (search.rawHits != null && groups.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
+                Column(Modifier.padding(vertical = 24.dp)) {
+                    Text(t("search.none", "q" to search.query.trim()), style = Type.bodyStrong.copy(color = c.ink))
+                    Text(t("search.noneHint"), style = Type.rowDesc.copy(color = c.ash), modifier = Modifier.padding(top = 4.dp))
+                }
+            }
+            groups.forEach { (p, hs) ->
+                item(span = { GridItemSpan(maxLineSpan) }, key = "sg-${p.id}") {
+                    Column(Modifier.animateItem()) {
+                        Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.padding(top = 8.dp, bottom = 8.dp)) {
+                            Text(p.name, style = Type.heading.copy(color = c.ink))
+                            Text(t("search.results", "count" to hs.size), style = Type.monoSmall.copy(color = c.ash), modifier = Modifier.padding(start = 8.dp, bottom = 2.dp))
+                        }
+                        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            hs.take(60).forEach { h ->
+                                coil3.compose.AsyncImage(java.io.File(h.thumb), h.name, contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                    modifier = Modifier.height(96.dp).width((96f * h.width / h.height.coerceAtLeast(1)).coerceIn(56f, 200f).dp)
+                                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                                        .clickable { com.fleetinggleam.android.core.Search.setPendingSelect(h.path); search.query = ""; Projects.setActive(p.id) })
+                            }
+                        }
+                    }
+                }
+            }
+            return@LazyVerticalGrid
         }
         items(list, key = { it.id }) { p ->
             val i = list.indexOf(p)

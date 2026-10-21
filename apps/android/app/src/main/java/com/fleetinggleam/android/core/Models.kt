@@ -7,6 +7,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import com.fleetinggleam.android.ui.components.Toasts
 
 /** 模型包的名字（和桌面端 src/models.ts 的 PackId 一样，多一个 Android 才用的 "detect"）。 */
 object PackIds {
@@ -27,6 +28,8 @@ data class Gate(
     val total: Long = 0,
     val error: String? = null,
     val resolve: CompletableDeferred<Answer>,
+    /** 下载转到后台了：对话框收起，通知栏和底部一粒小胶囊显示进度；等它的那件事（分析、搜索…）下载完照样接着做。 */
+    val hidden: Boolean = false,
 )
 
 /**
@@ -43,7 +46,10 @@ object Models {
     /** Bytes of the packs of a bundle that are already down, while the next one is fetched. */
     @Volatile private var base = 0L
 
-    fun init() {
+    private var app: android.content.Context? = null
+
+    fun init(ctx: android.content.Context) {
+        app = ctx.applicationContext
         Core.listen("model-progress") { raw ->
             val p = runCatching { Fg.json.decodeFromString<ModelProgress>(raw) }.getOrNull() ?: return@listen
             val g = _gate.value ?: return@listen
@@ -98,6 +104,8 @@ object Models {
         val g = _gate.value ?: return
         _gate.value = g.copy(phase = "downloading", done = 0, error = null)
         val ids = g.ids ?: listOf(g.id)
+        // 下载期间挂一个前台服务：切到别的应用、锁屏，下载也不会被系统停掉
+        app?.let { com.fleetinggleam.android.service.DownloadService.start(it) }
         // the packs one after the other; the progress of the one being fetched is added to the sizes of those already done
         scope.launch {
             try {
@@ -109,7 +117,9 @@ object Models {
                 }
                 base = 0
                 refresh()
+                val wasHidden = _gate.value?.hidden == true
                 _gate.value = null
+                if (wasHidden) Toasts.show(t("android.models.done", "name" to t(if (g.ids != null) "android.models.bundle" else "models.name.${g.id}")))
                 g.resolve.complete(Answer.Downloaded)
             } catch (e: Exception) {
                 base = 0
@@ -117,11 +127,20 @@ object Models {
                     _gate.value = null
                     g.resolve.complete(Answer.Cancelled)
                 } else {
-                    _gate.value = g.copy(phase = "error", error = e.message)
+                    // 出错了：后台的也把对话框拿回来，说清楚、可以重试
+                    _gate.value = (_gate.value ?: g).copy(phase = "error", error = e.message, hidden = false)
                 }
+            } finally {
+                app?.let { com.fleetinggleam.android.service.DownloadService.stop(it) }
             }
         }
     }
+
+    /** 下载转到后台（对话框收起）。 */
+    fun hideGate() { _gate.value?.let { if (it.phase == "downloading") _gate.value = it.copy(hidden = true) } }
+
+    /** 从底部的小胶囊点回来：再显示对话框。 */
+    fun showGate() { _gate.value?.let { _gate.value = it.copy(hidden = false) } }
 
     /** Closes the dialog (before or during a download) and answers "cancelled". */
     fun cancelGate() {

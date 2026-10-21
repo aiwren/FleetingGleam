@@ -73,6 +73,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.fleetinggleam.android.core.Photo
@@ -138,6 +140,8 @@ fun Wall(
     state: LazyListState,
     contentPadding: PaddingValues,
     header: (@Composable () -> Unit)? = null,
+    /** 选中的那张换了、又不是点出来的（撤销、单张里换的）：把它所在的那一行滚到眼前（已经在屏幕上就不动）。 */
+    reveal: String? = null,
     tile: @Composable (index: Int, w: Dp, h: Dp) -> Unit,
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -145,6 +149,15 @@ fun Wall(
         val pad = with(density) { (contentPadding.calculateLeftPadding(androidx.compose.ui.unit.LayoutDirection.Ltr) + contentPadding.calculateRightPadding(androidx.compose.ui.unit.LayoutDirection.Ltr)).value }
         val width = maxWidth.value - pad
         val rows = remember(items, width, layout) { if (width <= 0f) emptyList() else if (layout == "grid") grid(items, width, 110f) else justify(items, width, 150f) }
+        androidx.compose.runtime.LaunchedEffect(reveal, rows) {
+            val key = reveal ?: return@LaunchedEffect
+            val r = rows.indexOfFirst { row -> (row.from until row.to).any { items[it].key == key } }
+            if (r < 0) return@LaunchedEffect
+            val idx = r + if (header != null) 1 else 0
+            val visible = state.layoutInfo.visibleItemsInfo
+            val inView = visible.firstOrNull { it.index == idx }?.let { it.offset >= 0 && it.offset + it.size <= state.layoutInfo.viewportEndOffset - 120 } == true
+            if (!inView) state.animateScrollToItem(idx, -200)
+        }
         LazyColumn(state = state, contentPadding = contentPadding, verticalArrangement = Arrangement.spacedBy(GAP.dp), modifier = Modifier.fillMaxSize()) {
             if (header != null) item(key = "head") { header() }
             items(rows, key = { "${items.getOrNull(it.from)?.key}" + "#${it.to - it.from}" }) { r ->
@@ -317,14 +330,15 @@ fun Tile(
         }
         if (photo != null) {
             PhotoTags(photo, Modifier.align(Alignment.TopStart).padding(8.dp))
-            if (showScore || selected) Text(
+            // 选中时小格子的分数会被坞挡住：只在格子够宽时显示
+            if (showScore && !selected || selected && w >= 210.dp) Text(
                 "${pct(photo.score)}", style = Type.monoSmall.copy(color = Color.White),
                 modifier = Modifier.align(Alignment.BottomStart).padding(8.dp).clip(RoundedCornerShape(5.dp)).background(Color(0xA30E0E12)).border(1.dp, Color(0x2EFFFFFF), RoundedCornerShape(5.dp)).padding(horizontal = 6.dp, vertical = 1.dp),
             )
             Marks(state, changedTo, changeN, reveal, index, selected)
             if (selected && interactive) {
                 FocusFrame()
-                Dock(state, manual, Modifier.align(Alignment.BottomCenter).padding(bottom = 9.dp), onKeep = { onDecide(path, if (state == "keep" && manual) null else "keep") }, onReject = { onDecide(path, if (state == "reject" && manual) null else "reject") }, onOpen = { onOpen(path) })
+                Dock(state, manual, w, Modifier.align(Alignment.BottomCenter).padding(bottom = if (w < 150.dp) 6.dp else 9.dp), onKeep = { onDecide(path, if (state == "keep" && manual) null else "keep") }, onReject = { onDecide(path, if (state == "reject" && manual) null else "reject") }, onOpen = { onOpen(path) })
             }
         }
     }
@@ -443,25 +457,29 @@ private fun FocusFrame() {
 
 /** 选中的照片下方的玻璃小坞：留下（金星）/ 淘汰（叉）/ 放大。再点一次已有的手动记号就交还系统的建议。 */
 @Composable
-private fun Dock(state: String, manual: Boolean, modifier: Modifier, onKeep: () -> Unit, onReject: () -> Unit, onOpen: () -> Unit) {
+private fun Dock(state: String, manual: Boolean, tileW: Dp, modifier: Modifier, onKeep: () -> Unit, onReject: () -> Unit, onOpen: () -> Unit) {
+    // 小格子用小一号的坞；很窄时不放"放大"（再点一下选中的照片就是放大）
+    val small = tileW < 170.dp
+    val btn = if (small) 28.dp else 34.dp
+    val zoom = tileW >= 120.dp
     val c = LocalFg.current
     val a = remember { Animatable(0f) }
     LaunchedEffect(Unit) { a.animateTo(1f, spring(dampingRatio = 0.8f, stiffness = 380f)) }
     Row(
         modifier.graphicsLayer { alpha = a.value; translationY = (1f - a.value) * 10.dp.toPx(); scaleX = 0.94f + 0.06f * a.value; scaleY = scaleX }
-            .clip(CircleShape).background(Color(0x8F101014)).border(1.dp, Color(0x2EFFFFFF), CircleShape).padding(4.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+            .clip(CircleShape).background(Color(0x8F101014)).border(1.dp, Color(0x2EFFFFFF), CircleShape).padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        DockBtn(on = state == "keep", tint = c.gleam, label = if (state == "keep" && manual) t("mark.clear") else t("mark.keepAct"), onClick = onKeep) { Star(true, 18.dp) }
-        DockBtn(on = state == "reject", tint = Color.White, label = if (state == "reject" && manual) t("mark.clear") else t("mark.rejectAct"), onClick = onReject) { FgIcon("M3 3l6 6M9 3L3 9", size = 13.dp, box = 12f, stroke = 1.7f, color = Color.White) }
-        DockBtn(on = false, tint = Color.White, label = t("inspector.zoomLabel"), onClick = onOpen) { FgIcon("M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5L9 7M2.5 13.5L7 9", size = 14.dp, stroke = 1.5f, color = Color.White) }
+        DockBtn(btn, on = state == "keep", tint = c.gleam, label = if (state == "keep" && manual) t("mark.clear") else t("mark.keepAct"), onClick = onKeep) { Star(true, if (small) 14.dp else 16.dp) }
+        DockBtn(btn, on = state == "reject", tint = Color.White, label = if (state == "reject" && manual) t("mark.clear") else t("mark.rejectAct"), onClick = onReject) { FgIcon("M3 3l6 6M9 3L3 9", size = if (small) 10.dp else 12.dp, box = 12f, stroke = 1.7f, color = Color.White) }
+        if (zoom) DockBtn(btn, on = false, tint = Color.White, label = t("inspector.zoomLabel"), onClick = onOpen) { FgIcon("M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5L9 7M2.5 13.5L7 9", size = if (small) 11.dp else 13.dp, stroke = 1.5f, color = Color.White) }
     }
 }
 
 @Composable
-private fun DockBtn(on: Boolean, tint: Color, label: String, onClick: () -> Unit, icon: @Composable () -> Unit) {
+private fun DockBtn(size: Dp, on: Boolean, tint: Color, label: String, onClick: () -> Unit, icon: @Composable () -> Unit) {
     Box(
-        Modifier.size(38.dp).clip(CircleShape).background(if (on) tint.copy(alpha = 0.26f) else Color.Transparent).clickable(onClick = onClick)
+        Modifier.size(size).semantics { contentDescription = label }.clip(CircleShape).background(if (on) tint.copy(alpha = 0.26f) else Color.Transparent).clickable(onClick = onClick)
             .then(Modifier.drawWithContent { drawContent() }),
         contentAlignment = Alignment.Center,
     ) { icon() }

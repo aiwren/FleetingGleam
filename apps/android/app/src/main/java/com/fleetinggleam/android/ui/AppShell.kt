@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -40,6 +42,14 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import com.fleetinggleam.android.ui.components.glass
+import com.fleetinggleam.android.ui.components.glassStyle
+import com.fleetinggleam.android.ui.components.LocalBackdrop
+import com.kyant.backdrop.backdrops.layerBackdrop
+import kotlinx.coroutines.launch
 import com.fleetinggleam.android.core.Projects
 import com.fleetinggleam.android.core.Session
 import com.fleetinggleam.android.core.rememberLang
@@ -56,12 +66,6 @@ import com.fleetinggleam.android.ui.settings.StylesScreen
 import com.fleetinggleam.android.ui.theme.LocalFg
 import com.fleetinggleam.android.ui.theme.Motion
 import com.fleetinggleam.android.ui.theme.Type
-import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.hazeEffect
-import dev.chrisbanes.haze.hazeSource
-import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
-import dev.chrisbanes.haze.materials.HazeMaterials
-import dev.chrisbanes.haze.rememberHazeState
 
 /** 底部的两个页签（作者 2026-10-21：只有"照片"和"设置"；NAS、模型、备份都在设置里）。 */
 private enum class Tab(val label: String, val icon: String) { Cull("nav.cull", Icons.CULL), Settings("settings.title", Icons.SETTINGS) }
@@ -80,7 +84,8 @@ fun AppShell() {
     /** 风格页是从哪儿打开的：它的返回键回到那里。 */
     var styles by rememberSaveable { mutableStateOf<String?>(null) }
     val project = store.projects.firstOrNull { it.id == store.activeId && it.trashed == null }
-    val haze = rememberHazeState()
+    // 页面内容录进这一层，悬浮的玻璃件（标签栏）把它折射出来
+    val backdrop = com.kyant.backdrop.backdrops.rememberLayerBackdrop()
 
     BackHandler(enabled = styles != null) { styles = null }
     BackHandler(enabled = styles == null && tab == Tab.Cull && project != null) { Projects.setActive(null) }
@@ -88,7 +93,7 @@ fun AppShell() {
 
     Box(Modifier.fillMaxSize().background(c.canvas)) {
         if (!status.loaded) return@Box
-        Box(Modifier.fillMaxSize().hazeSource(haze)) {
+        Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
             val screen = when {
                 styles != null -> "styles"
                 tab == Tab.Settings -> "settings"
@@ -108,46 +113,93 @@ fun AppShell() {
         }
         val showBar = styles == null && (tab == Tab.Settings || project == null)
         AnimatedVisibility(showBar, modifier = Modifier.align(Alignment.BottomCenter), enter = fadeIn() + slideInVertically { it }, exit = fadeOut() + slideOutVertically { it }) {
-            FloatingTabBar(haze, tab) { next -> if (next == Tab.Cull && tab == Tab.Cull && project != null) Projects.setActive(null); tab = next }
+            FloatingTabBar(backdrop, tab) { next -> if (next == Tab.Cull && tab == Tab.Cull && project != null) Projects.setActive(null); tab = next }
         }
-        ToastHost(bottom = if (showBar) 104.dp else 24.dp)
+        ToastHost(bottom = if (showBar) 80.dp else 24.dp)
+        // 转到后台的模型下载：顶部一粒玻璃小胶囊，点一下把对话框叫回来
+        val gate by com.fleetinggleam.android.core.Models.gate.collectAsState()
+        AnimatedVisibility(gate?.hidden == true, modifier = Modifier.align(Alignment.TopCenter), enter = fadeIn() + slideInVertically { -it }, exit = fadeOut() + slideOutVertically { -it }) {
+            val g = gate
+            androidx.compose.runtime.CompositionLocalProvider(LocalBackdrop provides backdrop) {
+                com.fleetinggleam.android.ui.components.GlassBox(Modifier.statusBarsPadding().padding(top = 6.dp), style = glassStyle(strong = true)) {
+                    Row(Modifier.clip(CircleShape).clickable { com.fleetinggleam.android.core.Models.showGate() }.padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        val f = if (g != null && g.total > 0) g.done.toFloat() / g.total else 0f
+                        androidx.compose.foundation.Canvas(Modifier.size(14.dp)) {
+                            drawCircle(c.line, style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
+                            drawArc(c.ink, -90f, 360f * f, false, style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round))
+                        }
+                        Text(t("android.models.pill", "pct" to Math.round(f * 100)), style = Type.monoSmall.copy(color = c.ink, fontWeight = FontWeight.Medium), modifier = Modifier.padding(start = 8.dp))
+                    }
+                }
+            }
+        }
     }
     ModelGate()
     FolderPicker()
 }
 
 /**
- * 底部悬浮的液态玻璃标签栏：离屏幕边缘有距离的胶囊，对后面的内容实时模糊并稍稍着色（Android 12+；更早的退为半透明），
- * 一圈上亮下暗的高光描边给它厚度，选中的页签是一粒墨色胶囊、在两个页签之间滑过去。
+ * 底部悬浮的液态玻璃标签栏（iOS 那种）：离屏幕边缘有距离的胶囊，边缘把后面的照片折射弯过来，带高光和投影。
+ * 选中的页签是一粒墨色胶囊；手指按在栏上左右拖，胶囊像一滴水那样鼓起、变得通透、跟着手指走，松手吸到最近的页签。
  */
-@OptIn(ExperimentalHazeMaterialsApi::class)
 @Composable
-private fun FloatingTabBar(haze: HazeState, current: Tab, onSelect: (Tab) -> Unit) {
+private fun FloatingTabBar(backdrop: com.kyant.backdrop.Backdrop, current: Tab, onSelect: (Tab) -> Unit) {
     val c = LocalFg.current
-    val shape = RoundedCornerShape(32.dp)
-    val rim = Brush.verticalGradient(listOf(Color.White.copy(alpha = if (c.dark) 0.35f else 0.9f), Color.White.copy(alpha = 0.08f), Color.Black.copy(alpha = if (c.dark) 0.35f else 0.08f)))
-    val itemW = 116.dp
-    Box(Modifier.navigationBarsPadding().padding(bottom = 14.dp)) {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val itemW = 76.dp
+    val itemPx = with(density) { itemW.toPx() }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    // 胶囊的位置（像素）与"被拿起来"的程度
+    val x = androidx.compose.runtime.remember { androidx.compose.animation.core.Animatable(current.ordinal * itemPx) }
+    val lift = androidx.compose.runtime.remember { androidx.compose.animation.core.Animatable(0f) }
+    var dragging by androidx.compose.runtime.remember { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(current, itemPx) { if (!dragging) x.animateTo(current.ordinal * itemPx, Motion.glide()) }
+    val barSrc = androidx.compose.runtime.remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val press = com.fleetinggleam.android.ui.components.rememberPress(barSrc)
+    Box(Modifier.navigationBarsPadding().padding(bottom = 10.dp)) {
         Box(
             Modifier
-                .shadow(18.dp, shape, ambientColor = Color.Black.copy(alpha = 0.25f), spotColor = Color.Black.copy(alpha = 0.3f))
-                .clip(shape)
-                .hazeEffect(state = haze, style = HazeMaterials.ultraThin(c.panel)) { blurRadius = 28.dp; noiseFactor = 0.02f }
-                .border(1.dp, rim, shape)
-                .padding(6.dp),
+                .glass(backdrop, RoundedCornerShape(50), glassStyle(), press = { maxOf(press(), lift.value * 0.6f) })
+                .padding(4.dp)
+                .pointerInput(itemPx) {
+                    detectHorizontalDragGestures(
+                        onDragStart = { dragging = true; scope.launch { lift.animateTo(1f, androidx.compose.animation.core.spring(0.6f, 420f)) } },
+                        onDragEnd = {
+                            val i = Math.round(x.value / itemPx).coerceIn(0, Tab.entries.size - 1)
+                            dragging = false
+                            scope.launch { lift.animateTo(0f, androidx.compose.animation.core.spring(0.5f, 300f)) }
+                            scope.launch { x.animateTo(i * itemPx, Motion.glide()) }
+                            if (Tab.entries[i] != current) onSelect(Tab.entries[i])
+                        },
+                        onDragCancel = { dragging = false; scope.launch { lift.animateTo(0f); x.animateTo(current.ordinal * itemPx, Motion.glide()) } },
+                    ) { change, dx ->
+                        change.consume()
+                        scope.launch { x.snapTo((x.value + dx).coerceIn(0f, itemPx * (Tab.entries.size - 1))) }
+                    }
+                },
         ) {
-            val x by animateDpAsState(itemW * current.ordinal, Motion.glide(), label = "tabpill")
-            Box(Modifier.offset(x = x).width(itemW).height(48.dp).clip(CircleShape).background(c.ink))
+            // 墨色胶囊：拿起来时放大一点、变得通透（下面的折射透出来）
+            Box(
+                Modifier
+                    .offset { androidx.compose.ui.unit.IntOffset(x.value.toInt(), 0) }
+                    .graphicsLayer { val s = 1f + 0.12f * lift.value; scaleX = s; scaleY = s }
+                    .width(itemW).height(46.dp).clip(CircleShape)
+                    .background(c.ink.copy(alpha = 1f - 0.45f * lift.value)),
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
-                Tab.entries.forEach { tab ->
-                    val sel = tab == current
-                    Row(
-                        Modifier.width(itemW).height(48.dp).clip(CircleShape).clickable { onSelect(tab) },
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically,
+                Tab.entries.forEachIndexed { i, tab ->
+                    // 文字颜色跟着胶囊走：胶囊盖住多少，就反白多少
+                    val cover = (1f - kotlin.math.abs(x.value / itemPx - i)).coerceIn(0f, 1f) * (1f - 0.45f * lift.value)
+                    val fg = androidx.compose.ui.graphics.lerp(c.ink, c.onInk, cover)
+                    // iOS 的样子：图标在上、文字在下
+                    androidx.compose.foundation.layout.Column(
+                        Modifier.width(itemW).height(46.dp).clip(CircleShape)
+                            .clickable(interactionSource = barSrc, indication = null) { onSelect(tab) },
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
                     ) {
-                        FgIcon(tab.icon, size = 18.dp, color = if (sel) c.onInk else c.ink)
-                        Text(t(tab.label), style = Type.label.copy(color = if (sel) c.onInk else c.ink, fontWeight = FontWeight.SemiBold), modifier = Modifier.padding(start = 8.dp), maxLines = 1)
+                        FgIcon(tab.icon, size = 19.dp, color = fg)
+                        Text(t(tab.label), style = Type.monoSmall.copy(fontFamily = com.fleetinggleam.android.ui.theme.Geist, color = fg, fontWeight = FontWeight.SemiBold, fontSize = androidx.compose.ui.unit.TextUnit(10f, androidx.compose.ui.unit.TextUnitType.Sp), lineHeight = androidx.compose.ui.unit.TextUnit(12f, androidx.compose.ui.unit.TextUnitType.Sp)), modifier = Modifier.padding(top = 1.dp), maxLines = 1)
                     }
                 }
             }

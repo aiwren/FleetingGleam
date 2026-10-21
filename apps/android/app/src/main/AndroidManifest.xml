@@ -35,5 +35,9 @@
             android:name=".service.AnalysisService"
             android:exported="false"
             android:foregroundServiceType="dataSync|mediaProcessing" />
+        <service
+            android:name=".service.DownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 </manifest>

@@ -54,6 +54,8 @@ object Session {
     val peopleProg = MutableStateFlow<Progress?>(null)
     val mediaProg = MutableStateFlow<Progress?>(null)
     val paused = MutableStateFlow(Pause.None)
+    /** 还能撤销几步（工具栏的撤销按钮跟着亮、灭）。 */
+    val undoCount = MutableStateFlow(0)
     /** 分析中的实时数据：每帧最多刷新一次（`tick` 加一），几千个事件也不卡。 */
     val tick = MutableStateFlow(0)
     val results = ConcurrentHashMap<String, Photo>()
@@ -130,7 +132,7 @@ object Session {
         // whatever scan was running belonged to the project (or settings) just left; it stops at its next photo
         runCatching { Core.callBlocking("scan_cancel") }
         Scans.stopped()
-        undoStack.clear()
+        undoStack.clear(); undoCount.value = 0
         error.value = null; celebrate.value = false; dirty.value = 0; nasProg.value = null; peopleProg.value = null; mediaProg.value = null; paused.value = Pause.None
         decisions.value = emptyMap()
         val project = current()
@@ -285,11 +287,13 @@ object Session {
         if (!fromUndo) {
             undoStack.addLast(path to prev)
             if (undoStack.size > 50) undoStack.removeFirst()
+            undoCount.value = undoStack.size
         }
     }
 
     fun canUndo(): Boolean = undoStack.isNotEmpty()
-    fun undo() { val e = undoStack.removeLastOrNull() ?: return; decide(e.first, e.second, fromUndo = true) }
+    /** 撤销最近一次改判；返回被撤销的那张（界面把它选中、滚到眼前）。 */
+    fun undo(): String? { val e = undoStack.removeLastOrNull() ?: return null; undoCount.value = undoStack.size; decide(e.first, e.second, fromUndo = true); return e.first }
 
     /** 刚才整理掉（导出 / 回收）之后：重新读文件夹，已不在的照片的改判随之忘掉。 */
     fun reload() { enter() }
