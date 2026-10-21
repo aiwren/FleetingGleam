@@ -1302,4 +1302,11 @@ img { -webkit-user-drag: none; }
 /* 设置页列表里的小图标按钮（编辑、移除）：固定 30px 见方、默认灰一档；顶栏的 .btn.icon 不受影响 */
 .btn.icon.sm { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; color: var(--ash); }
 .btn.icon.sm:hover:not(:disabled) { color: var(--ink); }
-.title-input.keep { width: 80px; text-align: right; }
+/* 步进数字框：− 数字 +，一体的圆角条，按钮够大好点 */
+.stepper { display: inline-flex; align-items: stretch; height: 30px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); overflow: hidden; }
+.stepper.off { opacity: .5; }
+.stepper-btn { width: 32px; border: 0; background: transparent; color: var(--ash); display: grid; place-items: center; cursor: pointer; transition: background .15s, color .15s; }
+.stepper-btn:hover:not(:disabled) { background: var(--line); color: var(--ink); }
+.stepper-btn:disabled { opacity: .35; cursor: default; }
+.stepper-input { width: 64px; border: 0; border-left: 1px solid var(--line); border-right: 1px solid var(--line); background: transparent; color: var(--ink); font: inherit; font-size: 13px; text-align: center; outline: none; padding: 0 4px; }
+.stepper-input:focus { background: color-mix(in srgb, var(--ink) 5%, transparent); }

@@ -9,6 +9,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import Modal from "../components/Modal";
+import Stepper from "../components/Stepper";
 import { Share, addShare, probeShare, refreshShares, removeShare, setShareEnabled, updateShare, useShares } from "../nas";
 import { BackupTarget, backupNow, refreshBackup, removeTarget, restoreBackup, saveTarget, setBackupOptions, useBackup } from "../backup";
 import { motion } from "motion/react";
@@ -407,7 +408,7 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
                 </span>
               </Row>
               <Row label={t("settings.backupKeep")} desc={t("settings.backupKeepHint")}>
-                <input className="title-input keep" type="number" min={1} max={1000} defaultValue={backup?.keep ?? 30} key={backup?.keep ?? 30} disabled={!backup?.configured} aria-label={t("settings.backupKeep")} onBlur={(e) => bkKeep(Number(e.target.value))} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
+                <Stepper value={backup?.keep ?? 30} min={1} max={1000} disabled={!backup?.configured} label={t("settings.backupKeep")} format={(n) => t("settings.backupKeepN", { count: n })} onChange={bkKeep} />
               </Row>
               <Row label={t("settings.backupTargets")} desc={t("settings.backupTargetsDesc")}>
                 <button className="btn" disabled={bkBusy !== null} onClick={bkAdd}>{t("settings.backupAddTarget")}</button>

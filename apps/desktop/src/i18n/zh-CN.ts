@@ -197,7 +197,7 @@ const zh = {
     backupRestoreConfirm: "从「{{name}}」的最新备份恢复？备份里的喜好会并进本机的风格，应用设置会按备份里的来。",
     backupSetupTitle: "设置云备份（Cloudflare R2）", backupHow: "在 Cloudflare 控制台 → R2 里建一个桶，再在「管理 R2 API 令牌」里创建一个对这个桶「对象读和写」的令牌，把桶的 S3 API 端点（桶设置页里有）、桶名和令牌的两个密钥填在这里。备份只写桶里的 fleetinggleam/ 目录：taste.json 是最新一份，auto/ 里按天各留一份。",
     backupAccount: "S3 端点", backupAccountHint: "https://<账户ID>.r2.cloudflarestorage.com（只填账户 ID 也可以）", backupBucket: "桶名", backupSecretKept: "已存在钥匙串里，不改就留空", backupAuto: "设置或喜好变化后自动备份",
-    backupTesting: "正在测试…", backupSave: "测试并保存", backupKeep: "保留份数", backupKeepHint: "每天留一份，只保留最近这么多份；更早的自动删掉。",
+    backupTesting: "正在测试…", backupSave: "测试并保存", backupKeep: "保留份数", backupKeepN: "{{count}} 份", backupKeepHint: "每天留一份，只保留最近这么多份；更早的自动删掉。",
     nas: "NAS", nasTitle: "网络共享（NAS）", nasDesc: "应用自己用 SMB 连接你的 NAS，之后新建项目时可以直接选共享里的文件夹。", nasAdd: "添加 NAS…",
     nasInfo: "应用内置 SMB 客户端直接连接，不经过访达，桌面上不会出现挂载卷；密码只存在钥匙串里。项目里的照片会先复制到应用自己的缓存里再分析（第一次打开要等它读完，之后只补新增的），查看和导出都从这份副本来。NAS 上没有废纸篓，淘汰的照片会在共享里移到根目录的「.FleetingGleam Recycle Bin」文件夹，按日期分开，可以手动恢复。移除 NAS 会一并删掉本机的副本，NAS 上的照片不受影响。",
     nasAddTitle: "添加 NAS", nasEditTitle: "编辑「{{name}}」", nasEdit: "编辑…", nasSaveChanges: "保存修改", nasPasswordKept: "不改就留空（用钥匙串里的）", nasHost: "服务器地址", nasHostHint: "例如 nas.local 或 192.168.1.9", nasUser: "用户名", nasGuestHint: "留空则以访客连接", nasPassword: "密码", nasName: "显示名", nasNameHint: "例如：家里的 NAS",

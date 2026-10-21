@@ -167,10 +167,16 @@ fn list_images(dir: &str) -> Vec<PathBuf> {
 /// Every photo in the folders, without duplicates. A file whose header cannot be read (corrupt, or not really an image
 /// despite its extension) is left out here, so the count the user sees, the wall and the analysis all agree.
 fn list_all(dirs: &[String]) -> Vec<PathBuf> {
+    list_all_with(dirs, |_| false)
+}
+
+/// 同 `list_all`，但 `known(path)` 为真的文件（分析缓存里已经有、文件没变过）不再读文件头验证：打开一个分析过的项目时，
+/// 几百个 20 MB 的 JPEG 头一张张读要一两秒，这是"正在读取文件夹"卡住的主要原因。
+fn list_all_with(dirs: &[String], known: impl Fn(&Path) -> bool + Sync) -> Vec<PathBuf> {
     let mut all: Vec<PathBuf> = dirs.iter().flat_map(|d| list_images(d)).collect();
     all.sort();
     all.dedup();
-    all.into_par_iter().filter(|p| oriented_dims(p).is_some()).collect()
+    all.into_par_iter().filter(|p| known(p) || oriented_dims(p).is_some()).collect()
 }
 
 /// Where downloaded models live.
@@ -237,18 +243,26 @@ async fn probe_folder(app: AppHandle, dirs: Vec<String>, compute: Option<String>
     let job = app.state::<AppState>().scan_job.load(Ordering::Relaxed);
     tauri::async_runtime::spawn_blocking(move || {
         nas_sync_dirs(&app, &dirs, job)?;
-        let files = list_all(&dirs);
-        let cached: Vec<bool> = with_cache(&app, |c| {
-            files
+        // 缓存里认识的文件（没变过）不读文件头：尺寸直接查表，是否"已分析"再按当前模型的 tag 看
+        let (files, known): (Vec<PathBuf>, Vec<(Option<(u32, u32)>, bool)>) = with_cache(&app, |c| {
+            let files = list_all_with(&dirs, |p| cache::file_key(p).map_or(false, |(sz, mt)| c.dims(&p.to_string_lossy(), sz, mt).is_some()));
+            let known = files
                 .iter()
-                .map(|p| cache::file_key(p).map_or(false, |(sz, mt)| c.has(&p.to_string_lossy(), sz, mt, &tag)))
-                .collect()
+                .map(|p| {
+                    let key = p.to_string_lossy();
+                    match cache::file_key(p) {
+                        Some((sz, mt)) => (c.dims(&key, sz, mt), c.has(&key, sz, mt, &tag)),
+                        None => (None, false),
+                    }
+                })
+                .collect();
+            (files, known)
         });
         let out: Vec<ProbeFile> = files
             .par_iter()
-            .zip(cached.par_iter())
-            .map(|(p, &cached)| {
-                let (width, height) = oriented_dims(p).unwrap_or((3, 2));
+            .zip(known.par_iter())
+            .map(|(p, &(dims, cached))| {
+                let (width, height) = dims.or_else(|| oriented_dims(p)).unwrap_or((3, 2));
                 ProbeFile { path: p.to_string_lossy().into_owned(), width, height, cached }
             })
             .collect();
@@ -285,11 +299,10 @@ async fn scan_project(app: AppHandle, key: String, dirs: Vec<String>, compute: O
         let cancelled = || app.state::<AppState>().scan_job.load(Ordering::Relaxed) != job;
         // 镜像里可能有探测之后才到 NAS 上的新照片；再对一次远端，没变化时只是几次目录列表
         nas_sync_dirs(&app, &dirs, job)?;
-        let files = list_all(&dirs);
-        let total = files.len();
         let mut hits: Vec<Photo> = Vec::new();
         let mut jobs: Vec<(PathBuf, u64, i64)> = Vec::new();
-        with_cache(&app, |c| {
+        let files = with_cache(&app, |c| {
+            let files = list_all_with(&dirs, |p| cache::file_key(p).map_or(false, |(sz, mt)| c.dims(&p.to_string_lossy(), sz, mt).is_some()));
             for f in &files {
                 let key = f.to_string_lossy();
                 match cache::file_key(f) {
@@ -300,7 +313,9 @@ async fn scan_project(app: AppHandle, key: String, dirs: Vec<String>, compute: O
                     None => {}
                 }
             }
+            files
         });
+        let total = files.len();
 
         let done = AtomicUsize::new(hits.len());
         if !quiet {
@@ -1967,6 +1982,39 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![probe_folder, scan_project, scan_cancel, decide_photos, projects_load, projects_save, projects_quarantine, taste_export, taste_import, nas_list, nas_add, nas_remove, nas_connect, nas_disconnect, nas_ensure, nas_browse, nas_probe, nas_update, nas_set_enabled, backup_status, backup_save_target, backup_remove_target, backup_set_options, backup_now, backup_restore, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, trash_photos, reveal, preview_thumbs, photo_info, large_preview, motion_clip, hdrview::hdr_overlay_supported, hdrview::hdr_overlay_show, hdrview::hdr_overlay_move, hdrview::hdr_overlay_hide, hdrview::hdr_overlay_detail, hdrview::hdr_overlay_detail_hide, photo_detail, machine_info, search_status, search_index, search_photos, scene_text, packs_status, pack_size, pack_download, pack_cancel, pack_remove])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod probe_timing {
+    use super::*;
+
+    /// 探测阶段各步的耗时：`FG_PROBE_DIR=/path/to/photos cargo test --lib probe_timing -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn where_the_time_goes() {
+        let Ok(dir) = std::env::var("FG_PROBE_DIR") else { return };
+        let t = std::time::Instant::now();
+        let files = list_images(&dir);
+        println!("list_images: {} files in {:?}", files.len(), t.elapsed());
+        let t = std::time::Instant::now();
+        let ok: Vec<&PathBuf> = files.par_iter().filter(|p| oriented_dims(p).is_some()).collect();
+        println!("oriented_dims (parallel, 1st pass): {} ok in {:?}", ok.len(), t.elapsed());
+        let t = std::time::Instant::now();
+        let n = ok.par_iter().filter(|p| oriented_dims(p).is_some()).count();
+        println!("oriented_dims (parallel, 2nd pass, warm cache): {n} in {:?}", t.elapsed());
+        let t = std::time::Instant::now();
+        let keys: Vec<_> = ok.iter().filter_map(|p| cache::file_key(p)).collect();
+        println!("file_key (metadata): {} in {:?}", keys.len(), t.elapsed());
+        let t = std::time::Instant::now();
+        let first = ok.first().unwrap();
+        let bytes_read = {
+            use std::io::Read;
+            let mut f = std::fs::File::open(first).unwrap();
+            let mut buf = vec![0u8; 2 * 1024 * 1024];
+            f.read(&mut buf).unwrap()
+        };
+        println!("read first 2MB of one file: {bytes_read} bytes in {:?}", t.elapsed());
+    }
 }
 
 #[cfg(test)]

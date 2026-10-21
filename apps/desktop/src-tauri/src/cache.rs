@@ -156,6 +156,13 @@ impl Cache {
         self.entries.get(key).map_or(false, |e| e.tag == tag && e.size == size && e.mtime == mtime && Path::new(&e.photo.thumb).exists())
     }
 
+    /// 已知这张照片（文件没变）时它的尺寸：不管是哪一版模型分析的，尺寸都一样，所以不看 tag。
+    /// 探测和扫描用它跳过读文件头：读 395 个 20 MB 的 JPEG 头要一两秒，查表只要微秒。
+    pub fn dims(&self, key: &str, size: u64, mtime: i64) -> Option<(u32, u32)> {
+        let e = self.entries.get(key)?;
+        (e.size == size && e.mtime == mtime && e.photo.width > 0 && e.photo.height > 0).then_some((e.photo.width, e.photo.height))
+    }
+
     /// A cached photo, only if the file is unchanged and its thumbnail is still on disk.
     pub fn get(&self, key: &str, size: u64, mtime: i64, tag: &str) -> Option<Photo> {
         let e = self.entries.get(key)?;
