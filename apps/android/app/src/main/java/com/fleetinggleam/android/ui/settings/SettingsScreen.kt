@@ -377,16 +377,8 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
             val site = "https://fleetinggleam.fleetinggleam-web.workers.dev"; val repo = "https://github.com/lcopilot/FleetingGleam"
             val openUrl = { url: String -> runCatching { ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) } }
             // 隐私政策、使用条款：在应用里从底部推上来的半屏浏览器（Custom Tabs 的局部高度）里看，不跳出去；没有支持的浏览器就照常打开
-            val openSheet = { url: String ->
-                runCatching {
-                    val h = (ctx.resources.displayMetrics.heightPixels * 0.88f).toInt()
-                    androidx.browser.customtabs.CustomTabsIntent.Builder()
-                        .setInitialActivityHeightPx(h, androidx.browser.customtabs.CustomTabsIntent.ACTIVITY_HEIGHT_ADJUSTABLE)
-                        .setToolbarCornerRadiusDp(16)
-                        .setShowTitle(true)
-                        .build().launchUrl(ctx, android.net.Uri.parse(url))
-                }.onFailure { openUrl(url) }
-            }
+            LaunchedEffect(Unit) { WebSheet.warm(ctx) }
+            val openSheet = { url: String -> WebSheet.open(ctx, url) { openUrl(url) } }
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.panel).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(com.fleetinggleam.android.R.mipmap.ic_launcher), null, Modifier.size(64.dp).clip(RoundedCornerShape(16.dp)))
