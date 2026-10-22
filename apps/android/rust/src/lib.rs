@@ -214,8 +214,12 @@ fn dispatch(e: &Arc<Engine>, method: &str, a: &Value) -> Result<Value, String> {
             force: b(a, "force"),
             eye_method: os(a, "eye_method"),
         })?),
+        // 带 key 只停那个项目的分析（手机上后台分析的项目不受打开别的项目影响）；不带就全停
         "scan_cancel" => {
-            e.scan_cancel();
+            match os(a, "key") {
+                Some(k) => e.scan_cancel_key(&k),
+                None => e.scan_cancel(),
+            }
             Ok(Value::Null)
         }
         "set_rotation" => out(e.set_rotation(&s(a, "path")?, a.get("deg").and_then(Value::as_i64).unwrap_or(0))?),
@@ -356,9 +360,16 @@ mod tests {
         let x: Value = serde_json::from_str(&e.call("taste_export_bytes".into(), json!({ "settings": { "theme": "dark" } }).to_string()).unwrap()).unwrap();
         let back: Value = serde_json::from_str(&e.call("taste_import_bytes".into(), json!({ "base64": x["base64"] }).to_string()).unwrap()).unwrap();
         assert_eq!(back[1]["theme"], "dark");
-        // 模型包：一个都没装，每个都说要下载多少
+        // 模型包：随应用的（眼睛、人脸检测）已经在；其余一个都没装，每个都说要下载多少
         let packs: Value = serde_json::from_str(&e.call("packs_status".into(), json!({ "with_sizes": true }).to_string()).unwrap()).unwrap();
-        assert!(packs.as_array().unwrap().iter().all(|p| p["installed"] == false && p["bytes"].as_u64().unwrap() > 0));
+        for p in packs.as_array().unwrap() {
+            if p["bundled"] == true {
+                assert_eq!(p["installed"], true, "{p}");
+            } else {
+                assert!(p["installed"] == false && p["bytes"].as_u64().unwrap() > 0, "{p}");
+            }
+        }
+        assert!(packs.as_array().unwrap().iter().filter(|p| p["bundled"] == true).count() == 2);
         assert!(e.call("nope".into(), "{}".into()).is_err());
         assert!(e.call("probe_folder".into(), "not json".into()).is_err());
         let _ = std::fs::remove_dir_all(&dir);

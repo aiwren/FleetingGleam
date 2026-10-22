@@ -43,7 +43,10 @@ object Core {
         if (engine != null) return
         // 目录立刻可用（设置页、下载服务会直接读它们）；引擎本身在后台建
         data = ctx.filesDir
-        thumbs = File(ctx.cacheDir, "thumbs")
+        // 缩略图放在 filesDir：cacheDir 会被系统或厂商的"清理加速"清掉，清掉后（以前）整个项目都得重新分析。
+        // 以前放在 cacheDir 里的那些不用搬：分析结果还在，引擎打开项目时发现缩略图不在就重做到新地方
+        thumbs = File(ctx.filesDir, "thumbs")
+        File(ctx.cacheDir, "thumbs").let { old -> if (old.exists()) Thread { old.deleteRecursively() }.start() }
         models = File(ctx.filesDir, "models")
         scratch = File(ctx.cacheDir, "scratch")
         Thread({ initNow(ctx, version) }, "fg-engine-init").start()

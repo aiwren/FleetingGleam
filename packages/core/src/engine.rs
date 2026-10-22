@@ -270,12 +270,14 @@ pub struct Engine {
     mediapipe_eyes: Mutex<Option<Arc<mediapipe::MediapipeEyes>>>,
     /// Loaded once, on first use: the face-recognition network is tens of MB.
     face_embedder: Mutex<Option<Arc<faces::FaceEmbedder>>>,
-    /// The last project's photos (with the project key they belong to), kept so `decide_photos` can re-run keep/review/reject
-    /// on a plain override change without the whole (possibly large) list crossing the boundary again. The key stops a
-    /// scan that finished late (of a project since left) from answering for the project now open.
-    last_photos: Mutex<(String, Vec<Photo>)>,
-    /// Bumped by every scan and by `scan_cancel`, so a scan that is no longer the current one stops at the next photo.
-    scan_job: AtomicU64,
+    /// 每个项目最近一次分析出的照片（按项目的 key），`decide_photos` 改判时不用把整个列表再传一遍。按项目分开：
+    /// 手机上一个项目在后台分析、另一个项目开着，各问各的。只留最近几个项目。
+    last_photos: Mutex<Vec<(String, Vec<Photo>)>>,
+    /// 每个项目当前那次分析的任务号：同一个项目再开一次分析、或 `scan_cancel_key`，旧的那次就在下一张停下。
+    scan_jobs: Mutex<HashMap<String, u64>>,
+    scan_seq: AtomicU64,
+    /// `scan_cancel()`（不分项目）每调一次加一：所有正在跑的分析和探测都停。
+    cancel_gen: AtomicU64,
     /// Bumped by every recorded label; the retraining scheduled by a label only runs if no newer label came in the meantime.
     retrain_gen: AtomicU64,
     /// Loaded once, on first use: the scene-description model (a few hundred MB) and the English-to-Chinese one.
@@ -330,8 +332,10 @@ impl Engine {
             prefs: Mutex::new(prefs),
             mediapipe_eyes: Mutex::new(None),
             face_embedder: Mutex::new(None),
-            last_photos: Mutex::new((String::new(), Vec::new())),
-            scan_job: AtomicU64::new(0),
+            last_photos: Mutex::new(Vec::new()),
+            scan_jobs: Mutex::new(HashMap::new()),
+            scan_seq: AtomicU64::new(0),
+            cancel_gen: AtomicU64::new(0),
             retrain_gen: AtomicU64::new(0),
             captioner: Mutex::new(None),
             translator: Mutex::new(None),
@@ -421,8 +425,8 @@ impl Engine {
     pub fn probe_folder(self: &Arc<Self>, dirs: &[String], compute: Option<&str>, quality: Option<&str>) -> Result<Probe, String> {
         let tag = scorer::analysis_tag(scorer::resolve(&self.paths.models, compute != Some("cpu"), Quality::parse(quality)));
         // 离开项目时页面会 `scan_cancel`，正在从 NAS 拉照片的探测也就跟着停
-        let job = self.scan_job.load(Ordering::Relaxed);
-        self.nas_sync_dirs(dirs, job)?;
+        let gen = self.cancel_gen.load(Ordering::Relaxed);
+        self.nas_sync_dirs(dirs, gen, None)?;
         // 先按扩展名和大小列出文件（不读文件）；缓存里认识的（没变过）尺寸直接查表，是否"已分析"按当前模型的 tag 看。
         // 其余的文件头只读一次：读不出来的（损坏、扩展名不对）剔除，读出来的尺寸直接用——以前筛一遍、取尺寸又读一遍，
         // 手机上几千张 HEIC 要等很久，界面上一直是"正在读取文件夹…"。边读边发 "probe-progress"。
@@ -471,7 +475,10 @@ impl Engine {
     pub fn scan_project(self: &Arc<Self>, a: ScanArgs) -> Result<Vec<Photo>, String> {
         let force = a.force;
         let quiet = a.quiet;
-        let job = self.scan_job.fetch_add(1, Ordering::Relaxed) + 1;
+        // 这个项目的新任务号：它上一次还没跑完的分析在下一张停下；别的项目的分析不受影响
+        let job = self.scan_seq.fetch_add(1, Ordering::Relaxed) + 1;
+        self.scan_jobs.lock().unwrap_or_else(|e| e.into_inner()).insert(a.key.clone(), job);
+        let gen = self.cancel_gen.load(Ordering::Relaxed);
         let cpu_only = a.compute.as_deref() == Some("cpu");
         let want = Quality::parse(a.quality.as_deref());
         let eye_method = EyeMethod::parse(a.eye_method.as_deref());
@@ -482,9 +489,9 @@ impl Engine {
         let mp = if eye_method == EyeMethod::Mediapipe { self.mediapipe_eyes() } else { None };
         let fe = self.face_embedder();
 
-        let cancelled = || self.scan_job.load(Ordering::Relaxed) != job;
+        let cancelled = || !self.scan_live(gen, &a.key, job);
         // 镜像里可能有探测之后才到 NAS 上的新照片；再对一次远端，没变化时只是几次目录列表
-        self.nas_sync_dirs(&a.dirs, job)?;
+        self.nas_sync_dirs(&a.dirs, gen, Some((a.key.clone(), job)))?;
         let mut hits: Vec<Photo> = Vec::new();
         let mut jobs: Vec<(PathBuf, u64, i64)> = Vec::new();
         let files = self.with_cache(|c| {
@@ -501,6 +508,59 @@ impl Engine {
             files
         });
         let total = files.len();
+        // 分析结果还在、缩略图被清掉了（手机的"清理加速"会清应用缓存，或缩略图目录换了地方）：只重做缩略图，不重新分析；
+        // 连缩略图都做不出来的（文件读不了了）才回去重新分析
+        if hits.iter().any(|p| !Path::new(&p.thumb).exists()) {
+            let fixed: Vec<Option<Photo>> = hits
+                .par_iter()
+                .map(|p| {
+                    if Path::new(&p.thumb).exists() {
+                        return Some(p.clone());
+                    }
+                    let src = Path::new(&p.path);
+                    let base = analyze::cache_name(src, ".jpg", &cache_dir);
+                    if !base.exists() && analyze::quick_thumb(src, &base).is_err() {
+                        return None;
+                    }
+                    let mut q = p.clone();
+                    if q.rotation != 0 {
+                        let r = q.rotation;
+                        analyze::apply_rotation(&mut q, r, &cache_dir).ok()?;
+                    } else {
+                        q.thumb = base.to_string_lossy().into_owned();
+                    }
+                    Some(q)
+                })
+                .collect();
+            let mut kept = Vec::with_capacity(hits.len());
+            let mut redone = Vec::new();
+            for (p, f) in hits.into_iter().zip(fixed) {
+                match f {
+                    Some(q) => {
+                        if q.thumb != p.thumb {
+                            redone.push(q.clone());
+                        }
+                        kept.push(q);
+                    }
+                    None => {
+                        if let Some((sz, mt)) = cache::file_key(Path::new(&p.path)) {
+                            jobs.push((PathBuf::from(&p.path), sz, mt));
+                        }
+                    }
+                }
+            }
+            hits = kept;
+            if !redone.is_empty() {
+                self.with_cache(|c| {
+                    for p in &redone {
+                        if let Some((sz, mt)) = cache::file_key(Path::new(&p.path)) {
+                            c.put(sz, mt, &tag, p);
+                        }
+                    }
+                    c.save();
+                });
+            }
+        }
 
         let done = AtomicUsize::new(hits.len());
         if !quiet {
@@ -706,20 +766,35 @@ impl Engine {
         let prefs = if a.learn { Some(self.prefs.lock().unwrap_or_else(|e| e.into_inner()).get(a.style.as_deref()).prefs.clone()) } else { None };
         analyze::group_and_score(&mut photos, prefs.as_ref().filter(|p| p.active()));
         {
-            // grouping took a while; a newer scan may have written its project meanwhile, and this one must not replace it
+            // grouping took a while; a newer scan of this project may have written meanwhile, and this one must not replace it
             let mut last = self.last_photos.lock().unwrap_or_else(|e| e.into_inner());
-            if self.scan_job.load(Ordering::Relaxed) != job {
+            if !self.scan_live(gen, &a.key, job) {
                 return Err("cancelled".to_string());
             }
-            *last = (a.key, photos.clone());
+            last.retain(|(k, _)| k != &a.key);
+            last.push((a.key.clone(), photos.clone()));
+            // 只留最近四个项目的（照片记录带着向量，一个几千张的项目就是几 MB）
+            if last.len() > 4 {
+                last.remove(0);
+            }
         }
         Ok(photos)
     }
 
-    /// Stops the scan in progress: it ends at the next photo, and what it analysed by then is already in the cache. Called when
-    /// the person asks for it, and whenever the page leaves a project (its scan may still be running).
+    /// Stops every scan in progress (and any NAS sync of a probe): each ends at the next photo, and what it analysed by then is already
+    /// in the cache. The Mac calls it when the person asks for it and whenever the page leaves a project.
     pub fn scan_cancel(&self) {
-        self.scan_job.fetch_add(1, Ordering::Relaxed);
+        self.cancel_gen.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// 只停这个项目的分析（手机上：离开一个项目时它的读缓存停下，而另一个在后台分析的项目照跑）。
+    pub fn scan_cancel_key(&self, key: &str) {
+        self.scan_jobs.lock().unwrap_or_else(|e| e.into_inner()).remove(key);
+    }
+
+    /// 这次分析还该不该接着跑：没有被全部取消，也没有被这个项目的新分析或 `scan_cancel_key` 顶掉。
+    fn scan_live(&self, gen: u64, key: &str, job: u64) -> bool {
+        self.cancel_gen.load(Ordering::Relaxed) == gen && self.scan_jobs.lock().unwrap_or_else(|e| e.into_inner()).get(key).copied() == Some(job)
     }
 
     /// 把一张照片顺时针转到 `deg`（0 / 90 / 180 / 270）。只改缓存里的记录（缩略图、显示尺寸），原文件不动、分析结果不变；
@@ -737,11 +812,13 @@ impl Engine {
             Ok::<Photo, String>(out)
         })?;
         let mut last = self.last_photos.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(q) = last.1.iter_mut().find(|q| q.path == path) {
-            q.thumb = p.thumb.clone();
-            q.width = p.width;
-            q.height = p.height;
-            q.rotation = p.rotation;
+        for (_, list) in last.iter_mut() {
+            if let Some(q) = list.iter_mut().find(|q| q.path == path) {
+                q.thumb = p.thumb.clone();
+                q.width = p.width;
+                q.height = p.height;
+                q.rotation = p.rotation;
+            }
         }
         Ok(p)
     }
@@ -755,11 +832,11 @@ impl Engine {
     /// (the keep ratio, and any photos the user overrode by hand) cross the boundary; the photos themselves stay here.
     /// `key` must be the project the photos were scanned for: otherwise the answer would be another project's and is refused.
     pub fn decide_photos(&self, key: &str, keep_ratio: f32, pick_mode: Option<&str>, one_per_group: bool, overrides: &HashMap<String, String>) -> Result<HashMap<String, decide::Decision>, String> {
-        let photos = self.last_photos.lock().unwrap_or_else(|e| e.into_inner());
-        if photos.0 != key {
+        let last = self.last_photos.lock().unwrap_or_else(|e| e.into_inner());
+        let Some((_, photos)) = last.iter().find(|(k, _)| k == key) else {
             return Err("stale".to_string());
-        }
-        Ok(decide::decide(&photos.1, keep_ratio, decide::PickMode::parse(pick_mode), one_per_group, overrides))
+        };
+        Ok(decide::decide(photos, keep_ratio, decide::PickMode::parse(pick_mode), one_per_group, overrides))
     }
 
     // ------------------------------------------------------------ 项目文件
@@ -1003,8 +1080,8 @@ impl Engine {
         self.nas.connect(s, &pw).map_err(|e| format!("{}: {e}", s.name))
     }
 
-    /// 项目文件夹里落在共享镜像上的，先把远端同步进来（进度发 "nas-progress"）；`job` 变了就停（页面离开项目时会 `scan_cancel`）。
-    fn nas_sync_dirs(self: &Arc<Self>, dirs: &[String], job: u64) -> Result<(), String> {
+    /// 项目文件夹里落在共享镜像上的，先把远端同步进来（进度发 "nas-progress"）；`scan_cancel`（或分析时这个项目的任务被顶掉）就停。
+    fn nas_sync_dirs(self: &Arc<Self>, dirs: &[String], gen: u64, job: Option<(String, u64)>) -> Result<(), String> {
         let data = &self.paths.data;
         let shares = nas::load(data);
         for d in dirs {
@@ -1013,7 +1090,10 @@ impl Engine {
             let local = nas::local_dir(data, &s.id);
             // 进度与取消在 NAS 的线程上回调，所以各拿一份引擎的引用
             let (emit, watch) = (self.clone(), self.clone());
-            let r = self.nas.sync(&s.id, &rel, &local, move |p| emit.emit("nas-progress", &p), move || watch.scan_job.load(Ordering::Relaxed) != job);
+            let job = job.clone();
+            let r = self.nas.sync(&s.id, &rel, &local, move |p| emit.emit("nas-progress", &p), move || {
+                watch.cancel_gen.load(Ordering::Relaxed) != gen || job.as_ref().map_or(false, |(k, j)| !watch.scan_live(gen, k, *j))
+            });
             r.map_err(|e| if e.contains("ancelled") { "cancelled".to_string() } else { format!("{}: {e}", s.name) })?;
         }
         Ok(())
@@ -1919,6 +1999,30 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// 缩略图被清掉了（手机的清理工具会清应用缓存）：再打开项目时只重做缩略图，不当成没分析过；转过的照片重做转过的那张。
+    #[test]
+    fn a_lost_thumbnail_is_remade_without_reanalysing() {
+        let (e, root, events) = engine("thumbs-gone");
+        let dir = root.join("photos");
+        photos(&dir, 3);
+        let args = ScanArgs { key: "p".into(), dirs: vec![dir.to_string_lossy().into_owned()], quality: Some("fast".into()), ..Default::default() };
+        let first = e.scan_project(args.clone()).unwrap();
+        let p0 = first.iter().find(|p| p.name == "p0.jpg").unwrap().clone();
+        e.set_rotation(&p0.path, 90).unwrap();
+        // 清理工具把整个缩略图目录清空了
+        let _ = std::fs::remove_dir_all(&e.paths.thumbs);
+        std::fs::create_dir_all(&e.paths.thumbs).unwrap();
+        let probe = e.probe_folder(&args.dirs, None, Some("fast")).unwrap();
+        assert_eq!(probe.uncached, 0, "the analysis is still known");
+        events.0.lock().unwrap().clear();
+        let again = e.scan_project(args).unwrap();
+        assert!(!events.0.lock().unwrap().iter().any(|(n, _)| n == "scan-photo"), "nothing was analysed again");
+        assert!(again.iter().all(|p| Path::new(&p.thumb).exists()), "every thumbnail is back");
+        let q = again.iter().find(|p| p.path == p0.path).unwrap();
+        assert_eq!((q.width, q.height, q.rotation), (480, 640, 90));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// 转照片：记录换缩略图和显示尺寸，原文件不动；大图与清晰块按角度另存；强制重新分析也记得角度。
     #[test]
     fn a_photo_can_be_turned_and_stays_turned() {
@@ -1974,6 +2078,49 @@ mod tests {
         let out = root.join("out");
         let r = e.export_photos(&paths, &out.to_string_lossy()).unwrap();
         assert_eq!((r.copied, r.skipped, r.remote), (2, 0, false));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 按项目取消只停那一个项目；两个项目分析完都还能各自改判（手机上一个后台分析、一个开着）。
+    #[test]
+    fn cancelling_one_project_leaves_the_other_running() {
+        let (e, root, _) = engine("keyed");
+        let (da, db) = (root.join("a"), root.join("b"));
+        photos(&da, 3);
+        photos(&db, 2);
+        let args = |k: &str, d: &Path| ScanArgs { key: k.into(), dirs: vec![d.to_string_lossy().into_owned()], ..Default::default() };
+        // 一直取消 b：a 照样分析完
+        let e2 = e.clone();
+        let stop = Arc::new(AtomicBool::new(false));
+        let s2 = stop.clone();
+        let t = std::thread::spawn(move || {
+            while !s2.load(Ordering::Relaxed) {
+                e2.scan_cancel_key("b");
+                std::thread::yield_now();
+            }
+        });
+        let a = e.scan_project(args("a", &da));
+        stop.store(true, Ordering::Relaxed);
+        t.join().unwrap();
+        assert_eq!(a.map(|p| p.len()).ok(), Some(3));
+        // 一直取消 a：a 的这次分析停下
+        let e3 = e.clone();
+        let stop = Arc::new(AtomicBool::new(false));
+        let s3 = stop.clone();
+        let t = std::thread::spawn(move || {
+            while !s3.load(Ordering::Relaxed) {
+                e3.scan_cancel_key("a");
+                std::thread::yield_now();
+            }
+        });
+        let again = e.scan_project(ScanArgs { force: true, ..args("a", &da) });
+        stop.store(true, Ordering::Relaxed);
+        t.join().unwrap();
+        assert_eq!(again.err().as_deref(), Some("cancelled"));
+        // b 分析完以后，a 和 b 都能改判
+        e.scan_project(args("b", &db)).unwrap();
+        assert_eq!(e.decide_photos("a", 1.0, None, false, &HashMap::new()).unwrap().len(), 3);
+        assert_eq!(e.decide_photos("b", 1.0, None, false, &HashMap::new()).unwrap().len(), 2);
         let _ = std::fs::remove_dir_all(&root);
     }
 

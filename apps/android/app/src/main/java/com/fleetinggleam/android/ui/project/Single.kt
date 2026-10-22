@@ -79,8 +79,17 @@ fun SinglePager(shown: List<Photo>, decisions: Map<String, Decision>, cull: Cull
     val haptic = LocalHapticFeedback.current
     val start = shown.indexOfFirst { it.path == cull.selected }.coerceAtLeast(0)
     val pager = rememberPagerState(initialPage = start) { shown.size }
-    LaunchedEffect(pager) { snapshotFlow { pager.settledPage }.distinctUntilChanged().collect { i -> shown.getOrNull(i)?.let { if (it.path != cull.selected) cull.select(it.path) } } }
-    LaunchedEffect(cull.selected, shown) { val i = shown.indexOfFirst { it.path == cull.selected }; if (i >= 0 && i != pager.currentPage) pager.animateScrollToPage(i) }
+    // 翻页 → 选中：用最新的列表（以前闭包里是第一次的那份，列表一变页码就对到别的照片上，和下面那条来回跳）
+    val shownNow by androidx.compose.runtime.rememberUpdatedState(shown)
+    LaunchedEffect(pager) { snapshotFlow { pager.settledPage }.distinctUntilChanged().collect { i -> shownNow.getOrNull(i)?.let { if (it.path != cull.selected) cull.select(it.path) } } }
+    // 选中 → 翻页：选中换了（小图条点的）就翻过去；只是列表变了（改判的那张离开了当前页签）就直接对准，不做动画；正在翻时不抢
+    var lastSel by remember { mutableStateOf(cull.selected) }
+    LaunchedEffect(cull.selected, shown) {
+        if (pager.isScrollInProgress) return@LaunchedEffect
+        val i = shown.indexOfFirst { it.path == cull.selected }
+        if (i >= 0 && i != pager.currentPage) { if (cull.selected != lastSel) pager.animateScrollToPage(i) else pager.scrollToPage(i) }
+        lastSel = cull.selected
+    }
     val photo = shown.getOrNull(pager.currentPage) ?: return
 
     Column(Modifier.fillMaxSize().padding(bottom = bottomPad)) {

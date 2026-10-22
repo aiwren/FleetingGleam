@@ -24,6 +24,8 @@ import com.fleetinggleam.android.core.t
  */
 class AnalysisService : Service() {
     private var off: (() -> Unit)? = null
+    /** 分析期间不让 CPU 睡下去：熄屏后前台服务还在，可 CPU 一睡分析就停了。最多拿 6 小时，分析结束就放。 */
+    private var wake: android.os.PowerManager.WakeLock? = null
     private var name = ""
     private var lastShown = 0L
 
@@ -40,6 +42,10 @@ class AnalysisService : Service() {
         val type = if (Build.VERSION.SDK_INT >= 35) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING else ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
         // 直接调系统的 startForeground：androidx 的 ServiceCompat 不认识 API 35 新加的 mediaProcessing，会把它屏蔽成"无类型"，系统随即拒绝
         startForeground(ID, build(Progress()), type)
+        if (wake == null) wake = getSystemService(android.os.PowerManager::class.java).newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "fleetinggleam:analysis").apply {
+            setReferenceCounted(false)
+            acquire(6 * 60 * 60 * 1000L)
+        }
         off?.invoke()
         off = Core.listen("scan-progress") { raw ->
             val p = runCatching { Fg.json.decodeFromString<Progress>(raw) }.getOrNull() ?: return@listen
@@ -72,6 +78,8 @@ class AnalysisService : Service() {
     override fun onDestroy() {
         off?.invoke()
         off = null
+        wake?.let { if (it.isHeld) it.release() }
+        wake = null
         super.onDestroy()
     }
 

@@ -123,9 +123,13 @@ private val ROOM = Color(0xFF0B0B0D)
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, onDecide: (String, String?) -> Unit) {
-    val shown = data.shown
-    val start = data.index(cull.selected).coerceAtLeast(0)
+fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, readOnly: Boolean = false, onDecide: (String, String?, List<Photo>) -> Unit) {
+    // 大图开着时照片的顺序和成员定在打开那一刻：在"保留"页签里把一张改成淘汰，它不会从翻页器里消失
+    // （以前会：后面的照片整体前移一位，页码对不上，翻页器和选中来回跳，就是一直闪）。照片记录本身按路径取最新的（转向等）
+    val order = remember { data.shown.map { it.path } }
+    val shown = remember(data.byPath) { order.mapNotNull { data.byPath[it] } }
+    val indexOf = { path: String? -> if (path == null) -1 else shown.indexOfFirst { it.path == path } }
+    val start = indexOf(cull.selected).coerceAtLeast(0)
     if (shown.isEmpty()) { cull.viewer = false; return }
     val ctx = LocalContext.current
     val density = LocalDensity.current
@@ -148,7 +152,7 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, on
 
     // 选中的跟着翻页走；从外面换了（下面的小图条）就翻过去
     LaunchedEffect(pager) { snapshotFlow { pager.settledPage }.distinctUntilChanged().collect { i -> shown.getOrNull(i)?.let { cull.select(it.path) } } }
-    LaunchedEffect(cull.selected) { val i = data.index(cull.selected); if (i >= 0 && i != pager.currentPage) pager.animateScrollToPage(i) }
+    LaunchedEffect(cull.selected) { val i = indexOf(cull.selected); if (i >= 0 && i != pager.currentPage && !pager.isScrollInProgress) pager.animateScrollToPage(i) }
     LaunchedEffect(Unit) { enter.animateTo(1f, Motion.view()) }
 
     fun close() {
@@ -204,7 +208,7 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, on
                             val v = drag.value
                             when {
                                 v > with(density) { 110.dp.toPx() } -> close()
-                                v < -with(density) { 80.dp.toPx() } -> { info = true; scope.launch { drag.animateTo(0f, Motion.glide()) } }
+                                v < -with(density) { 80.dp.toPx() } -> { if (!readOnly) info = true; scope.launch { drag.animateTo(0f, Motion.glide()) } }
                                 else -> scope.launch { drag.animateTo(0f, Motion.glide()) }
                             }
                         },
@@ -272,11 +276,12 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, on
                 Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Strip(shown, decisions, pager.currentPage) { cull.select(it) }
                     val d = decisions[photo.path]
-                    GlassBox(Modifier.padding(top = 10.dp), shape = RoundedCornerShape(50)) {
+                    // 只看（分析中点开的）：不放改判、转向和检查器
+                    if (!readOnly) GlassBox(Modifier.padding(top = 10.dp), shape = RoundedCornerShape(50)) {
                         Row(Modifier.padding(6.dp), verticalAlignment = Alignment.CenterVertically) {
                             listOf("keep", "review", "reject").forEach { st ->
                                 val on = d?.state == st
-                                DecideBtn(st, on) { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onDecide(photo.path, if (on && d?.manual == true) null else st) }
+                                DecideBtn(st, on) { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onDecide(photo.path, if (on && d?.manual == true) null else st, shown) }
                             }
                             Box(Modifier.padding(horizontal = 4.dp).width(1.dp).height(26.dp).background(LocalFg.current.line))
                             DecideIcon(Icons.ROTATE, t("viewer.rotate")) { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); scope.launch { runCatching { Session.rotate(photo.path) } } }
@@ -293,7 +298,7 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, on
         val mates = remember(photo, data) { Session.photos.value.filter { it.group == photo.group } }
         ModalBottomSheet(onDismissRequest = { info = false }, sheetState = sheet, containerColor = LocalFg.current.canvas) {
             Column(Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
-                InspectorBody(photo, decisions[photo.path], mates, onDecide = { onDecide(photo.path, it) }, onSelect = { cull.select(it) })
+                InspectorBody(photo, decisions[photo.path], mates, onDecide = { onDecide(photo.path, it, shown) }, onSelect = { cull.select(it) })
             }
         }
     }

@@ -56,7 +56,16 @@
   "cull": {
    "hint": "Tap a photo to select it; the bar below keeps, rejects or opens it. In single view, push up to keep and pull down to reject.",
    "undo": "Undo",
-   "peopleScenes": "People & scenes"
+   "peopleScenes": "People & scenes",
+   "etaLeft": "about {{time}} left",
+   "allowBackground": "Stops when you switch apps? Tap to let FleetingGleam run in the background",
+   "canLeave": "You can leave this page or switch apps; the analysis carries on in the background.",
+   "busyTitle": "“{{name}}” is still being analysed",
+   "busyBody": "One project is analysed at a time. Stop “{{name}}” (nothing analysed is lost; it carries on when you go back) and analyse this one?",
+   "busyStop": "Stop it and analyse this",
+   "bgDone": "“{{name}}” is analysed",
+   "bgFailed": "“{{name}}” could not be analysed: {{error}}",
+   "open": "Open"
   },
   "models": {
    "background": "Download in background",
@@ -81,7 +90,8 @@
    "allProjects": "All projects",
    "marked": "{{count}} marked",
    "recent": "Recent",
-   "justNow": "just now"
+   "justNow": "just now",
+   "analysing": "Analysing {{done}} / {{total}}"
   },
   "start": {
    "fact1": "Analysed on this phone only; nothing is uploaded",
@@ -99,7 +109,8 @@
    "onePerGroupDesc": "The others go to review or are rejected"
   },
   "ready": {
-   "note": "Everything runs on this phone; the originals are never changed."
+   "note": "Everything runs on this phone; the originals are never changed.",
+   "resume": "{{done}} already analysed; only the rest are analysed this time."
   }
  },
  "models": {
@@ -160,5 +171,8 @@
   "trashTitle": "Move to the bin",
   "trashGo": "Move to the bin ({{count}})",
   "trashed": "{{count}} moved to the bin"
+ },
+ "mark": {
+  "clear": "Undo"
  }
 }

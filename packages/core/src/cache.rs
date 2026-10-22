@@ -153,7 +153,7 @@ impl Cache {
 
     /// Whether `get` would answer, without copying the photo (and its vectors) out: for the many places that only need to know.
     pub fn has(&self, key: &str, size: u64, mtime: i64, tag: &str) -> bool {
-        self.entries.get(key).map_or(false, |e| e.tag == tag && e.size == size && e.mtime == mtime && Path::new(&e.photo.thumb).exists())
+        self.entries.get(key).map_or(false, |e| e.tag == tag && e.size == size && e.mtime == mtime)
     }
 
     /// 已知这张照片（文件没变）时它的尺寸：不管是哪一版模型分析的，尺寸都一样，所以不看 tag。
@@ -163,10 +163,11 @@ impl Cache {
         (e.size == size && e.mtime == mtime && e.photo.width > 0 && e.photo.height > 0).then_some((e.photo.width, e.photo.height))
     }
 
-    /// A cached photo, only if the file is unchanged and its thumbnail is still on disk.
+    /// A cached photo, if the file is unchanged. 缩略图不在了（手机的"清理加速"会清应用缓存）也算：分析结果没丢，
+    /// 调用方只要重做缩略图（`scan_project` 会做），不用整张重新分析。
     pub fn get(&self, key: &str, size: u64, mtime: i64, tag: &str) -> Option<Photo> {
         let e = self.entries.get(key)?;
-        if e.tag != tag || e.size != size || e.mtime != mtime || !Path::new(&e.photo.thumb).exists() {
+        if e.tag != tag || e.size != size || e.mtime != mtime {
             return None;
         }
         let mut p = e.photo.clone();

@@ -76,6 +76,7 @@ import java.io.File
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
+import com.fleetinggleam.android.core.Session
 
 /** The module's landing page: every project as a card, plus a recycle bin for the ones you delete (the Mac's ProjectHome.tsx). */
 @Composable
@@ -289,7 +290,9 @@ private fun ProjectCard(p: Project, inBin: Boolean, index: Int, armed: Boolean, 
         }
         Column(Modifier.padding(horizontal = 2.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
             Text(p.name, style = Type.rowTitle.copy(color = c.ink, fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = Ellipsis)
-            Text(
+            val bg = AnalysingLine(p)
+            if (bg != null) Text(bg, style = Type.monoSmall.copy(color = c.ink), maxLines = 1)
+            else Text(
                 if (inBin) t("bin.daysLeft", "n" to Projects.daysLeft(p), "count" to Projects.daysLeft(p))
                 else t("home.photos", "count" to p.count) + if (p.folders.size > 1) " · ${t("home.folders", "count" to p.folders.size)}" else "",
                 style = Type.monoSmall.copy(color = c.ash), maxLines = 1,
@@ -300,6 +303,15 @@ private fun ProjectCard(p: Project, inBin: Boolean, index: Int, armed: Boolean, 
             FgButton(if (armed) t("bin.purgeConfirm") else t("bin.purge"), onPurge, small = true, on = armed)
         }
     }
+}
+
+/** 这个项目正在后台分析：卡片上那一行写"分析中 n / 总数"（暂停了写暂停的原因）。 */
+@Composable
+private fun AnalysingLine(p: Project): String? {
+    val run by Session.running.collectAsState()
+    val prog by Session.progress.collectAsState()
+    if (run?.id != p.id) return null
+    return if (prog.total > 0) t("android.home.analysing", "done" to prog.done, "total" to prog.total) else t("cull.analyzing")
 }
 
 /** 最近的项目：通栏大卡，封面铺满，底部一条深色渐变托着名字、张数、上次时间和"继续挑选"。长按和小卡一样出菜单（重命名、移到回收站）。 */
@@ -332,7 +344,7 @@ private fun HeroCard(p: Project, onOpen: () -> Unit, onTrash: () -> Unit, onRena
         Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(120.dp).background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color.Transparent, Color(0xCC000000)))))
         Row(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.Bottom) {
             Column(Modifier.weight(1f)) {
-                Text(t("android.home.recent"), style = Type.monoSmall.copy(color = Color.White.copy(alpha = 0.7f)))
+                Text(AnalysingLine(p) ?: t("android.home.recent"), style = Type.monoSmall.copy(color = Color.White.copy(alpha = if (Session.running.collectAsState().value?.id == p.id) 0.95f else 0.7f)))
                 Text(p.name, style = Type.title.copy(color = Color.White), maxLines = 1, overflow = Ellipsis)
                 Text(
                     listOf(t("home.photos", "count" to p.count), p.overrides.size.takeIf { it > 0 }?.let { t("android.home.marked", "count" to it) }, p.updated.takeIf { it > 0 }?.let { if (System.currentTimeMillis() - it < 60_000) t("android.home.justNow") else android.text.format.DateUtils.getRelativeTimeSpanString(it, System.currentTimeMillis(), android.text.format.DateUtils.MINUTE_IN_MILLIS).toString() }).filterNotNull().joinToString(" · "),

@@ -15,6 +15,8 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.flow.first
 
 /** 一个项目在界面上的阶段（和桌面端 Culling.tsx 的 Phase 一样）。 */
 enum class Phase { Idle, Probing, Ready, Scanning, Loading, Done }
@@ -24,6 +26,9 @@ data class StageInfo(val stage: String, val pct: Int, val thumb: String?, val wi
 
 /** 分析为什么停了（手机才有：太热、电量太低），停了之后条件好转会自己接着分析。 */
 enum class Pause { None, Hot, Battery }
+
+/** 正在跑的那次分析（有进度的那种）属于哪个项目。离开这个项目时它不停，转到后台；首页那张卡上显示进度。 */
+data class Running(val id: String, val name: String)
 
 /**
  * 打开着的那个项目（桌面端 Culling.tsx 里不画界面的那一半，原样搬过来）：
@@ -65,6 +70,20 @@ object Session {
     @Volatile var lastStage: Pair<String, String>? = null; private set
     @Volatile var startedAt = 0L; private set
 
+    /** 正在分析的项目（同一时间只有一个）；离开它时照跑，`attached` 为假。 */
+    val running = MutableStateFlow<Running?>(null)
+    /** 要开始分析这个项目，可另一个项目还在分析：页面问一句要不要先停下它。 */
+    val conflict = MutableStateFlow<Running?>(null)
+    /** 分析中这一屏正显示着它（离开项目时为假：事件照收，界面不动）。 */
+    @Volatile private var attached = false
+    /** 开始分析时那个项目的文件列表（回到它时照片墙要用）。 */
+    @Volatile private var runningFiles: List<ProbeFile> = emptyList()
+    @Volatile private var runningFolders: List<String> = emptyList()
+    /** 因为太热 / 电量低停下的那个项目（条件好转后接着分析，不管现在开着哪个项目）。 */
+    @Volatile private var pausedProject: Running? = null
+    /** 上一次进的项目（离开时只取消它自己的读取 / 分析）。 */
+    @Volatile private var enteredId: String? = null
+
     @Volatile private var token = 0
     private var job: Job? = null
     private var decideJob: Job? = null
@@ -105,10 +124,11 @@ object Session {
     }
 
     private fun listen() {
-        Core.listen("scan-progress") { raw -> if (phase.value == Phase.Scanning) runCatching { progress.value = Fg.json.decodeFromString<Progress>(raw) } }
+        // 有进度的事件只来自正在跑的那次分析（安静地读缓存不发）：项目在后台分析时也照收，回来时照片墙是全的
+        Core.listen("scan-progress") { raw -> if (running.value != null) runCatching { progress.value = Fg.json.decodeFromString<Progress>(raw) } }
         Core.listen("scan-info") { raw -> runCatching { Settings.setScanInfo(Fg.json.decodeFromString(raw)) } }
         Core.listen("scan-stage") { raw ->
-            if (phase.value != Phase.Scanning) return@listen
+            if (running.value == null) return@listen
             val p = runCatching { Fg.json.decodeFromString<StageEvent>(raw) }.getOrNull() ?: return@listen
             val old = stages[p.path]
             stages[p.path] = StageInfo(p.stage, p.pct, p.thumb ?: old?.thumb, p.width ?: old?.width, p.height ?: old?.height)
@@ -116,7 +136,7 @@ object Session {
             flush()
         }
         Core.listen("scan-photo") { raw ->
-            if (phase.value != Phase.Scanning) return@listen
+            if (running.value == null) return@listen
             val p = runCatching { Fg.json.decodeFromString<Photo>(raw) }.getOrNull() ?: return@listen
             results[p.path] = p
             stages.remove(p.path)
@@ -124,7 +144,7 @@ object Session {
         }
         // the photos that were already analysed arrive in batches
         Core.listen("scan-photos") { raw ->
-            if (phase.value != Phase.Scanning) return@listen
+            if (running.value == null) return@listen
             val list = runCatching { Fg.json.decodeFromString(ListSerializer(Photo.serializer()), raw) }.getOrNull() ?: return@listen
             for (p in list) { results[p.path] = p; stages.remove(p.path) }
             flush()
@@ -138,13 +158,28 @@ object Session {
     /** Entering a project (or changing its folders): read sizes first, then either wait for the go-ahead (new photos) or open instantly from the cache. */
     fun enter() {
         val tok = ++token
-        // whatever scan was running belonged to the project (or settings) just left; it stops at its next photo
-        runCatching { Core.callBlocking("scan_cancel") }
-        Scans.stopped()
-        undoStack.clear(); undoCount.value = 0
-        error.value = null; celebrate.value = false; dirty.value = 0; nasProg.value = null; peopleProg.value = null; mediaProg.value = null; paused.value = Pause.None
-        decisions.value = emptyMap()
         val project = current()
+        val run = running.value
+        val left = enteredId
+        enteredId = project?.id
+        // 回到正在分析的那个项目（文件夹没变）：接上，照片墙和进度都还在，不重来
+        if (run != null && project != null && project.id == run.id && project.folders == runningFolders) {
+            attached = true
+            currentKey = "${project.id}|${project.folders.joinToString("|")}"
+            job?.cancel()
+            error.value = null; nasProg.value = null; probeProg.value = null
+            files.value = runningFiles
+            phase.value = Phase.Scanning
+            flush()
+            return
+        }
+        // 离开的那个项目：只停它自己的读取 / 分析。正在分析的那个转到后台接着跑（通知栏照常显示进度）
+        attached = false
+        if (left != null && left != run?.id) runCatching { Core.callBlocking("scan_cancel", args("key" to left)) }
+        undoStack.clear(); undoCount.value = 0
+        error.value = null; celebrate.value = false; dirty.value = 0; nasProg.value = null; peopleProg.value = null; mediaProg.value = null
+        if (run == null && pausedProject == null) paused.value = Pause.None
+        decisions.value = emptyMap()
         currentKey = project?.let { "${it.id}|${it.folders.joinToString("|")}" } ?: ""
         if (project == null || project.folders.isEmpty()) { phase.value = Phase.Idle; photos.value = emptyList(); files.value = emptyList(); return }
         probeProg.value = null
@@ -192,18 +227,36 @@ object Session {
         }
     }
 
-    private suspend fun runScan(project: Project, total: Int, quiet: Boolean, tok: Int, force: Boolean = false) {
-        results.clear(); stages.clear(); lastStage = null
-        startedAt = System.currentTimeMillis()
-        progress.value = Progress(0, total)
-        phase.value = if (quiet) Phase.Loading else Phase.Scanning
-        if (!quiet) Scans.started(app, project.name)
+    /**
+     * `quiet` = 只是从缓存打开（没有进度事件，不挂前台服务）；否则是一次真正的分析：它属于 `project`，离开那个项目也照跑，
+     * 跑完时如果页面还开着它就把结果交给页面，不然只更新项目封面、弹一句"分析完成"。`attach` = 页面现在就显示这次分析。
+     */
+    private suspend fun runScan(project: Project, total: Int, quiet: Boolean, tok: Int, force: Boolean = false, attach: Boolean = true) {
+        if (quiet) phase.value = Phase.Loading
+        else {
+            results.clear(); stages.clear(); lastStage = null
+            startedAt = System.currentTimeMillis()
+            progress.value = Progress(0, total)
+            running.value = Running(project.id, project.name)
+            runningFolders = project.folders
+            if (attach) { runningFiles = files.value; attached = true; phase.value = Phase.Scanning }
+            Scans.started(app, project.name)
+        }
+        // 结果交不交给页面：安静的读取看 token；分析看页面是不是还开着它
+        fun mine() = if (quiet) tok == token else attached && current()?.id == project.id
         try {
             val res = Core.get<List<Photo>>("scan_project", args(
                 "key" to project.id, "dirs" to project.folders, "compute" to "auto", "quality" to Strategy.currentTier(), "style" to project.style,
                 "learn" to (Settings.value.learn && project.learn != false), "quiet" to quiet, "force" to force, "eye_method" to Strategy.eyeMethodNow(),
             ))
-            if (tok != token) return
+            if (!quiet) finishRunning()
+            if (!mine()) {
+                if (!quiet) {
+                    Projects.update(project.id) { it.copy(cover = res.sortedByDescending { p -> p.score }.take(4).map { p -> p.thumb }, count = res.size) }
+                    com.fleetinggleam.android.ui.components.Toasts.show(t("android.cull.bgDone", "name" to project.name), t("android.cull.open")) { Projects.setActive(project.id) }
+                }
+                return
+            }
             // 进项目时取舍已清空；照片和上次一模一样时 StateFlow 不会再发一次，得自己重算
             val same = photos.value == res
             photos.value = res
@@ -213,16 +266,24 @@ object Session {
             Projects.update(project.id) { it.copy(cover = res.sortedByDescending { p -> p.score }.take(4).map { p -> p.thumb }) }
             if (!quiet) { celebrate.value = true; scope.launch { delay(3200); celebrate.value = false } }
         } catch (e: Exception) {
+            if (!quiet) finishRunning()
             // a cancelled scan is not an error: the project simply goes back to "ready to analyse" (or waits to resume, when the phone paused it)
-            if (tok == token) { if (e.message != "cancelled") error.value = e.message; phase.value = Phase.Ready; prepareReady(tok) }
-        } finally {
-            if (!quiet) Scans.stopped()
+            if (mine()) { if (e.message != "cancelled") error.value = e.message; phase.value = Phase.Ready; prepareReady(token) }
+            else if (!quiet && e.message != "cancelled") com.fleetinggleam.android.ui.components.Toasts.show(t("android.cull.bgFailed", "name" to project.name, "error" to e.message))
         }
     }
 
-    /** "开始分析"：应用定下模型；它要的（含眼睛与人物）第一次在一个问题里下载。 */
+    /** 这次分析结束了（完成、停下或出错）：不再算"正在分析"，前台服务撤掉。 */
+    private fun finishRunning() {
+        running.value = null
+        Scans.stopped()
+    }
+
+    /** "开始分析"：应用定下模型；它要的（含眼睛与人物）第一次在一个问题里下载。另一个项目还在分析时先问一句。 */
     fun startScan() {
         val project = current() ?: return
+        val run = running.value
+        if (run != null && run.id != project.id) { conflict.value = run; return }
         val tok = token
         scope.launch {
             val tier = Strategy.resolveTier()
@@ -233,11 +294,23 @@ object Session {
         }
     }
 
-    fun stopScan() { runCatching { Core.callBlocking("scan_cancel") } }
+    /** 停下正在跑的那次分析（不管页面开着哪个项目：通知栏的"停止"也走这里）。 */
+    fun stopScan() { running.value?.let { r -> runCatching { Core.callBlocking("scan_cancel", args("key" to r.id)) } } }
 
-    /** 手机太热或电量太低时停下（已分析的都在缓存里）；条件好转后从停下的地方接着分析。 */
+    /** 问过了：先停下另一个项目的分析（分析过的都在缓存里，回到它时接着来），再分析这个。 */
+    fun stopOtherAndStart() {
+        conflict.value = null
+        stopScan()
+        scope.launch {
+            withTimeoutOrNull(10_000) { running.first { it == null } }
+            startScan()
+        }
+    }
+
+    /** 手机太热或电量太低时停下（已分析的都在缓存里）；条件好转后从停下的地方接着分析，不管那时开着哪个项目。 */
     fun pauseFor(why: Pause) {
-        if (phase.value != Phase.Scanning) return
+        val run = running.value ?: return
+        pausedProject = run
         paused.value = why
         stopScan()
     }
@@ -245,11 +318,27 @@ object Session {
     fun resumeAfterPause() {
         if (paused.value == Pause.None) return
         paused.value = Pause.None
-        if (phase.value == Phase.Ready) startScan()
+        val p = pausedProject ?: return
+        pausedProject = null
+        val project = Projects.store.value.projects.firstOrNull { it.id == p.id && it.trashed == null } ?: return
+        if (current()?.id == project.id) { if (phase.value == Phase.Ready) startScan(); return }
+        // 那个项目已经不在眼前：在后台接着分析（先把文件列表拿回来，回到它时照片墙要用）
+        scope.launch {
+            val probe = runCatching { Core.get<Probe>("probe_folder", args("dirs" to project.folders, "compute" to "auto", "quality" to Strategy.currentTier())) }.getOrNull() ?: return@launch
+            if (running.value != null) return@launch
+            runningFiles = probe.files
+            runScan(project, probe.files.size, quiet = false, tok = token, attach = false)
+        }
     }
 
     fun reevaluate() { val p = current() ?: return; val tok = token; scope.launch { runScan(p, files.value.size, quiet = true, tok = tok) } }
-    fun forceRescan() { val p = current() ?: return; val tok = token; scope.launch { runScan(p, files.value.size, quiet = false, tok = tok, force = true) } }
+    fun forceRescan() {
+        val p = current() ?: return
+        val run = running.value
+        if (run != null && run.id != p.id) { conflict.value = run; return }
+        val tok = token
+        scope.launch { runScan(p, files.value.size, quiet = false, tok = tok, force = true) }
+    }
 
     fun addFolder(dir: String) { val p = current() ?: return; if (dir !in p.folders) Projects.update(p.id) { it.copy(folders = it.folders + dir) } }
     fun removeFolder(dir: String) { val p = current() ?: return; Projects.update(p.id) { it.copy(folders = it.folders - dir) } }

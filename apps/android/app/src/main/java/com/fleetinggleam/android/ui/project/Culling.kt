@@ -268,13 +268,20 @@ fun reasonText(r: Reason): String {
     return t(r.k, *(params + ("state" to state)).toTypedArray())
 }
 
-/** 改判，并处理筛选视图里的细节（桌面端 decide）：改了之后不再属于这个视图的那张，选中挪到它的邻居上。 */
-fun decideIn(cull: CullState, data: CullData, path: String, st: String?) {
+/**
+ * 改判，并处理筛选视图里的细节（桌面端 decide）：改了之后不再属于这个视图的那张，选中挪到它的邻居上。
+ * `order` 是眼前这一串照片的顺序：大图里传它自己打开时定下的那一串，邻居就在翻页器里找（往后找第一张还在这个页签里的，
+ * 没有再往前找），不会选中一张翻页器里没有的照片——以前从实时列表找，划回去时选中和翻页对不上，来回跳着闪。
+ */
+fun decideIn(cull: CullState, data: CullData, path: String, st: String?, order: List<Photo> = data.shown) {
     Session.decide(path, st)
     cull.bumpHint()
     if (st != null && cull.mode != "all" && st != cull.mode) {
-        val i = data.shown.indexOfFirst { it.path == path }
-        val nb = data.shown.getOrNull(i + 1) ?: data.shown.getOrNull(i - 1)
+        val i = order.indexOfFirst { it.path == path }
+        val inView = data.shown.mapTo(HashSet()) { it.path }
+        val ok = { p: Photo -> p.path != path && p.path in inView }
+        val nb = order.drop(i + 1).firstOrNull(ok) ?: order.take(i.coerceAtLeast(0)).lastOrNull(ok)
+            ?: order.getOrNull(i + 1) ?: order.getOrNull(i - 1)
         cull.select(nb?.path?.takeIf { it != path })
     }
 }

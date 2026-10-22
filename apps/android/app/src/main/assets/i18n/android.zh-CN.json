@@ -56,7 +56,16 @@
   "cull": {
    "hint": "点一张照片选中，底栏可以保留、淘汰或放大查看；单张模式里上推留下、下拉淘汰。",
    "undo": "撤销",
-   "peopleScenes": "人物与场景"
+   "peopleScenes": "人物与场景",
+   "etaLeft": "约剩 {{time}}",
+   "allowBackground": "切到后台会停？点这里允许惊鸿在后台运行",
+   "canLeave": "可以离开这一页或切到别的应用，分析会在后台接着跑。",
+   "busyTitle": "「{{name}}」还在分析",
+   "busyBody": "同一时间只分析一个项目。先停下「{{name}}」（分析过的不会丢，回到它时接着来），分析这个项目？",
+   "busyStop": "停下它，分析这个",
+   "bgDone": "「{{name}}」分析完成",
+   "bgFailed": "「{{name}}」分析出错：{{error}}",
+   "open": "打开"
   },
   "models": {
    "background": "后台下载",
@@ -81,7 +90,8 @@
    "allProjects": "全部项目",
    "marked": "已标 {{count}} 张",
    "recent": "最近",
-   "justNow": "刚刚"
+   "justNow": "刚刚",
+   "analysing": "分析中 {{done}} / {{total}}"
   },
   "start": {
    "fact1": "只在这台手机上分析，照片不会上传",
@@ -99,7 +109,8 @@
    "onePerGroupDesc": "其余的放进待复查或淘汰"
   },
   "ready": {
-   "note": "全程只在这台手机上运行，原图不会被改动。"
+   "note": "全程只在这台手机上运行，原图不会被改动。",
+   "resume": "已分析 {{done}} 张，这次只分析剩下的。"
   }
  },
  "models": {
@@ -149,5 +160,8 @@
   "trashTitle": "移到回收站",
   "trashGo": "移到回收站（{{count}} 张）",
   "trashed": "已移到回收站 {{count}} 张"
+ },
+ "mark": {
+  "clear": "撤销"
  }
 }

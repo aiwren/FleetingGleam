@@ -45,6 +45,17 @@ object Scans {
         }, IntentFilter(Intent.ACTION_BATTERY_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED)
     }
 
+    /** 系统已经不"优化"这个应用的电量了（切到后台不会被停掉）。 */
+    fun backgroundAllowed(ctx: Context): Boolean = ctx.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(ctx.packageName)
+
+    /** 请系统允许在后台运行：弹的是系统自己的确认框；有的手机没有这个框，就打开电池优化的列表让人自己找。 */
+    fun askBackground(ctx: Context) {
+        val direct = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, android.net.Uri.parse("package:${ctx.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { ctx.startActivity(direct) }.onFailure {
+            runCatching { ctx.startActivity(Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+        }
+    }
+
     /** 现在适不适合开始分析（太热或电量太低就先等）。 */
     fun blocker(): Pause = when {
         thermal >= PowerManager.THERMAL_STATUS_SEVERE -> Pause.Hot
