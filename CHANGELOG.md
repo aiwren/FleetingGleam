@@ -11,6 +11,7 @@
 - Android 随包带 Baseline Profile（`app/src/main/baseline-prof.txt` 与 `startup-prof.txt`，由 `:baselineprofile` 模块在连着的 API 33+ 设备上生成：`./gradlew :baselineprofile:collectNonMinifiedReleaseBaselineProfile`），安装后 ART 直接预编译冷启动和照片墙的热路径。
 - Android 包体：原生库在 APK 里压缩存放（下载体积 40 MB → 20 MB；安装时解压一份，装完多占约 34 MB），并显式用 NDK 的 llvm-strip 去掉符号表（之前 cargo 的 strip 没落到这个库上）。试过把冷路径依赖按体积编译，只省 0.5 MB，没采用。Geist 六个字重子集化（只留文案用到的拉丁字母、标点和符号，870 KB → 372 KB；中文本来就回落到系统字体）。
 - Android 的照片解码交给系统（`core/Images.kt` 实现核心库的 `SystemImages`）：BitmapFactory 按需缩放解码、BitmapRegionDecoder 只解屏幕上那一块，分析两亿像素的照片只解到约 3 MP、放大查看只解看得到的区域，不再整张（600 MB）进内存；顺带认识 HEIC / AVIF。Mac 端 JPEG 仍由 `image` crate 解（ImageIO 边车是另一个进程，每次调用有开销），但超过 4000 万像素的照片改请边车缩着解，不再整张解出来。
+- Android 分析中那一屏重做：进度横幅改成暗色封面卡（正在分析的照片做底、大数字进度、预计、当前阶段、暖光进度条、停止胶囊），显影照片墙改三列方格。
 - Android 准备页重做（作者嫌旧版丑）：封面拼图上压着张数、大小和预计时间，下面是 iOS 分组列表（名称、文件夹、偏好、备注），偏好每行一句短说明、长解释收进"?"，底部只留"开始分析"和一句话；项目设置页同一套。从手机存储根目录建的项目叫"手机存储"而不是"0"。
 - 关于页去掉"第三方模型与许可"一行和版本下面那句说明（Mac 与 Android）；Android 的隐私政策、使用条款改在应用内从底部推上来的半屏浏览器里看（Chrome Custom Tabs 的局部高度，没有支持的浏览器时照常跳转）。
 - Android 选片底栏：选中一张后点保留 / 淘汰不再整条闪一下（只有"有没有选中"变了才换内容，判定变化只平滑换颜色）；"缩略网格"在手机上简称"网格"。

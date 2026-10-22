@@ -56,6 +56,10 @@ import com.fleetinggleam.android.ui.theme.Ellipsis
 import com.fleetinggleam.android.ui.theme.LocalFg
 import com.fleetinggleam.android.ui.theme.Type
 import kotlinx.coroutines.launch
+import androidx.compose.animation.core.tween
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.draw.blur
 
 /**
  * 一个项目（桌面端 Culling.tsx 的手机版）：顶部工具栏，分析时的横幅，按阶段显示——读文件夹、开始分析前的灯箱、正在显影的照片墙、分析好的照片墙。
@@ -118,28 +122,19 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
         OrganizeDialogs(project, organize) { organize = false }
         Box(Modifier.fillMaxWidth().height(1.dp).background(c.line))
 
-        // ---- 横幅：分析中（进度、预计、此刻在做哪张、停止），分析完的一行总结
+        // ---- 横幅（和准备页同一套语言，都在页边距里的圆角卡）：分析中是一张暗色封面卡，正在看的那张照片糊在底下、白字压上去；
+        //      暂停和分析完的一行总结是白卡
         AnimatedVisibility(scanning || celebrate || paused != Pause.None, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
-            Column(Modifier.fillMaxWidth().background(c.panel).padding(horizontal = 16.dp, vertical = 12.dp)) {
-                if (paused != Pause.None) {
-                    Text(t(if (paused == Pause.Hot) "android.paused.hot" else "android.paused.battery"), style = Type.small.copy(color = c.ink))
-                } else if (scanning) {
-                    val elapsed = (System.currentTimeMillis() - Session.startedAt) / 1000f
-                    val left = if (progress.done >= 4) maxOf(1, Math.round(elapsed / progress.done * (progress.total - progress.done))) else null
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(t("cull.analyzing"), style = Type.bodyStrong.copy(color = c.ink))
-                        Row(Modifier.weight(1f).padding(start = 10.dp), verticalAlignment = Alignment.Bottom) {
-                            Ticker(progress.done, Type.mono.copy(color = c.ash))
-                            Text(" / ${progress.total}" + (left?.let { " · " + t("cull.eta", "s" to it) } ?: ""), style = Type.mono.copy(color = c.ash), maxLines = 1)
-                        }
-                        FgButton(t("cull.stop"), { Session.stopScan() }, small = true)
+            Box(Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp)) {
+                if (scanning && paused == Pause.None) ScanningCard(progress) { Session.stopScan() }
+                else Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(c.panel).padding(16.dp)) {
+                    if (paused != Pause.None) {
+                        Text(t(if (paused == Pause.Hot) "android.paused.hot" else "android.paused.battery"), style = Type.body.copy(color = c.ink))
+                    } else {
+                        val counts = decisions.values.groupingBy { it.state }.eachCount()
+                        Text(t("cull.doneTitle"), style = Type.bodyStrong.copy(color = c.ink))
+                        Text(t("cull.doneBody", "keep" to (counts["keep"] ?: 0), "review" to (counts["review"] ?: 0), "reject" to (counts["reject"] ?: 0)), style = Type.monoSmall.copy(color = c.ash), modifier = Modifier.padding(top = 2.dp))
                     }
-                    StageLine()
-                    LiveBar(if (progress.total > 0) progress.done.toFloat() / progress.total else 0f, Modifier.padding(top = 8.dp))
-                } else {
-                    val counts = decisions.values.groupingBy { it.state }.eachCount()
-                    Text(t("cull.doneTitle"), style = Type.bodyStrong.copy(color = c.ink))
-                    Text(t("cull.doneBody", "keep" to (counts["keep"] ?: 0), "review" to (counts["review"] ?: 0), "reject" to (counts["reject"] ?: 0)), style = Type.monoSmall.copy(color = c.ash))
                 }
             }
         }
@@ -189,24 +184,59 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
     }
 }
 
-/** 分析中：每张照片都已经在它最终的位置上（真实的宽高比来自文件头），一张张显影。 */
+/** 分析中：像一张接触印样——和"网格"浏览方式同一套方格，每张照片在它的格子里一张张显影。 */
 @Composable
 private fun ScanningWall() {
     val files by Session.files.collectAsState()
     Session.tick.collectAsState().value
     val items = remember(files) { files.map { WallItem(it.path, it.width.toFloat() / it.height.coerceAtLeast(1)) } }
     val state = rememberLazyListState()
-    Wall(items, "justified", state, PaddingValues(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 40.dp)) { i, w, h ->
+    Wall(items, "grid", state, PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 40.dp)) { i, w, h ->
         val path = items[i].key
         Tile(path, w, h, Session.results[path], Session.stages[path], "", selected = false, reveal = false, dim = false, manual = false, showScore = false, index = i, interactive = false, onSelect = {}, onOpen = {}, onDecide = { _, _ -> })
     }
 }
 
-/** 横幅里"此刻在做哪张"：只有这一行跟着分析事件刷新，整页不用。 */
+/**
+ * 分析中的卡片：正在分析的那张照片糊在底下（每秒换一次，不跟着每个事件抖），白字压上去——已分析 / 总数、预计还要多久、此刻在做哪张，
+ * 底边一条带暖光的进度。只有这张卡跟着分析事件刷新，整页不用。
+ */
 @Composable
-private fun StageLine() {
-    val c = LocalFg.current
+private fun ScanningCard(progress: com.fleetinggleam.android.core.Progress, onStop: () -> Unit) {
     Session.tick.collectAsState().value
     val last = Session.lastStage
-    Text(last?.let { "${it.first.substringAfterLast('/')} · ${t("cull.stage.${it.second}")}" } ?: t("cull.loadingModel"), style = Type.monoSmall.copy(color = c.ash), maxLines = 1, overflow = Ellipsis, modifier = Modifier.padding(top = 2.dp))
+    var bg by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            Session.lastStage?.let { Session.stages[it.first]?.thumb }?.let { bg = it }
+            kotlinx.coroutines.delay(900)
+        }
+    }
+    val elapsed = (System.currentTimeMillis() - Session.startedAt) / 1000f
+    val left = if (progress.done >= 4) maxOf(1, Math.round(elapsed / progress.done * (progress.total - progress.done))) else null
+    androidx.compose.runtime.CompositionLocalProvider(LocalFg provides com.fleetinggleam.android.ui.theme.Dark) {
+        val c = LocalFg.current
+        Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(androidx.compose.ui.graphics.Color(0xFF1C1C20))) {
+            androidx.compose.animation.Crossfade(bg, animationSpec = tween(600), label = "scanbg", modifier = Modifier.matchParentSize()) { th ->
+                if (th != null) coil3.compose.AsyncImage(
+                    java.io.File(th), null, contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize().blur(26.dp).graphicsLayer { alpha = 0.6f },
+                )
+            }
+            Box(Modifier.matchParentSize().background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(androidx.compose.ui.graphics.Color(0x55000000), androidx.compose.ui.graphics.Color(0xB8000000)))))
+            Column(Modifier.padding(18.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(t("cull.analyzing"), style = Type.overline.copy(color = c.ash), modifier = Modifier.weight(1f))
+                    FgButton(t("cull.stop"), onStop, small = true)
+                }
+                Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.Bottom) {
+                    Ticker(progress.done, Type.largeTitle.copy(color = c.ink))
+                    Text(" / ${progress.total}", style = Type.title.copy(color = c.ash), modifier = Modifier.padding(bottom = 3.dp))
+                    if (left != null) Text("  ·  " + t("cull.eta", "s" to left), style = Type.monoSmall.copy(color = c.ash), modifier = Modifier.padding(bottom = 6.dp), maxLines = 1)
+                }
+                Text(last?.let { "${it.first.substringAfterLast('/')} · ${t("cull.stage.${it.second}")}" } ?: t("cull.loadingModel"), style = Type.monoSmall.copy(color = c.ash), maxLines = 1, overflow = Ellipsis, modifier = Modifier.padding(top = 4.dp))
+                LiveBar(if (progress.total > 0) progress.done.toFloat() / progress.total else 0f, Modifier.padding(top = 14.dp))
+            }
+        }
+    }
 }
