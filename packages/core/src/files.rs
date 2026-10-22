@@ -46,6 +46,13 @@ pub fn oriented_dims(p: &Path) -> Option<(u32, u32)> {
     if !crate::imageio::is_native(p) {
         return crate::imageio::info(p, false).map(|i| (i.w, i.h));
     }
+    // JPEG 自己读文件头：`image` 的 JPEG 解码器一上来就把整个文件读进内存（20 MB 的照片读 20 MB），
+    // 手机存储上一个 1 GB 的文件夹光取尺寸就要十几秒；这里只读到尺寸标记为止，一般是开头几十 KB
+    if matches!(p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref(), Some("jpg" | "jpeg" | "jpe")) {
+        if let Some(d) = jpeg_dims(p) {
+            return Some(d);
+        }
+    }
     use image::ImageDecoder;
     let reader = image::ImageReader::open(p).ok()?.with_guessed_format().ok()?;
     let mut dec = reader.into_decoder().ok()?;
@@ -54,6 +61,67 @@ pub fn oriented_dims(p: &Path) -> Option<(u32, u32)> {
         O::Rotate90 | O::Rotate270 | O::Rotate90FlipH | O::Rotate270FlipH => (h, w),
         _ => (w, h),
     })
+}
+
+/// JPEG 的显示尺寸：逐个段往后读，记下 APP1 里 EXIF 的方向，读到帧头（SOFn）就给出宽高（方向是 90° / 270° 时对调）。
+/// 读不懂的（没有 SOI、帧头里高为 0 之类）给 None，调用方退回慢的那条路。
+pub fn jpeg_dims(p: &Path) -> Option<(u32, u32)> {
+    use std::io::{BufReader, Read};
+    let mut r = BufReader::with_capacity(64 * 1024, std::fs::File::open(p).ok()?);
+    let mut b2 = [0u8; 2];
+    r.read_exact(&mut b2).ok()?;
+    if b2 != [0xFF, 0xD8] {
+        return None;
+    }
+    let mut turned = false;
+    loop {
+        // 段标记：0xFF（可能有填充的 0xFF）后跟标记字节
+        let mut m = [0u8; 1];
+        r.read_exact(&mut m).ok()?;
+        if m[0] != 0xFF {
+            return None;
+        }
+        let mut marker = 0xFFu8;
+        while marker == 0xFF {
+            r.read_exact(&mut m).ok()?;
+            marker = m[0];
+        }
+        // 没有长度的独立标记
+        if marker == 0x01 || (0xD0..=0xD7).contains(&marker) {
+            continue;
+        }
+        if marker == 0xD9 || marker == 0xDA {
+            return None; // 到了图像数据还没见到帧头
+        }
+        r.read_exact(&mut b2).ok()?;
+        let len = u16::from_be_bytes(b2) as usize;
+        if len < 2 {
+            return None;
+        }
+        let body = len - 2;
+        let sof = matches!(marker, 0xC0..=0xC3 | 0xC5..=0xC7 | 0xC9..=0xCB | 0xCD..=0xCF);
+        if sof {
+            let mut h = [0u8; 5];
+            r.read_exact(&mut h).ok()?;
+            let (hh, ww) = (u16::from_be_bytes([h[1], h[2]]) as u32, u16::from_be_bytes([h[3], h[4]]) as u32);
+            if hh == 0 || ww == 0 {
+                return None;
+            }
+            return Some(if turned { (hh, ww) } else { (ww, hh) });
+        }
+        if marker == 0xE1 && body > 6 {
+            let mut seg = vec![0u8; body];
+            r.read_exact(&mut seg).ok()?;
+            if seg.starts_with(b"Exif\0\0") {
+                if let Ok(ex) = exif::Reader::new().read_raw(seg[6..].to_vec()) {
+                    let o = ex.get_field(exif::Tag::Orientation, exif::In::PRIMARY).and_then(|f| f.value.get_uint(0)).unwrap_or(1);
+                    turned = (5..=8).contains(&o);
+                }
+            }
+            continue;
+        }
+        std::io::copy(&mut (&mut r).take(body as u64), &mut std::io::sink()).ok()?;
+    }
 }
 
 /// 写入并等它落盘，这样随后的重命名在断电后也不会指向一个空的或写了一半的文件。
@@ -125,6 +193,41 @@ mod tests {
         std::fs::write(dir.join("a (2).jpg"), b"2").unwrap();
         assert_eq!(unique_path(&dir, std::ffi::OsStr::new("a.jpg")), dir.join("a (3).jpg"));
         assert_eq!(unique_path(&dir, std::ffi::OsStr::new("b.jpg")), dir.join("b.jpg"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod jpeg_tests {
+    use super::*;
+
+    /// 自己读的 JPEG 文件头和 `image` 读出来的尺寸一样；带 EXIF 方向（旋转 90°）的宽高对调；不是 JPEG 的给 None。
+    #[test]
+    fn jpeg_header_gives_the_same_size_as_decoding() {
+        let dir = std::env::temp_dir().join(format!("fg_jpeg_dims_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for (w, h) in [(640u32, 480u32), (33, 1000), (4000, 3000)] {
+            let p = dir.join(format!("{w}x{h}.jpg"));
+            image::RgbImage::from_pixel(w, h, image::Rgb([120, 80, 40])).save(&p).unwrap();
+            assert_eq!(jpeg_dims(&p), Some((w, h)));
+            assert_eq!(oriented_dims(&p), Some((w, h)));
+        }
+        // 往 SOI 后面插一个带"方向 = 6（顺时针转 90°）"的 APP1
+        let p = dir.join("640x480.jpg");
+        let bytes = std::fs::read(&p).unwrap();
+        let mut tiff = vec![b'M', b'M', 0, 42, 0, 0, 0, 8, 0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0, 0, 0, 0, 0, 0, 0];
+        let mut app1 = b"Exif\0\0".to_vec();
+        app1.append(&mut tiff);
+        let mut turned = vec![0xFF, 0xD8, 0xFF, 0xE1];
+        turned.extend_from_slice(&((app1.len() + 2) as u16).to_be_bytes());
+        turned.extend_from_slice(&app1);
+        turned.extend_from_slice(&bytes[2..]);
+        let q = dir.join("turned.jpg");
+        std::fs::write(&q, &turned).unwrap();
+        assert_eq!(jpeg_dims(&q), Some((480, 640)));
+        let png = dir.join("x.png");
+        image::RgbImage::from_pixel(10, 20, image::Rgb([0, 0, 0])).save(&png).unwrap();
+        assert_eq!(jpeg_dims(&png), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

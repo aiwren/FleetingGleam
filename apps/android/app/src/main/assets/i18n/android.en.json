@@ -64,7 +64,9 @@
    "downloading": "Downloading {{name}}",
    "done": "{{name}} downloaded",
    "bundle": "the analysis models",
-   "pill": "Downloading {{pct}}%"
+   "pill": "Downloading {{pct}}%",
+   "skip": "Skip for now",
+   "skipBody": "The analysis runs without it — no closed-eye check or people for now. You can download it later in Settings → Models & storage."
   },
   "organize": {
    "toAlbum": "Export keepers to an album",

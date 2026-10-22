@@ -117,7 +117,8 @@ fun Modifier.glass(backdrop: Backdrop, shape: CornerBasedShape, style: GlassStyl
             lens((style.lensHeight * (1f + 0.35f * p)).toPx(), (style.lensAmount * (1f + 0.6f * p)).toPx(), depthEffect = true, chromaticAberration = true)
         },
         // 一圈随角度变亮的镜面高光（左上、右下最亮），比默认的更宽更亮
-        highlight = { Highlight(width = 1.5.dp, blurRadius = 1.dp, alpha = if (style.dark) 0.7f else 1f, style = HighlightStyle.Default(color = Color.White, angle = 45f, falloff = 1.1f)) },
+        // 真机上 1.5dp 满白的高光是一圈很粗的白边（作者 2026-10-22）：收成 0.8dp、半透明，只在斜角上亮
+        highlight = { Highlight(width = 0.8.dp, blurRadius = 0.6.dp, alpha = if (style.dark) 0.45f else 0.5f, style = HighlightStyle.Default(color = Color.White, angle = 45f, falloff = 2.2f)) },
         shadow = if (style.shadow) ({ Shadow(radius = 22.dp, offset = DpOffset(0.dp, 10.dp), color = Color.Black.copy(alpha = if (style.dark) 0.5f else 0.17f)) }) else null,
         // 内阴影：边缘向里一点点暗下去，玻璃有了厚度
         innerShadow = { InnerShadow(radius = 8.dp, offset = DpOffset(0.dp, (-3).dp), color = Color.Black.copy(alpha = if (style.dark) 0.35f else 0.09f)) },

@@ -35,6 +35,8 @@ fun ModelGate() {
         // 下载转到后台：对话框收起，通知栏里看进度（先要通知权限）
         if (gate.phase == "downloading") FgButton(t("android.models.background"), { scope.launch { com.fleetinggleam.android.core.Pickers.notificationPermission(ctx); Models.hideGate() } }, primary = true)
         if (gate.phase == "ask") FgButton(t("models.download", "size" to fmtBytes(gate.bytes)), { Models.startDownload() }, primary = true)
+        // 可选的包（人脸、眼睛、人物）没下成：可以先跳过，分析照常
+        if (gate.phase == "error" && gate.failed != null && gate.failed in gate.optional) FgButton(t("android.models.skip"), { Models.skipGate() })
         if (gate.phase == "error") FgButton(t("models.retry"), { Models.startDownload() }, primary = true)
     }) {
         when (gate.phase) {
@@ -54,6 +56,7 @@ fun ModelGate() {
             else -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(t("models.error"), style = Type.body.copy(color = c.ash))
                 Text(gate.error ?: "", style = Type.monoSmall.copy(color = c.ash))
+                if (gate.failed != null && gate.failed in gate.optional) Text(t("android.models.skipBody"), style = Type.rowDesc.copy(color = c.ash), modifier = Modifier.padding(top = 6.dp))
             }
         }
     }

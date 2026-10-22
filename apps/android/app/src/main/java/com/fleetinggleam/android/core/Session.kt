@@ -53,6 +53,8 @@ object Session {
     val nasProg = MutableStateFlow<NasProgress?>(null)
     val peopleProg = MutableStateFlow<Progress?>(null)
     val mediaProg = MutableStateFlow<Progress?>(null)
+    /** 读取文件夹（取每张的尺寸）的进度。 */
+    val probeProg = MutableStateFlow<Progress?>(null)
     val paused = MutableStateFlow(Pause.None)
     /** 还能撤销几步（工具栏的撤销按钮跟着亮、灭）。 */
     val undoCount = MutableStateFlow(0)
@@ -130,6 +132,7 @@ object Session {
         Core.listen("people-progress") { raw -> runCatching { peopleProg.value = Fg.json.decodeFromString<Progress>(raw) } }
         Core.listen("media-progress") { raw -> runCatching { mediaProg.value = Fg.json.decodeFromString<Progress>(raw) } }
         Core.listen("nas-progress") { raw -> runCatching { val p = Fg.json.decodeFromString<NasProgress>(raw); nasProg.value = if (p.done >= p.total) null else p } }
+        Core.listen("probe-progress") { raw -> runCatching { val p = Fg.json.decodeFromString<Progress>(raw); probeProg.value = if (p.done >= p.total) null else p } }
     }
 
     /** Entering a project (or changing its folders): read sizes first, then either wait for the go-ahead (new photos) or open instantly from the cache. */
@@ -144,6 +147,7 @@ object Session {
         val project = current()
         currentKey = project?.let { "${it.id}|${it.folders.joinToString("|")}" } ?: ""
         if (project == null || project.folders.isEmpty()) { phase.value = Phase.Idle; photos.value = emptyList(); files.value = emptyList(); return }
+        probeProg.value = null
         phase.value = Phase.Probing
         job?.cancel()
         job = scope.launch {
@@ -222,7 +226,7 @@ object Session {
         val tok = token
         scope.launch {
             val tier = Strategy.resolveTier()
-            if (Models.ensurePacks(Strategy.analysisPacks(tier)) == Answer.Cancelled) return@launch
+            if (Models.ensurePacks(Strategy.analysisPacks(tier), optional = setOf(PackIds.DETECT, PackIds.EYES, PackIds.FACES)) == Answer.Cancelled) return@launch
             if (tok != token) return@launch
             paused.value = Pause.None
             runScan(project, files.value.size, quiet = false, tok = tok)

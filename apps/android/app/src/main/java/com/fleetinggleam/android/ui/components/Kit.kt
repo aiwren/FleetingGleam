@@ -387,14 +387,15 @@ fun StateDot(text: String, on: Boolean) {
 fun LiveBar(fraction: Float, modifier: Modifier = Modifier, glint: Boolean = true) {
     val c = LocalFg.current
     val f by animateFloatAsState(fraction.coerceIn(0f, 1f), tween(500, easing = Motion.easeOut), label = "bar")
-    Canvas(modifier.fillMaxWidth().height(3.dp)) {
-        drawRoundRect(c.surface2, cornerRadius = androidx.compose.ui.geometry.CornerRadius(2.dp.toPx()))
-        val w = size.width * f
-        drawRoundRect(c.ink, size = size.copy(width = w), cornerRadius = androidx.compose.ui.geometry.CornerRadius(2.dp.toPx()))
-        if (glint && f > 0f && f < 1f) {
-            val gw = 34.dp.toPx()
-            drawRect(Brush.horizontalGradient(listOf(Color.Transparent, c.gleam), startX = w - gw, endX = w), topLeft = Offset(w - gw, -3.dp.toPx()), size = androidx.compose.ui.geometry.Size(gw, size.height + 6.dp.toPx()), alpha = 0.85f)
-        }
+    Canvas(modifier.fillMaxWidth().height(4.dp)) {
+        val r = androidx.compose.ui.geometry.CornerRadius(size.height / 2)
+        drawRoundRect(c.surface2, cornerRadius = r)
+        val w = maxOf(size.height, size.width * f)
+        if (f <= 0f) return@Canvas
+        // 已走过的一段：墨色，前端一小段渐变到暖光（只在这一段里，和进度条一样高，两端圆头）
+        val gw = minOf(w, 40.dp.toPx())
+        val brush = if (glint && f < 1f) Brush.horizontalGradient(0f to c.ink, ((w - gw) / w).coerceIn(0f, 1f) to c.ink, 1f to c.gleam, startX = 0f, endX = w) else androidx.compose.ui.graphics.SolidColor(c.ink)
+        drawRoundRect(brush, size = size.copy(width = w), cornerRadius = r)
     }
 }
 

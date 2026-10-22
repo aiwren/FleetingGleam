@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 图标背景层（branding/logo.svg 的渐变底，铺满 108dp 不裁角）：蓝 → 靛 → 紫 → 粉的斜向渐变，左上角一团淡青的光 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:pathData="M0,0h108v108h-108z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="21.6" android:startY="18" android:endX="86.4" android:endY="90">
+                <item android:offset="0" android:color="#FF3FB4FF" />
+                <item android:offset="0.36" android:color="#FF3B66FF" />
+                <item android:offset="0.7" android:color="#FF7A5CFF" />
+                <item android:offset="1" android:color="#FFE27DFF" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path android:pathData="M0,0h108v108h-108z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="radial" android:centerX="33.84" android:centerY="26.64" android:gradientRadius="43.2">
+                <item android:offset="0" android:color="#8C7FD3FF" />
+                <item android:offset="1" android:color="#007FD3FF" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>

@@ -86,6 +86,7 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
     val nasProg by Session.nasProg.collectAsState()
     val peopleProg by Session.peopleProg.collectAsState()
     val mediaProg by Session.mediaProg.collectAsState()
+    val probeProg by Session.probeProg.collectAsState()
     val paused by Session.paused.collectAsState()
     val settings by Settings.state.collectAsState()
     val decisions by Session.decisions.collectAsState()
@@ -155,6 +156,7 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
                         nasProg != null -> nasProg!!.let { p -> if (p.bytesTotal > 0) t("cull.fetchingNas", "share" to p.share, "done" to p.done, "total" to p.total, "size" to fmtBytes(p.bytesTotal)) else t("android.mirrorSync", "share" to p.share, "done" to p.done, "total" to p.total) }
                         phase == Phase.Loading && mediaProg != null && mediaProg!!.done < mediaProg!!.total -> t("cull.preparingMedia", "done" to mediaProg!!.done, "total" to mediaProg!!.total)
                         phase == Phase.Loading && peopleProg != null && peopleProg!!.done < peopleProg!!.total -> t("cull.recognising", "done" to peopleProg!!.done, "total" to peopleProg!!.total)
+                        phase == Phase.Probing && probeProg != null && probeProg!!.total > 0 -> t("cull.probing") + "  ${probeProg!!.done} / ${probeProg!!.total}"
                         else -> t(if (phase == Phase.Probing) "cull.probing" else "cull.loading")
                     }
                     Text(text, style = Type.small.copy(color = c.ash), modifier = Modifier.padding(16.dp))

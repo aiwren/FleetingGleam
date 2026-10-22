@@ -423,11 +423,14 @@ impl Engine {
         // 离开项目时页面会 `scan_cancel`，正在从 NAS 拉照片的探测也就跟着停
         let job = self.scan_job.load(Ordering::Relaxed);
         self.nas_sync_dirs(dirs, job)?;
-        // 缓存里认识的文件（没变过）不读文件头：尺寸直接查表，是否"已分析"再按当前模型的 tag 看
-        let (files, known): (Vec<PathBuf>, Vec<(Option<(u32, u32)>, bool)>) = self.with_cache(|c| {
-            let files = list_all_with(dirs, |p| cache::file_key(p).map_or(false, |(sz, mt)| c.dims(&p.to_string_lossy(), sz, mt).is_some()));
-            let known = files
-                .iter()
+        // 先按扩展名和大小列出文件（不读文件）；缓存里认识的（没变过）尺寸直接查表，是否"已分析"按当前模型的 tag 看。
+        // 其余的文件头只读一次：读不出来的（损坏、扩展名不对）剔除，读出来的尺寸直接用——以前筛一遍、取尺寸又读一遍，
+        // 手机上几千张 HEIC 要等很久，界面上一直是"正在读取文件夹…"。边读边发 "probe-progress"。
+        let mut all: Vec<PathBuf> = dirs.iter().flat_map(|d| list_images(d)).collect();
+        all.sort();
+        all.dedup();
+        let known: Vec<(Option<(u32, u32)>, bool)> = self.with_cache(|c| {
+            all.iter()
                 .map(|p| {
                     let key = p.to_string_lossy();
                     match cache::file_key(p) {
@@ -435,17 +438,25 @@ impl Engine {
                         None => (None, false),
                     }
                 })
-                .collect();
-            (files, known)
+                .collect()
         });
-        let out: Vec<ProbeFile> = files
+        let total = all.len();
+        let done = AtomicUsize::new(0);
+        let step = (total / 50).max(20);
+        self.emit("probe-progress", &Progress { done: 0, total });
+        let read: Vec<Option<ProbeFile>> = all
             .par_iter()
             .zip(known.par_iter())
             .map(|(p, &(dims, cached))| {
-                let (width, height) = dims.or_else(|| oriented_dims(p)).unwrap_or((3, 2));
-                ProbeFile { path: p.to_string_lossy().into_owned(), width, height, cached }
+                let dims = dims.or_else(|| oriented_dims(p));
+                let d = done.fetch_add(1, Ordering::Relaxed) + 1;
+                if d % step == 0 || d == total {
+                    self.emit("probe-progress", &Progress { done: d, total });
+                }
+                dims.map(|(width, height)| ProbeFile { path: p.to_string_lossy().into_owned(), width, height, cached })
             })
             .collect();
+        let (files, out): (Vec<PathBuf>, Vec<ProbeFile>) = all.into_iter().zip(read).filter_map(|(p, f)| f.map(|f| (p, f))).unzip();
         // Size of what still needs analysing, which is what the confirmation screen talks about.
         let bytes = files.iter().zip(&out).filter(|(_, o)| !o.cached).filter_map(|(p, _)| std::fs::metadata(p).ok()).map(|m| m.len()).sum();
         let uncached = out.iter().filter(|f| !f.cached).count();

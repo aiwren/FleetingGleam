@@ -15,7 +15,8 @@ object PackIds {
     const val EYES = "eyes"; const val FACES = "faces"; const val DETECT = "detect"; const val SCENETEXT = "scenetext"
 }
 
-enum class Answer { Ready, Downloaded, Cancelled }
+/** `Skipped`：可选的包没下成，用户选了先不用（分析照常，只是少了那部分）。 */
+enum class Answer { Ready, Downloaded, Cancelled, Skipped }
 
 /** `id` names the dialog's text: a pack, or "bundle" when several are fetched under one question (`ids` says which, `sizes` how big each is). */
 data class Gate(
@@ -30,6 +31,10 @@ data class Gate(
     val resolve: CompletableDeferred<Answer>,
     /** 下载转到后台了：对话框收起，通知栏和底部一粒小胶囊显示进度；等它的那件事（分析、搜索…）下载完照样接着做。 */
     val hidden: Boolean = false,
+    /** 这些包没有也能用（人脸检测、眼睛、人物识别）：它们下载失败时可以"先跳过"。 */
+    val optional: Set<String> = emptySet(),
+    /** 下载失败的那个包。 */
+    val failed: String? = null,
 )
 
 /**
@@ -65,15 +70,19 @@ object Models {
     /** Whether a pack is on this phone (as of the last look). */
     fun installed(id: String): Boolean = _packs.value.firstOrNull { it.id == id }?.installed == true
 
-    suspend fun ensurePack(id: String): Answer {
+    /** 这次运行里用户选了"先跳过"的可选包：不再追问（设置 → 模型与存储里随时可以再下）。 */
+    private val skipped = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+
+    suspend fun ensurePack(id: String, optional: Set<String> = emptySet()): Answer {
         refresh()
         if (_packs.value.isEmpty() || installed(id)) return Answer.Ready
+        if (id in optional && id in skipped) return Answer.Skipped
         val d = CompletableDeferred<Answer>()
         val bytes = try { Core.get<Long>("pack_size", args("id" to id)) } catch (e: Exception) {
-            _gate.value = Gate(id = id, phase = "error", bytes = 0, error = e.message, resolve = d)
+            _gate.value = Gate(id = id, phase = "error", bytes = 0, error = e.message, resolve = d, optional = optional, failed = id)
             return d.await()
         }
-        _gate.value = Gate(id = id, phase = "ask", bytes = bytes, total = bytes, resolve = d)
+        _gate.value = Gate(id = id, phase = "ask", bytes = bytes, total = bytes, resolve = d, optional = optional)
         return d.await()
     }
 
@@ -81,23 +90,32 @@ object Models {
      * Several packs under one question: the person is told the whole size once and agrees once. What is already here is left out; answers "ready"
      * when nothing is missing.
      */
-    suspend fun ensurePacks(ids: List<String>): Answer {
+    suspend fun ensurePacks(ids: List<String>, optional: Set<String> = emptySet()): Answer {
         refresh()
         if (_packs.value.isEmpty()) return Answer.Ready
-        val missing = ids.distinct().filter { !installed(it) }
-        if (missing.isEmpty()) return Answer.Ready
-        if (missing.size == 1) return ensurePack(missing[0])
+        // 必需的先下，可选的放后面：可选的失败时前面的已经到了
+        val missing = ids.distinct().filter { !installed(it) && !(it in optional && it in skipped) }.sortedBy { it in optional }
+        if (missing.isEmpty()) return if (ids.any { it in skipped && !installed(it) }) Answer.Skipped else Answer.Ready
+        if (missing.size == 1) return ensurePack(missing[0], optional)
         val d = CompletableDeferred<Answer>()
         val sizes = mutableListOf<Long>()
         for (id in missing) {
             try { sizes.add(Core.get<Long>("pack_size", args("id" to id))) } catch (e: Exception) {
-                _gate.value = Gate(id = "bundle", ids = missing, phase = "error", bytes = 0, error = e.message, resolve = d)
+                _gate.value = Gate(id = "bundle", ids = missing, phase = "error", bytes = 0, error = e.message, resolve = d, optional = optional, failed = id)
                 return d.await()
             }
         }
         val bytes = sizes.sum()
-        _gate.value = Gate(id = "bundle", ids = missing, sizes = sizes, phase = "ask", bytes = bytes, total = bytes, resolve = d)
+        _gate.value = Gate(id = "bundle", ids = missing, sizes = sizes, phase = "ask", bytes = bytes, total = bytes, resolve = d, optional = optional)
         return d.await()
+    }
+
+    /** 可选包下载失败后"先跳过"：没下到的可选包这次运行不再问，等着的那件事接着做（少了那部分）。 */
+    fun skipGate() {
+        val g = _gate.value ?: return
+        (g.ids ?: listOf(g.id)).filter { it in g.optional && !installed(it) }.forEach { skipped.add(it) }
+        _gate.value = null
+        g.resolve.complete(Answer.Skipped)
     }
 
     fun startDownload() {
@@ -108,10 +126,13 @@ object Models {
         app?.let { com.fleetinggleam.android.service.DownloadService.start(it) }
         // the packs one after the other; the progress of the one being fetched is added to the sizes of those already done
         scope.launch {
+            var current: String? = null
             try {
                 var before = 0L
                 for ((i, id) in ids.withIndex()) {
                     base = before
+                    current = id
+                    if (installed(id)) { before += g.sizes?.getOrNull(i) ?: 0; continue }
                     Core.call("pack_download", args("id" to id))
                     before += g.sizes?.getOrNull(i) ?: 0
                 }
@@ -128,7 +149,8 @@ object Models {
                     g.resolve.complete(Answer.Cancelled)
                 } else {
                     // 出错了：后台的也把对话框拿回来，说清楚、可以重试
-                    _gate.value = (_gate.value ?: g).copy(phase = "error", error = e.message, hidden = false)
+                    refresh()
+                    _gate.value = (_gate.value ?: g).copy(phase = "error", error = e.message, hidden = false, failed = current)
                 }
             } finally {
                 app?.let { com.fleetinggleam.android.service.DownloadService.stop(it) }

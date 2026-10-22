@@ -7,6 +7,13 @@
 ### 变更
 - 仓库根目录改为 Cargo 工作区：与平台无关的核心（分析、分组、打分、取舍、喜好学习、搜索、场景描述、模型包、NAS 直连、云备份、本机加密仓库）抽成独立 crate `packages/core`（`fleetinggleam-core`），由桌面端与 Android 端共用；macOS 特有的部分（Apple Vision、ImageIO 边车、Metal 上的 CLIP）改为实现核心库 `platform.rs` 里的 trait，桌面端行为不变。模型清单与随应用分发的小模型文件随之搬到 `packages/core/`。
 
+### 修复（真机反馈，2026-10-22）
+- 打开项目时"正在读取文件夹…"要等很久（178 张、1 GB 的文件夹）：取 JPEG 尺寸时 `image` 库会把整个文件读进内存，现在自己解析文件头，只读到帧头和 EXIF 方向为止（Mac 与 Android 都受益）；读不出来的才剔除，尺寸只读一遍（以前读两遍）；读取时显示"正在读取文件夹… n / 总数"。
+- Android 启动图标外面一圈白：之前只有一张已带圆角方块的 PNG，桌面把它缩小再垫白底。改成自适应图标（矢量渐变背景 + 照片卡与星星的前景 + Android 13 主题图标用的单色层）。
+- 液态玻璃在真机上边缘一圈粗白边：高光从 1.5dp 满白收成 0.8dp、半透明，只在斜角上亮。
+- 进度条前端的"暖光"是一块比进度条高的方块，进度小时整块露出来：改成限在已走过的一段里、和进度条一样高、两端圆头。
+- 分析前要下的人脸 / 眼睛 / 人物模型下载失败时可以"先跳过"，分析照常进行（只是暂时没有闭眼检测和人物识别）；这次运行内不再追问。眼睛模型（MediaPipe 转的 ONNX）放在本仓库的 Release `models-v1` 上，仓库公开并上传之前真机上会 404。
+
 ### 变更
 - Android 随包带 Baseline Profile（`app/src/main/baseline-prof.txt` 与 `startup-prof.txt`，由 `:baselineprofile` 模块在连着的 API 33+ 设备上生成：`./gradlew :baselineprofile:collectNonMinifiedReleaseBaselineProfile`），安装后 ART 直接预编译冷启动和照片墙的热路径。
 - Android 包体：原生库在 APK 里压缩存放（下载体积 40 MB → 20 MB；安装时解压一份，装完多占约 34 MB），并显式用 NDK 的 llvm-strip 去掉符号表（之前 cargo 的 strip 没落到这个库上）。试过把冷路径依赖按体积编译，只省 0.5 MB，没采用。Geist 六个字重子集化（只留文案用到的拉丁字母、标点和符号，870 KB → 372 KB；中文本来就回落到系统字体）。

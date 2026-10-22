@@ -384,7 +384,7 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
             val openSheet = { url: String -> WebSheet.open(ctx, url) { openUrl(url) } }
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.panel).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(com.fleetinggleam.android.R.mipmap.ic_launcher), null, Modifier.size(64.dp).clip(RoundedCornerShape(16.dp)))
+                    androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(com.fleetinggleam.android.R.drawable.app_icon), null, Modifier.size(64.dp).clip(RoundedCornerShape(16.dp)))
                     Text(t("brand.name"), style = Type.title.copy(color = c.ink), modifier = Modifier.padding(top = 10.dp))
                     if (zh) Text(t("brand.latin"), style = Type.monoSmall.copy(color = c.ash))
                     Text(t("brand.tagline"), style = Type.rowDesc.copy(color = c.ash), textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.padding(top = 6.dp))
