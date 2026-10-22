@@ -38,14 +38,24 @@ export const browseShare = (id: string, path: string) => invoke<Listing>("nas_br
  * 选文件夹：没有 NAS 时就是系统的文件夹对话框；有 NAS 时先问"本机还是哪个共享"，这个问题由 App 里挂着的 FolderPicker 来问。
  * 调用方只管 `pickFolder()`（见 projectActions.ts），拿到的是一个本地路径：本机文件夹，或共享镜像里的文件夹。
  */
-export type PickRequest = { shareId?: string; resolve: (dir: string | null) => void };
+/** `nasOnly`：只列 NAS（导出到 NAS 时）；`title` / `choose`：换掉"项目文件夹在哪里？"与"就选这个文件夹"。 */
+export type PickOptions = { nasOnly?: boolean; title?: string; choose?: string; hint?: string };
+export type PickRequest = { shareId?: string; opts?: PickOptions; resolve: (dir: string | null) => void };
 let request: PickRequest | null = null;
 const psubs = new Set<() => void>();
 const psubscribe = (f: () => void) => { psubs.add(f); return () => { psubs.delete(f); }; };
 export const usePickRequest = () => useSyncExternalStore(psubscribe, () => request);
-export function openPicker(shareId?: string): Promise<string | null> {
+export function openPicker(shareId?: string, opts?: PickOptions): Promise<string | null> {
   request?.resolve(null);
-  return new Promise((resolve) => { request = { shareId, resolve }; psubs.forEach((f) => f()); });
+  return new Promise((resolve) => { request = { shareId, opts, resolve }; psubs.forEach((f) => f()); });
+}
+
+/** 镜像路径（…/nas/<id>/<共享>/<路径>）在界面上的说法："NAS 名 · 共享/路径"；不是镜像路径就原样给回。 */
+export function nasLabel(path: string): string {
+  const m = path.match(/\/nas\/([^/]+)\/(.+)$/);
+  if (!m) return path;
+  const s = shares.find((x) => x.id === m[1]);
+  return s ? `${s.name} · ${m[2]}` : path;
 }
 /** FolderPicker 回答之后调用：`dir` 为 null 表示取消。 */
 export function answerPicker(dir: string | null) {

@@ -10,13 +10,13 @@
 //! 客户端是异步的，而扫描跑在阻塞线程上，所以所有连接都住在一条专用线程里，用通道收发请求；调用方拿到的是同步接口。
 
 use std::collections::{HashMap, HashSet};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use smb2::{ClientConfig, ErrorKind, SmbClient, Tree};
+use smb2::{ClientConfig, ErrorKind, FileTimes, SmbClient, Tree};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Share {
@@ -203,6 +203,7 @@ enum Op {
     Browse { id: String, rel: String, reply: mpsc::Sender<Result<Vec<Entry>, String>> },
     Sync { id: String, rel: String, local_root: PathBuf, progress: Box<dyn Fn(SyncProgress) + Send>, cancel: Box<dyn Fn() -> bool + Send>, reply: mpsc::Sender<Result<(), String>> },
     Recycle { id: String, rels: Vec<String>, reply: mpsc::Sender<Vec<Result<String, String>>> },
+    Upload { id: String, dir: String, files: Vec<PathBuf>, progress: Box<dyn Fn(usize) + Send>, reply: mpsc::Sender<Vec<Result<String, String>>> },
 }
 
 /// 所有共享的连接，住在一条自己的线程里；这里是同步的门面。
@@ -268,6 +269,13 @@ impl Pool {
         let n = rels.len();
         self.ask(|reply| Op::Recycle { id: id.to_string(), rels, reply }).unwrap_or_else(|e| vec![Err(e); n])
     }
+
+    /// 把本机的这些文件上传到 NAS 上的文件夹 `dir`（`共享/路径`，没有就建）；重名的加序号，从不覆盖。
+    /// 每张返回它在 NAS 上的位置；`progress(n)` 是已经处理完几张。
+    pub fn upload(&self, id: &str, dir: &str, files: Vec<PathBuf>, progress: impl Fn(usize) + Send + 'static) -> Vec<Result<String, String>> {
+        let n = files.len();
+        self.ask(|reply| Op::Upload { id: id.to_string(), dir: dir.to_string(), files, progress: Box::new(progress), reply }).unwrap_or_else(|e| vec![Err(e); n])
+    }
 }
 
 /// 把客户端的错误说成人话；连接层面的错误同时让调用方知道该把这个共享当作断开。
@@ -330,6 +338,15 @@ async fn handle(conns: &mut HashMap<String, Conn>, connected: &Mutex<HashSet<Str
             let n = rels.len();
             let r = match conns.remove(&id) {
                 Some(mut c) => { let r = recycle(&mut c, &rels).await; settle(conns, connected, &id, c, r) }
+                None => Err("not connected".to_string()),
+            }
+            .unwrap_or_else(|e| vec![Err(e); n]);
+            let _ = reply.send(r);
+        }
+        Op::Upload { id, dir, files, progress, reply } => {
+            let n = files.len();
+            let r = match conns.remove(&id) {
+                Some(mut c) => { let r = upload(&mut c, &dir, &files, &*progress).await; settle(conns, connected, &id, c, r) }
                 None => Err("not connected".to_string()),
             }
             .unwrap_or_else(|e| vec![Err(e); n]);
@@ -541,10 +558,7 @@ async fn recycle(c: &mut Conn, rels: &[String]) -> Result<Vec<Result<String, Str
             mkdir_ok(client, tree, &day_dir).await?;
         }
         let name = rel.rsplit('/').next().unwrap_or(rel);
-        let (stem, ext) = match name.rsplit_once('.') {
-            Some((s, e)) if !s.is_empty() => (s.to_string(), format!(".{e}")),
-            _ => (name.to_string(), String::new()),
-        };
+        let (stem, ext) = stem_ext(name);
         let mut target = format!("{day_dir}/{name}");
         let mut n = 1;
         while client.stat(tree, &target).await.is_ok() {
@@ -558,6 +572,75 @@ async fn recycle(c: &mut Conn, rels: &[String]) -> Result<Vec<Result<String, Str
         });
     }
     Ok(out)
+}
+
+/// `名字.扩展名` → (`名字`, `.扩展名`)；没有扩展名的扩展名是空串。
+fn stem_ext(name: &str) -> (String, String) {
+    match name.rsplit_once('.') {
+        Some((s, e)) if !s.is_empty() => (s.to_string(), format!(".{e}")),
+        _ => (name.to_string(), String::new()),
+    }
+}
+
+/// 上传：先写到目标文件夹里的 `.名字.part`，整张写完、修改时间改成原文件的之后才改成正式名字（同名的加序号），
+/// 所以 NAS 上永远没有半张照片，别的设备看到的是完整的文件。原文件不动。
+async fn upload(c: &mut Conn, dir: &str, files: &[PathBuf], progress: &dyn Fn(usize)) -> Result<Vec<Result<String, String>>, smb2::Error> {
+    let (share, path) = split_share(dir);
+    let share = share.to_string();
+    let Conn { client, trees } = c;
+    let tree = tree_in(client, trees, &share).await?;
+    // 目标文件夹（一级一级建，已经有的不管）
+    let mut acc = String::new();
+    for part in path.split('/').filter(|p| !p.is_empty()) {
+        acc = join_rel(&acc, part);
+        mkdir_ok(client, tree, &acc).await?;
+    }
+    let mut out = Vec::with_capacity(files.len());
+    for (i, f) in files.iter().enumerate() {
+        let name = f.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let (stem, ext) = stem_ext(&name);
+        let mut target = join_rel(path, &name);
+        let mut n = 1;
+        while client.stat(tree, &target).await.is_ok() {
+            target = join_rel(path, &format!("{stem} ({n}){ext}"));
+            n += 1;
+        }
+        let tmp = join_rel(path, &format!(".{name}.part"));
+        let r: Result<(), smb2::Error> = async {
+            let mut src = std::fs::File::open(f)?;
+            let modified = src.metadata().and_then(|m| m.modified()).ok();
+            let mut w = client.create_file_writer(tree, &tmp).await?;
+            let mut buf = vec![0u8; 1 << 20];
+            loop {
+                let k = src.read(&mut buf)?;
+                if k == 0 {
+                    break;
+                }
+                w.write_chunk(&buf[..k]).await?;
+            }
+            if let Some(t) = modified {
+                w.set_times(FileTimes::new().set_modified(t)).await?;
+            }
+            w.finish().await?;
+            client.rename(tree, &tmp, &target).await
+        }
+        .await;
+        match r {
+            Ok(()) => out.push(Ok(format!("{share}/{target}"))),
+            Err(e) if lost(&e) => return Err(e),
+            Err(e) => {
+                let _ = client.delete_file(tree, &tmp).await;
+                out.push(Err(explain(&e)));
+            }
+        }
+        progress(i + 1);
+    }
+    Ok(out)
+}
+
+/// 共享里一个位置的地址（给页面说"导出到了哪里"）。
+pub fn share_url(s: &Share, rel: &str) -> String {
+    format!("smb://{}/{}", s.host, rel.trim_matches('/'))
 }
 
 /// 某个共享的回收文件夹地址，给页面说"移到了哪里"。
@@ -629,7 +712,8 @@ mod tests {
     }
 
     /// 对着一台真的 NAS（密码已在钥匙串里，或由 FG_NAS_PASSWORD 给出）：
-    /// `FG_NAS_HOST=192.168.1.9 FG_NAS_USER=me [FG_NAS_DIR=共享/文件夹] [FG_NAS_SYNC=1] [FG_NAS_RECYCLE=1] cargo test --lib nas::tests::a_real_nas -- --ignored --nocapture`
+    /// `FG_NAS_HOST=192.168.1.9 FG_NAS_USER=me [FG_NAS_DIR=共享/文件夹] [FG_NAS_SYNC=1] [FG_NAS_RECYCLE=1] [FG_NAS_UPLOAD=1] cargo test --lib nas::tests::a_real_nas -- --ignored --nocapture`
+    /// FG_NAS_UPLOAD=1：往 FG_NAS_DIR 下的 `.fg-upload-test` 里传两张小图（第二张同名，应得到"(1)"），列出来核对，再移进回收文件夹。
     #[test]
     #[ignore]
     fn a_real_nas_is_browsed_synced_and_recycled_into() {
@@ -649,6 +733,27 @@ mod tests {
             pool.disconnect("t1");
             return;
         };
+        if std::env::var("FG_NAS_UPLOAD").is_ok() {
+            let tmp = std::env::temp_dir().join(format!("fg_nas_up_{}", std::process::id()));
+            std::fs::create_dir_all(&tmp).unwrap();
+            let img = tmp.join("fg-upload.jpg");
+            image::RgbImage::from_fn(64, 48, |x, y| image::Rgb([x as u8 * 4, y as u8 * 5, 90])).save(&img).unwrap();
+            let target = format!("{dir}/.fg-upload-test");
+            let done = Arc::new(Mutex::new(0usize));
+            let seen = done.clone();
+            let r = pool.upload("t1", &target, vec![img.clone(), img.clone()], move |n| *seen.lock().unwrap() = n);
+            println!("uploaded: {r:?}");
+            let up: Vec<String> = r.into_iter().map(|x| x.expect("uploaded")).collect();
+            assert_eq!(*done.lock().unwrap(), 2);
+            assert!(up[0].ends_with("/fg-upload.jpg") && up[1].ends_with("/fg-upload (1).jpg"), "{up:?}");
+            let listed: Vec<(String, u64)> = pool.browse("t1", &target).expect("list the upload folder").into_iter().map(|e| (e.name, e.size)).collect();
+            let size = std::fs::metadata(&img).unwrap().len();
+            assert!(listed.iter().any(|(n, s)| n == "fg-upload.jpg" && *s == size), "{listed:?}");
+            assert!(!listed.iter().any(|(n, _)| n.ends_with(".part")), "no half-written files left: {listed:?}");
+            let back = pool.recycle("t1", up);
+            println!("cleaned up: {back:?}");
+            let _ = std::fs::remove_dir_all(&tmp);
+        }
         let listing = pool.browse("t1", &dir).expect("list the folder");
         println!("{} entries in {dir}:", listing.len());
         for e in listing.iter().take(20) {

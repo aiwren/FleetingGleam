@@ -159,7 +159,7 @@ const zh = {
   },
   picker: {
     title: "项目文件夹在哪里？", local: "本机文件夹…", localDesc: "这台电脑或外接硬盘上的文件夹", back: "返回", cancel: "取消", choose: "就选这个文件夹",
-    loading: "正在读取…", noFolders: "这里没有子文件夹", noShares: "这个账号在这台 NAS 上看不到任何共享", rootHint: "这些是 NAS 上的共享；点进去，任何一层文件夹都可以选作项目。", photosHere: "这个文件夹里有 {{count}} 张照片（{{size}}）", noPhotosHere: "这个文件夹里没有照片（子文件夹里的会一起算进项目）",
+    loading: "正在读取…", noFolders: "这里没有子文件夹", noShares: "这个账号在这台 NAS 上看不到任何共享", rootHint: "这些是 NAS 上的共享；点进去，任何一层文件夹都可以选作项目。", rootHintExport: "这些是 NAS 上的共享；点进去，选一个文件夹，照片会传到那里。", photosHere: "这个文件夹里有 {{count}} 张照片（{{size}}）", noPhotosHere: "这个文件夹里没有照片（子文件夹里的会一起算进项目）",
   },
   settings: {
     title: "设置",
@@ -254,6 +254,7 @@ const zh = {
   organize: {
     button: "整理", none: "没有可整理的照片", cancel: "取消", done: "完成", showInFinder: "在访达中显示",
     exportItem: "导出保留的照片…", exportDesc: "复制 {{count}} 张到新文件夹，原图不动",
+    exportNasItem: "导出到 NAS…", exportNasDesc: "把 {{count}} 张保留的照片传到 NAS 上的文件夹", exportNasPick: "导出到 NAS 上的哪个文件夹？", exportHere: "导出到这里", exportFailed: "没能导出：{{error}}",
     exportTitle: "导出保留的照片", exportBody: "将把 {{count}} 张保留的照片复制到：", exportSafe: "只是复制，原图不会被移动或修改；重名的文件会自动加序号，不会覆盖。",
     exportGo: "开始导出", exporting: "正在导出 {{done}} / {{total}}", exported: "已导出 {{count}} 张", exportedSkipped: "另有 {{n}} 张没能复制",
     trashItem: "把淘汰的照片移到废纸篓…", trashDesc: "{{count}} 张 · 可在访达的废纸篓里找回",

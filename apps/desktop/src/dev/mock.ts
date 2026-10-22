@@ -278,7 +278,9 @@ w.__TAURI_INTERNALS__ = {
       case "export_photos": {
         const paths = args.paths as string[];
         for (let i = 0; i < paths.length; i++) { emit("export-progress", { done: i + 1, total: paths.length }); await sleep(60); }
-        return { copied: paths.length, skipped: 0, dest: args.dest };
+        // 落在 NAS 镜像里的：假装传到了 NAS 上
+        const nas = String(args.dest).match(/\/nas\/[^/]+\/(.+)$/);
+        return nas ? { copied: paths.length, skipped: 0, dest: `smb://nas.local/${nas[1]}`, remote: true } : { copied: paths.length, skipped: 0, dest: args.dest };
       }
       case "trash_photos": {
         const paths = args.paths as string[];

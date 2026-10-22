@@ -176,6 +176,9 @@ pub struct ExportResult {
     pub copied: usize,
     pub skipped: usize,
     pub dest: String,
+    /// 导出到了 NAS 上（`dest` 是 smb:// 地址，本机没有这个文件夹）。
+    #[serde(default)]
+    pub remote: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -1141,7 +1144,15 @@ impl Engine {
     // ------------------------------------------------------------ 整理
 
     /// Copies the given photos into `dest`. Originals are never touched and nothing is overwritten.
-    pub fn export_photos(&self, paths: &[String], dest: &str) -> Result<ExportResult, String> {
+    /// `dest` 落在某台 NAS 的镜像里（文件夹选择器选 NAS 上的文件夹时给的就是镜像路径）：直接上传到 NAS 上那个文件夹。
+    pub fn export_photos(self: &Arc<Self>, paths: &[String], dest: &str) -> Result<ExportResult, String> {
+        let shares = nas::load(&self.paths.data);
+        if let Some((s, rel)) = nas::share_of_path(&self.paths.data, &shares, Path::new(dest)) {
+            if rel.is_empty() {
+                return Err("choose a folder inside a share".to_string());
+            }
+            return self.export_to_nas(s, &rel, paths);
+        }
         let dest_dir = PathBuf::from(dest);
         std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
         let total = paths.len();
@@ -1159,7 +1170,24 @@ impl Engine {
             }
             self.emit("export-progress", &Progress { done: i + 1, total });
         }
-        Ok(ExportResult { copied, skipped, dest: dest.to_string() })
+        Ok(ExportResult { copied, skipped, dest: dest.to_string(), remote: false })
+    }
+
+    /// 上传到 NAS 上的文件夹（`共享/路径`）：连上（用记住的密码），逐张写过去，进度照样发 "export-progress"。
+    fn export_to_nas(self: &Arc<Self>, s: &nas::Share, rel: &str, paths: &[String]) -> Result<ExportResult, String> {
+        self.nas_connect_saved(s).map_err(|e| format!("{}: {e}", s.name))?;
+        let files: Vec<PathBuf> = paths.iter().map(PathBuf::from).filter(|p| analyze::is_image(p) && p.is_file()).collect();
+        let not_photos = paths.len() - files.len();
+        let total = paths.len();
+        let emit = self.clone();
+        let results = self.nas.upload(&s.id, rel, files, move |done| emit.emit("export-progress", &Progress { done: done + not_photos, total }));
+        let copied = results.iter().filter(|r| r.is_ok()).count();
+        if copied == 0 {
+            if let Some(Err(e)) = results.iter().find(|r| r.is_err()) {
+                return Err(format!("{}: {e}", s.name));
+            }
+        }
+        Ok(ExportResult { copied, skipped: total - copied, dest: nas::share_url(s, rel), remote: true })
     }
 
     /// Moves photos to the trash (recoverable). Only image files are accepted, so this can never be used to trash anything else.
@@ -1912,6 +1940,29 @@ mod tests {
         // 转回去就是原来的缩略图
         let back = e.set_rotation(&p0.path, 0).unwrap();
         assert_eq!((back.width, back.height, back.rotation, back.thumb.as_str()), (640, 480, 0, p0.thumb.as_str()));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 导出目标落在 NAS 镜像里：走上传（这里没有 NAS，所以是连不上的错误），绝不把文件拷进本机的镜像文件夹；共享根本身不能当目标。
+    #[test]
+    fn exporting_into_a_nas_mirror_uploads_instead_of_copying() {
+        let (e, root, _) = engine("export-nas");
+        let dir = root.join("photos");
+        photos(&dir, 2);
+        let share = nas::Share { id: "n1".into(), name: "Home NAS".into(), host: "127.0.0.1".into(), user: "me".into(), enabled: true };
+        nas::save(&e.paths.data, std::slice::from_ref(&share)).unwrap();
+        let paths: Vec<String> = ["p0.jpg", "p1.jpg"].iter().map(|n| dir.join(n).to_string_lossy().into_owned()).collect();
+        let mirror = nas::local_dir(&e.paths.data, "n1");
+        let dest = mirror.join("photo").join("Picks");
+        let err = e.export_photos(&paths, &dest.to_string_lossy()).unwrap_err();
+        assert!(err.contains("Home NAS"), "{err}");
+        assert!(!dest.exists(), "nothing is copied into the local mirror");
+        let err = e.export_photos(&paths, &mirror.to_string_lossy()).unwrap_err();
+        assert!(err.contains("share"), "{err}");
+        // 普通文件夹照旧本机复制
+        let out = root.join("out");
+        let r = e.export_photos(&paths, &out.to_string_lossy()).unwrap();
+        assert_eq!((r.copied, r.skipped, r.remote), (2, 0, false));
         let _ = std::fs::remove_dir_all(&root);
     }
 

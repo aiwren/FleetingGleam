@@ -58,17 +58,19 @@ export default function FolderPicker() {
   const bytes = photos.reduce((a, e) => a + e.size, 0);
 
   return (
-    <Modal open={!!req} onClose={() => answerPicker(null)} title={share ? share.name : t("picker.title")} wide
+    <Modal open={!!req} onClose={() => answerPicker(null)} title={share ? share.name : (req?.opts?.title ?? t("picker.title"))} wide
       footer={(<>
         {share && <button className="btn" onClick={() => { setShare(null); setListing(null); setErr(null); }}>{t("picker.back")}</button>}
         <button className="btn" onClick={() => answerPicker(null)}>{t("picker.cancel")}</button>
-        {share && listing && <button className="btn primary" disabled={busy || !listing.local} onClick={() => answerPicker(listing.local)}>{t("picker.choose")}</button>}
+        {share && listing && <button className="btn primary" disabled={busy || !listing.local} onClick={() => answerPicker(listing.local)}>{req?.opts?.choose ?? t("picker.choose")}</button>}
       </>)}>
       {!share && (
         <div className="picker-sources">
-          <button className="picker-src" onClick={local}>
-            {icon(DISK)}<span><b>{t("picker.local")}</b><small>{t("picker.localDesc")}</small></span>
-          </button>
+          {!req?.opts?.nasOnly && (
+            <button className="picker-src" onClick={local}>
+              {icon(DISK)}<span><b>{t("picker.local")}</b><small>{t("picker.localDesc")}</small></span>
+            </button>
+          )}
           {shares.filter((s) => s.enabled).map((s) => (
             <button key={s.id} className="picker-src" onClick={() => enter(s, "")}>
               {icon(NAS)}<span><b>{s.name}</b><small>{s.host}{s.connected ? "" : ` · ${t("settings.nasOffline")}`}</small></span>
@@ -92,7 +94,7 @@ export default function FolderPicker() {
                 ))}
                 {folders.length === 0 && <li className="ash small pad">{t(atRoot ? "picker.noShares" : "picker.noFolders")}</li>}
               </ul>
-              <p className="ash small">{atRoot ? t("picker.rootHint") : photos.length > 0 ? t("picker.photosHere", { count: photos.length, size: fmtBytes(i18n.language, bytes) }) : t("picker.noPhotosHere")}</p>
+              <p className="ash small">{atRoot ? (req?.opts?.hint ?? t("picker.rootHint")) : photos.length > 0 ? t("picker.photosHere", { count: photos.length, size: fmtBytes(i18n.language, bytes) }) : t("picker.noPhotosHere")}</p>
             </>
           )}
         </div>

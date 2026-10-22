@@ -161,7 +161,7 @@ const en = {
   },
   picker: {
     title: "Where is the project folder?", local: "A folder on this Mac…", localDesc: "On this computer or an attached drive", back: "Back", cancel: "Cancel", choose: "Use this folder",
-    loading: "Reading…", noFolders: "No subfolders here", noShares: "This account sees no shares on this NAS", rootHint: "These are the NAS's shares; open one, and any folder at any depth can be the project.", photosHere_one: "{{count}} photo in this folder ({{size}})", photosHere_other: "{{count}} photos in this folder ({{size}})", noPhotosHere: "No photos directly in this folder (those in its subfolders count for the project)",
+    loading: "Reading…", noFolders: "No subfolders here", noShares: "This account sees no shares on this NAS", rootHint: "These are the NAS's shares; open one, and any folder at any depth can be the project.", rootHintExport: "These are the shares on the NAS; open one and pick a folder to upload the photos to.", photosHere_one: "{{count}} photo in this folder ({{size}})", photosHere_other: "{{count}} photos in this folder ({{size}})", noPhotosHere: "No photos directly in this folder (those in its subfolders count for the project)",
   },
   settings: {
     title: "Settings",
@@ -256,6 +256,7 @@ const en = {
   organize: {
     button: "Organize", none: "Nothing to organize", cancel: "Cancel", done: "Done", showInFinder: "Show in Finder",
     exportItem: "Export kept photos…", exportDesc: "Copy {{count}} to a new folder; originals stay put",
+    exportNasItem: "Export to a NAS…", exportNasDesc: "Upload the {{count}} kept photos to a folder on a NAS", exportNasPick: "Export to which folder on the NAS?", exportHere: "Export here", exportFailed: "Could not export: {{error}}",
     exportTitle: "Export kept photos", exportBody_one: "{{count}} kept photo will be copied to:", exportBody_other: "{{count}} kept photos will be copied to:", exportSafe: "Copies only: originals are never moved or changed, and files with the same name get a number instead of being overwritten.",
     exportGo: "Start export", exporting: "Exporting {{done}} / {{total}}", exported_one: "Exported {{count}} photo", exported_other: "Exported {{count}} photos", exportedSkipped: "{{n}} could not be copied",
     trashItem: "Move rejected photos to the Trash…", trashDesc: "{{count}} · can be put back from the Trash",

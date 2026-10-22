@@ -86,13 +86,15 @@ fun OrganizeDialogs(project: Project, open: Boolean, onDismissMenu: () -> Unit) 
     var phase by remember { mutableStateOf("confirm") } // confirm | running | done
     var progress by remember { mutableStateOf(Progress()) }
     var result by remember { mutableStateOf<Triple<Int, Int, List<String>>?>(null) }
+    var exportErr by remember { mutableStateOf<String?>(null) }
+    val nasShares = com.fleetinggleam.android.core.Nas.shares.collectAsState().value.filter { it.enabled }
     var scopeAll by remember { mutableStateOf(false) }
     val keep = photos.filter { decisions[it.path]?.state == "keep" }
     val rejectAll = photos.filter { decisions[it.path]?.state == "reject" }
     val rejectManual = rejectAll.filter { decisions[it.path]?.manual == true }
     val trashList = if (scopeAll) rejectAll else rejectManual
 
-    fun open(d: Dlg) { result = null; phase = "confirm"; progress = Progress(); dlg = d; if (d != Dlg.Menu) onDismissMenu() }
+    fun open(d: Dlg) { result = null; exportErr = null; phase = "confirm"; progress = Progress(); dlg = d; if (d != Dlg.Menu) onDismissMenu() }
     fun close() { val reload = phase == "done"; dlg = null; onDismissMenu(); if (reload) Session.reload() }
 
     androidx.compose.runtime.LaunchedEffect(open) { if (open) open(Dlg.Menu) }
@@ -113,6 +115,14 @@ fun OrganizeDialogs(project: Project, open: Boolean, onDismissMenu: () -> Unit) 
                         val uri = Pickers.openTree() ?: return@launch
                         val path = Media.treeToPath(uri)
                         open(Dlg.Export(if (path != null && File(path).canWrite()) Dest.Path(path, path) else Dest.Tree(uri, androidx.documentfile.provider.DocumentFile.fromTreeUri(ctx, uri)?.name ?: uri.toString())))
+                    }
+                }
+                // 导出到 NAS：选择器只列 NAS；选中的是那个文件夹的镜像路径，核心库认出来就直接传到 NAS 上
+                if (nasShares.isNotEmpty()) OrgItem(Icons.NAS, t("organize.exportNasItem"), if (keep.isEmpty()) t("organize.none") else t("organize.exportNasDesc", "count" to keep.size), keep.isNotEmpty()) {
+                    dlg = null; onDismissMenu()
+                    scope.launch {
+                        val path = com.fleetinggleam.android.core.Nas.pick(nasShares.singleOrNull()?.id, source = "nas", title = t("organize.exportNasPick"), choose = t("organize.exportHere")) ?: return@launch
+                        open(Dlg.Export(Dest.Path(path, com.fleetinggleam.android.core.Nas.label(path))))
                     }
                 }
                 OrgItem(Icons.TRASH, t("organize.trashItem"), if (rejectAll.isEmpty()) t("organize.none") else t("organize.trashDesc", "count" to rejectAll.size), rejectAll.isNotEmpty(), box = 14f) {
@@ -143,7 +153,7 @@ fun OrganizeDialogs(project: Project, open: Boolean, onDismissMenu: () -> Unit) 
                                 is Dest.Path -> Organize.exportTo(ctx, paths, x.path)
                                 is Dest.Tree -> withContext(Dispatchers.IO) { Organize.exportToTree(ctx, paths, x.uri) { a, b -> progress = Progress(a, b) } }
                             }
-                        }.getOrElse { ExportResult(0, paths.size, label) }
+                        }.getOrElse { exportErr = it.message; ExportResult(0, paths.size, label) }
                         result = Triple(r.copied, r.skipped, emptyList()); phase = "done"
                     }
                 }, primary = true, small = true, enabled = phase != "running")
@@ -152,7 +162,8 @@ fun OrganizeDialogs(project: Project, open: Boolean, onDismissMenu: () -> Unit) 
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (phase == "done") {
                     val r = result
-                    Text(t("organize.exported", "count" to (r?.first ?: 0)) + if ((r?.second ?: 0) > 0) " · ${t("organize.exportedSkipped", "n" to r!!.second)}" else "", style = Type.body.copy(color = c.ink))
+                    if (exportErr != null) Text(t("organize.exportFailed", "error" to exportErr), style = Type.body.copy(color = c.ink))
+                    else Text(t("organize.exported", "count" to (r?.first ?: 0)) + if ((r?.second ?: 0) > 0) " · ${t("organize.exportedSkipped", "n" to r!!.second)}" else "", style = Type.body.copy(color = c.ink))
                     Text(label, style = Type.monoSmall.copy(color = c.ash))
                 } else {
                     Text(t("organize.exportBody", "count" to keep.size), style = Type.body.copy(color = c.ink))

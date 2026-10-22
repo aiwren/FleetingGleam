@@ -96,16 +96,24 @@ object Nas {
     suspend fun browse(id: String, path: String): Listing = Core.get("nas_browse", args("id" to id, "path" to path))
 
     /** 选文件夹的请求：界面里的 FolderPicker 看到它就出现，回答之后结束。`shareId` 直接进到某个共享（设置页"从这里新建项目"）。 */
-    data class PickRequest(val shareId: String?, val resolve: CompletableDeferred<String?>, val source: String? = null)
+    /** `source` = "albums" / "folder" / "nas"（只列 NAS）；`title` / `choose` 换掉"项目文件夹在哪里？"与"就选这个文件夹"。 */
+    data class PickRequest(val shareId: String?, val resolve: CompletableDeferred<String?>, val source: String? = null, val title: String? = null, val choose: String? = null)
     private val _request = MutableStateFlow<PickRequest?>(null)
     val request: StateFlow<PickRequest?> = _request
 
     /** `source` = "albums" / "folder"：跳过"在哪里"那一层，直接进相册列表或系统文件选择器（起始屏的按钮）。 */
-    suspend fun pick(shareId: String? = null, source: String? = null): String? {
+    suspend fun pick(shareId: String? = null, source: String? = null, title: String? = null, choose: String? = null): String? {
         _request.value?.resolve?.complete(null)
         val d = CompletableDeferred<String?>()
-        _request.value = PickRequest(shareId, d, source)
+        _request.value = PickRequest(shareId, d, source, title, choose)
         return d.await()
+    }
+
+    /** 镜像路径（…/nas/<id>/<共享>/<路径>）在界面上的说法："NAS 名 · 共享/路径"；不是镜像路径就原样给回。 */
+    fun label(path: String): String {
+        val m = Regex("/nas/([^/]+)/(.+)$").find(path) ?: return path
+        val s = shares.value.firstOrNull { it.id == m.groupValues[1] } ?: return path
+        return "${s.name} · ${m.groupValues[2]}"
     }
 
     /** FolderPicker 回答之后调用：`dir` 为 null 表示取消。 */

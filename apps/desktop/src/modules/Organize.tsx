@@ -8,6 +8,7 @@ import { EASE_OUT } from "../motion";
 import { baseName, pickLocalFolder } from "../projectActions";
 import { Project, updateProject } from "../projects";
 import { Decision, Photo } from "../types";
+import { getEnabledShares, nasLabel, openPicker } from "../nas";
 
 type Dlg = null | { kind: "export"; dest: string } | { kind: "trash" };
 type Phase = "confirm" | "running" | "done";
@@ -28,7 +29,7 @@ export default function Organize({ project, photos, decisions, onChanged }: {
   const [phase, setPhase] = useState<Phase>("confirm");
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [scope, setScope] = useState<"manual" | "all">("manual");
-  const [result, setResult] = useState<{ ok: number; bad: number; dest?: string; bins?: string[] } | null>(null);
+  const [result, setResult] = useState<{ ok: number; bad: number; dest?: string; bins?: string[]; remote?: boolean; error?: string } | null>(null);
 
   const keep = photos.filter((p) => decisions.get(p.path)?.state === "keep");
   const rejectAll = photos.filter((p) => decisions.get(p.path)?.state === "reject");
@@ -51,9 +52,9 @@ export default function Organize({ project, photos, decisions, onChanged }: {
     setProgress({ done: 0, total: keep.length });
     const un = await listen<{ done: number; total: number }>("export-progress", (e) => setProgress(e.payload));
     try {
-      const r = await invoke<{ copied: number; skipped: number; dest: string }>("export_photos", { paths: keep.map((p) => p.path), dest: dlg.dest });
-      setResult({ ok: r.copied, bad: r.skipped, dest: r.dest });
-    } catch { setResult({ ok: 0, bad: keep.length }); }
+      const r = await invoke<{ copied: number; skipped: number; dest: string; remote?: boolean }>("export_photos", { paths: keep.map((p) => p.path), dest: dlg.dest });
+      setResult({ ok: r.copied, bad: r.skipped, dest: r.dest, remote: r.remote });
+    } catch (e) { setResult({ ok: 0, bad: keep.length, error: String(e) }); }
     un();
     setPhase("done");
   };
@@ -77,9 +78,17 @@ export default function Organize({ project, photos, decisions, onChanged }: {
     const dir = await pickLocalFolder();
     if (dir) open({ kind: "export", dest: dir });
   };
+  // 导出到 NAS：选择器只列 NAS；选中的是那个文件夹的镜像路径，核心库认出来就直接传到 NAS 上
+  const nasShares = getEnabledShares();
+  const chooseNas = async () => {
+    setMenu(false);
+    const dir = await openPicker(nasShares.length === 1 ? nasShares[0].id : undefined, { nasOnly: true, title: t("organize.exportNasPick"), choose: t("organize.exportHere"), hint: t("picker.rootHintExport") });
+    if (dir) open({ kind: "export", dest: dir });
+  };
 
   const items = [
     { key: "export", count: keep.length, title: t("organize.exportItem"), desc: t("organize.exportDesc", { count: keep.length }), run: chooseDest },
+    ...(nasShares.length > 0 ? [{ key: "nas", count: keep.length, title: t("organize.exportNasItem"), desc: t("organize.exportNasDesc", { count: keep.length }), run: chooseNas }] : []),
     { key: "trash", count: rejectAll.length, title: t("organize.trashItem"), desc: t("organize.trashDesc", { count: rejectAll.length }), run: () => { setScope(rejectManual.length > 0 ? "manual" : "all"); open({ kind: "trash" }); } },
   ];
 
@@ -101,7 +110,7 @@ export default function Organize({ project, photos, decisions, onChanged }: {
       <Modal open={dlg?.kind === "export"} onClose={close} locked={phase === "running"} title={t("organize.exportTitle")}
         footer={phase === "done" ? (
           <>
-            {result?.dest && result.ok > 0 && <button className="btn" onClick={() => invoke("reveal", { path: result.dest })}>{t("organize.showInFinder")}</button>}
+            {result?.dest && result.ok > 0 && !result.remote && <button className="btn" onClick={() => invoke("reveal", { path: result.dest })}>{t("organize.showInFinder")}</button>}
             <button className="btn primary sm" onClick={close}>{t("organize.done")}</button>
           </>
         ) : (
@@ -111,11 +120,16 @@ export default function Organize({ project, photos, decisions, onChanged }: {
           </>
         )}>
         {phase === "done" ? (
-          <p>{t("organize.exported", { count: result?.ok ?? 0 })}{result && result.bad > 0 ? ` · ${t("organize.exportedSkipped", { n: result.bad })}` : ""}</p>
+          <>
+            {result?.error
+              ? <p>{t("organize.exportFailed", { error: result.error })}</p>
+              : <p>{t("organize.exported", { count: result?.ok ?? 0 })}{result && result.bad > 0 ? ` · ${t("organize.exportedSkipped", { n: result.bad })}` : ""}</p>}
+            {result?.remote && result.dest && <p className="mono dest">{result.dest}</p>}
+          </>
         ) : (
           <>
             <p>{t("organize.exportBody", { count: keep.length })}</p>
-            <p className="mono dest">{dlg?.kind === "export" ? dlg.dest : ""}</p>
+            <p className="mono dest">{dlg?.kind === "export" ? nasLabel(dlg.dest) : ""}</p>
             <p className="ash small">{t("organize.exportSafe")}</p>
             {phase === "running" && <div className="bar"><motion.i animate={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%` }} /></div>}
           </>

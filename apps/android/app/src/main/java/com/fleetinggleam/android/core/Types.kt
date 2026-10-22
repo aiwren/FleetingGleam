@@ -122,7 +122,7 @@ data class Decision(val state: String, val manual: Boolean = false, val reasons:
 )
 
 @Serializable data class TrashResult(val moved: Int = 0, val failed: List<String> = emptyList(), val networkBins: List<String> = emptyList(), val deferred: List<String> = emptyList())
-@Serializable data class ExportResult(val copied: Int = 0, val skipped: Int = 0, val dest: String = "")
+@Serializable data class ExportResult(val copied: Int = 0, val skipped: Int = 0, val dest: String = "", val remote: Boolean = false)
 @Serializable data class Machine(val memoryGb: Int = 8, val cores: Int = 4, val accelerator: String = "cpu")
 @Serializable data class SceneText(val id: Int, val text: String)
 

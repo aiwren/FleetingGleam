@@ -32,8 +32,11 @@ object Organize {
     /** 导出到一个路径（相册目录或换算得出路径的文件夹），然后让媒体库收录新文件。 */
     suspend fun exportTo(ctx: Context, paths: List<String>, dest: String): ExportResult {
         val r = Core.get<ExportResult>("export_photos", args("paths" to paths, "dest" to dest))
-        val files = File(dest).listFiles()?.map { it.absolutePath }?.toTypedArray() ?: emptyArray()
-        if (files.isNotEmpty()) MediaScannerConnection.scanFile(ctx, files, null, null)
+        // 传到 NAS 上的不在这台手机上，不用让媒体库收录
+        if (!r.remote) {
+            val files = File(dest).listFiles()?.map { it.absolutePath }?.toTypedArray() ?: emptyArray()
+            if (files.isNotEmpty()) MediaScannerConnection.scanFile(ctx, files, null, null)
+        }
         return r
     }
 

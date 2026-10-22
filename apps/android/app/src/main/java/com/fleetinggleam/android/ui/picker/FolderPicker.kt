@@ -138,15 +138,19 @@ fun FolderPicker() {
                 if (source != null) Row(Modifier.align(Alignment.CenterStart).clip(CircleShape).clickable { source = null; listing = null; err = null; noPermission = false }.padding(start = 2.dp, end = 10.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     FgIcon(Icons.BACK, size = 18.dp, box = 12f, stroke = 1.5f)
                 }
-                if (!explaining) Text(share?.name ?: if (source == "albums") t("android.picker.albums") else t("picker.title"), style = Type.navTitle.copy(color = c.ink), maxLines = 1, overflow = Ellipsis, modifier = Modifier.align(Alignment.Center).padding(horizontal = 72.dp))
+                if (!explaining) Text(share?.name ?: if (source == "albums") t("android.picker.albums") else (req?.title ?: t("picker.title")), style = Type.navTitle.copy(color = c.ink), maxLines = 1, overflow = Ellipsis, modifier = Modifier.align(Alignment.Center).padding(horizontal = 72.dp))
                 Text(t("picker.cancel"), style = Type.rowTitle.copy(color = c.ink), modifier = Modifier.align(Alignment.CenterEnd).clip(CircleShape).clickable { Nas.answer(null) }.padding(horizontal = 10.dp, vertical = 8.dp))
             }
             Spacer(Modifier.size(6.dp))
             when {
                 source == null -> Column(Modifier.clip(RoundedCornerShape(14.dp)).background(c.panel)) {
-                    Source(Icons.ALBUM, t("android.picker.albums"), t("android.picker.albumsDesc"), first = true) { openAlbums() }
-                    Source(Icons.FOLDER, t("android.picker.folder"), t("android.picker.folderDesc")) { pickSystemFolder() }
-                    shares.filter { it.enabled }.forEach { s -> Source(Icons.NAS, s.name, s.host + if (s.connected) "" else " · ${t("settings.nasOffline")}") { enter(s, "") } }
+                    // 导出到 NAS 时只列 NAS
+                    val nasOnly = req?.source == "nas"
+                    if (!nasOnly) {
+                        Source(Icons.ALBUM, t("android.picker.albums"), t("android.picker.albumsDesc"), first = true) { openAlbums() }
+                        Source(Icons.FOLDER, t("android.picker.folder"), t("android.picker.folderDesc")) { pickSystemFolder() }
+                    }
+                    shares.filter { it.enabled }.forEachIndexed { i, s -> Source(Icons.NAS, s.name, s.host + if (s.connected) "" else " · ${t("settings.nasOffline")}", first = nasOnly && i == 0) { enter(s, "") } }
                 }
                 explaining -> PermissionExplainer(
                     blocked = Pickers.mediaBlocked,
@@ -154,7 +158,7 @@ fun FolderPicker() {
                     onFolderInstead = { pickSystemFolder() },
                 )
                 source == "albums" -> Albums(albums, busy, onMore = { openAlbums(more = true) }) { Nas.answer(it) }
-                share != null -> Browse(share, listing, busy, err, onEnter = { path -> enter(share, path) }, onChoose = { Nas.answer(it) })
+                share != null -> Browse(share, listing, busy, err, req?.choose, exporting = req?.source == "nas", onEnter = { path -> enter(share, path) }, onChoose = { Nas.answer(it) })
             }
         }
     }
@@ -257,7 +261,7 @@ private fun Albums(albums: List<Media.Album>?, busy: Boolean, onMore: () -> Unit
 }
 
 @Composable
-private fun Browse(share: Share, listing: Listing?, busy: Boolean, err: String?, onEnter: (String) -> Unit, onChoose: (String) -> Unit) {
+private fun Browse(share: Share, listing: Listing?, busy: Boolean, err: String?, chooseLabel: String?, exporting: Boolean = false, onEnter: (String) -> Unit, onChoose: (String) -> Unit) {
     val c = LocalFg.current
     val crumbs = listing?.path?.split('/')?.filter { it.isNotEmpty() } ?: emptyList()
     val atRoot = crumbs.isEmpty()
@@ -282,10 +286,10 @@ private fun Browse(share: Share, listing: Listing?, busy: Boolean, err: String?,
                 if (folders.isEmpty()) item { Text(t(if (atRoot) "picker.noShares" else "picker.noFolders"), style = Type.small.copy(color = c.ash), modifier = Modifier.padding(8.dp)) }
             }
             Text(
-                if (atRoot) t("picker.rootHint") else if (photos.isNotEmpty()) t("picker.photosHere", "count" to photos.size, "size" to fmtBytes(photos.sumOf { it.size })) else t("picker.noPhotosHere"),
+                if (atRoot) if (exporting) t("picker.rootHintExport") else t("picker.rootHint") else if (photos.isNotEmpty()) t("picker.photosHere", "count" to photos.size, "size" to fmtBytes(photos.sumOf { it.size })) else t("picker.noPhotosHere"),
                 style = Type.small.copy(color = c.ash), modifier = Modifier.padding(top = 10.dp),
             )
-            if (listing.local.isNotEmpty()) FgButton(t("picker.choose"), { onChoose(listing.local) }, primary = true, modifier = Modifier.padding(top = 12.dp).fillMaxWidth())
+            if (listing.local.isNotEmpty()) FgButton(chooseLabel ?: t("picker.choose"), { onChoose(listing.local) }, primary = true, modifier = Modifier.padding(top = 12.dp).fillMaxWidth())
         }
     }
 }
