@@ -150,7 +150,8 @@ private fun LightTable(files: List<ProbeFile>, thumbs: Map<String, String>) {
             val slot = SLOTS[i % SLOTS.size]
             val depth = 0.4f + (i % 4) * 0.22f
             val ratio = f.width.toFloat() / f.height.coerceAtLeast(1)
-            val h = H * (slot.h / 100f) * 1.25f
+            // 稍微小一点，拖动视差时照片不顶到卡片边上
+            val h = H * (slot.h / 100f) * 1.12f
             val w = h * ratio
             val a = remember { Animatable(0f) }
             LaunchedEffect(Unit) { delay(120L + i * 75L); a.animateTo(1f, spring(dampingRatio = 0.997f, stiffness = 170f)) }

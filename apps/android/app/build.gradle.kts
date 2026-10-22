@@ -30,14 +30,26 @@ android {
         ndk { abiFilters += listOf("arm64-v8a") }
     }
 
+    signingConfigs {
+        val ks = (findProperty("FG_KEYSTORE") as String?)?.let(::File)
+        if (ks != null && ks.exists()) {
+            create("release") {
+                storeFile = ks
+                storePassword = findProperty("FG_KEYSTORE_PASSWORD") as String?
+                keyAlias = (findProperty("FG_KEY_ALIAS") as String?) ?: "fleetinggleam"
+                keyPassword = findProperty("FG_KEY_PASSWORD") as String?
+            }
+        }
+    }
     buildTypes {
         release {
             // 用 R8 压缩与优化：Compose 在没优化的包里首帧很慢
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // 正式发布的签名由作者决定（见 ROADMAP 阶段 B 的假设）；在那之前用调试密钥签，好在真机上装 release 包测速度
-            signingConfig = signingConfigs.getByName("debug")
+            // 正式签名：密钥库在仓库外（~/.config/fleetinggleam/release.jks），路径与密码从 ~/.gradle/gradle.properties 的 FG_* 读；
+            // 没配（CI、别的机器）就退回调试密钥，仍能装到真机上测
+            signingConfig = if (signingConfigs.findByName("release") != null) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
         }
     }
     compileOptions {
@@ -146,3 +158,8 @@ dependencies {
 
 // Kotlin 2.3 起 jvmTarget 只能在 compilerOptions 里设
 kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
+
+// core 包里的数据类（Photo、Decision、Project…）都是不可变的，但带 List 字段，Compose 默认当作"不稳定"，
+// 于是每次父级重组照片墙上的每一格都重画。声明稳定后，参数没变的格子会被跳过（滚动和改判时不再重组整面墙）。
+composeCompiler { stabilityConfigurationFiles.add(layout.projectDirectory.file("compose_stability.conf")) }
+

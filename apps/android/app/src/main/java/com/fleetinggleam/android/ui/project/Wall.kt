@@ -52,6 +52,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -291,6 +293,8 @@ fun Tile(
     showScore: Boolean,
     index: Int,
     interactive: Boolean,
+    /** 选中时在格子上放保留 / 淘汰的小坞（手机的照片墙把这些放在底栏，不放坞）。 */
+    dock: Boolean = true,
     onSelect: (String) -> Unit,
     onOpen: (String) -> Unit,
     onDecide: (String, String?) -> Unit,
@@ -317,7 +321,15 @@ fun Tile(
                 scaleX = s; scaleY = s
                 alpha = 1f - 0.38f * recede
             }
-            .then(if (kept) Modifier.shadow(14.dp, shape, ambientColor = c.gleam, spotColor = c.gleam) else Modifier)
+            // 保留的格子周围一圈琥珀色的光晕：画两圈渐淡的圆角矩形，不用 shadow（每格一个阴影层，滚动时渲染线程吃不消）
+            .then(if (kept) Modifier.drawBehind {
+                val r = 12.dp.toPx()
+                // 深色底上同样的透明度会糊成一圈棕边，淡一些、收窄一些
+                for ((k, a) in if (c.dark) listOf(4f to 0.05f, 2f to 0.10f) else listOf(5f to 0.08f, 2.5f to 0.14f)) {
+                    val o = k.dp.toPx()
+                    drawRoundRect(c.gleam.copy(alpha = a), topLeft = Offset(-o, -o), size = Size(size.width + 2 * o, size.height + 2 * o), cornerRadius = CornerRadius(r + o))
+                }
+            } else Modifier)
             .clip(shape)
             .background(c.surface)
             .then(if (kept) Modifier.border(1.dp, c.gleam.copy(alpha = 0.55f), shape) else if (photo != null && state == "review") Modifier.border(1.dp, Color.White.copy(alpha = 0.2f), shape) else Modifier)
@@ -338,7 +350,7 @@ fun Tile(
             Marks(state, changedTo, changeN, reveal, index, selected)
             if (selected && interactive) {
                 FocusFrame()
-                Dock(state, manual, w, Modifier.align(Alignment.BottomCenter).padding(bottom = if (w < 150.dp) 6.dp else 9.dp), onKeep = { onDecide(path, if (state == "keep" && manual) null else "keep") }, onReject = { onDecide(path, if (state == "reject" && manual) null else "reject") }, onOpen = { onOpen(path) })
+                if (dock) Dock(state, manual, w, Modifier.align(Alignment.BottomCenter).padding(bottom = if (w < 150.dp) 6.dp else 9.dp), onKeep = { onDecide(path, if (state == "keep" && manual) null else "keep") }, onReject = { onDecide(path, if (state == "reject" && manual) null else "reject") }, onOpen = { onOpen(path) })
             }
         }
     }

@@ -8,6 +8,9 @@ import { ReactNode, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { links } from "../links";
+import appIcon from "../assets/logo.png";
 import Modal from "../components/Modal";
 import Stepper from "../components/Stepper";
 import { Share, addShare, probeShare, refreshShares, removeShare, setShareEnabled, updateShare, useShares } from "../nas";
@@ -449,7 +452,33 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
             </Group>
 
             <Group id="sec-about" title={t("settings.about")} index={6}>
-              <Row label={t("brand.name")} desc={i18n.language === "en" ? undefined : t("brand.latin")} info={<p className="ash">{t("settings.modelsBody")}</p>}>
+              {/* 应用介绍 + 链接（官网、源代码、隐私、条款、反馈、第三方许可）+ 版本；链接在系统浏览器里打开 */}
+              <div className="srow about-head">
+                <img className="about-icon" src={appIcon} alt="" draggable={false} />
+                <div className="stext">
+                  <b>{t("brand.name")}{i18n.language !== "en" && <span className="mono ash about-latin">{t("brand.latin")}</span>}</b>
+                  <p className="ash">{t("brand.tagline")}</p>
+                  <p className="about-intro">{t("settings.aboutIntro")}</p>
+                </div>
+              </div>
+              {(() => {
+                const l = links(i18n.language.startsWith("zh"));
+                const rows: [string, string | undefined, string][] = [
+                  [t("settings.aboutSite"), t("settings.aboutSiteDesc"), l.site],
+                  [t("settings.aboutSource"), t("settings.aboutSourceDesc"), l.source],
+                  [t("settings.aboutPrivacy"), undefined, l.privacy],
+                  [t("settings.aboutTerms"), undefined, l.terms],
+                  [t("settings.aboutIssues"), t("settings.aboutIssuesDesc"), l.issues],
+                  [t("settings.aboutLicenses"), t("settings.aboutLicensesDesc"), l.licenses],
+                ];
+                return rows.map(([label, desc, url]) => (
+                  <button key={url} className="srow about-link" onClick={() => { void openUrl(url).catch(() => window.open(url, "_blank")); }} title={url}>
+                    <div className="stext"><b>{label}</b>{desc && <p className="ash">{desc}</p>}</div>
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M6 3.5l4.5 4.5L6 12.5" /></svg>
+                  </button>
+                ));
+              })()}
+              <Row label={t("settings.aboutVersion")} desc={t("settings.modelsBody")}>
                 <span className="mono ash">{version ? `v${version}` : ""}</span>
               </Row>
             </Group>

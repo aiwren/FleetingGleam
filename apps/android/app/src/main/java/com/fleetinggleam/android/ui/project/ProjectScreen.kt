@@ -85,7 +85,6 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
     val paused by Session.paused.collectAsState()
     val settings by Settings.state.collectAsState()
     val decisions by Session.decisions.collectAsState()
-    Session.tick.collectAsState().value // 分析中每帧刷新一次
     val status by Projects.status.collectAsState()
     val scope = rememberCoroutineScope()
     var settingsOpen by remember { mutableStateOf(false) }
@@ -109,8 +108,9 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
             if (phase == Phase.Done && project.search != false) IconBtn(Icons.SEARCH, t("search.label"), { cull.searchOpen = !cull.searchOpen; if (!cull.searchOpen) cull.query = "" }, on = cull.searchOpen, plain = true)
             val canReeval = phase == Phase.Done && settings.learn && project.learn != false && dirty > 0
             com.fleetinggleam.android.ui.components.MenuButton(t("pset.settings"), buildList {
-                add(Triple(t("pset.settings"), !scanning) { settingsOpen = true })
+                add(Triple(t("organize.button"), phase == Phase.Done) { organize = true })
                 add(Triple(t("cull.reeval"), canReeval) { Session.reevaluate() })
+                add(Triple(t("pset.settings"), !scanning) { settingsOpen = true })
                 add(Triple(t("styles.title"), true, onOpenStyles))
                 add(Triple(t("bin.rename"), true) { renaming = true })
             }, dot = canReeval)
@@ -134,8 +134,7 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
                         }
                         FgButton(t("cull.stop"), { Session.stopScan() }, small = true)
                     }
-                    val last = Session.lastStage
-                    Text(last?.let { "${it.first.substringAfterLast('/')} · ${t("cull.stage.${it.second}")}" } ?: t("cull.loadingModel"), style = Type.monoSmall.copy(color = c.ash), maxLines = 1, overflow = Ellipsis, modifier = Modifier.padding(top = 2.dp))
+                    StageLine()
                     LiveBar(if (progress.total > 0) progress.done.toFloat() / progress.total else 0f, Modifier.padding(top = 8.dp))
                 } else {
                     val counts = decisions.values.groupingBy { it.state }.eachCount()
@@ -168,7 +167,7 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
                 when (phase) {
                     Phase.Ready -> ReadyStage(project, uncached, bytes, eta, files.filter { !it.cached }, previews, onStart = start, onAddFolder = addFolder, onRemoveFolder = { Session.removeFolder(it) })
                     Phase.Scanning -> ScanningWall()
-                    Phase.Done -> Culling(project, cull, data, onOpenStyles, onOrganize = { organize = true })
+                    Phase.Done -> Culling(project, cull, data, onOpenStyles)
                     else -> {}
                 }
             }
@@ -201,4 +200,13 @@ private fun ScanningWall() {
         val path = items[i].key
         Tile(path, w, h, Session.results[path], Session.stages[path], "", selected = false, reveal = false, dim = false, manual = false, showScore = false, index = i, interactive = false, onSelect = {}, onOpen = {}, onDecide = { _, _ -> })
     }
+}
+
+/** 横幅里"此刻在做哪张"：只有这一行跟着分析事件刷新，整页不用。 */
+@Composable
+private fun StageLine() {
+    val c = LocalFg.current
+    Session.tick.collectAsState().value
+    val last = Session.lastStage
+    Text(last?.let { "${it.first.substringAfterLast('/')} · ${t("cull.stage.${it.second}")}" } ?: t("cull.loadingModel"), style = Type.monoSmall.copy(color = c.ash), maxLines = 1, overflow = Ellipsis, modifier = Modifier.padding(top = 2.dp))
 }

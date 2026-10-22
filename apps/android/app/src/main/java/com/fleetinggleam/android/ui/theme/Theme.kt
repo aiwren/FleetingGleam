@@ -42,9 +42,13 @@ data class FgColors(
     val dark: Boolean,
 )
 
+/**
+ * 浅色（2026-10-22 按 iOS 浅色界面重调）：页面底是 iOS 的 systemGroupedBackground（#F2F2F7）那种浅灰，卡片和对话框是白的，
+ * 芯片与输入框是再深一点的灰（iOS 的 tertiarySystemFill）。白底上液态玻璃看不出来，灰底上才有——作者 2026-10-22 的反馈。
+ */
 val Light = FgColors(
-    canvas = Color(0xFFFFFFFF), panel = Color(0xFFF7F7F8), surface = Color(0xFFEFEFF1), surface2 = Color(0xFFE4E4E7),
-    ink = Color(0xFF111113), ash = Color(0xFF6C6C74), line = Color(0x17000000), onInk = Color(0xFFFFFFFF),
+    canvas = Color(0xFFF2F2F7), panel = Color(0xFFFFFFFF), surface = Color(0xFFE6E6EB), surface2 = Color(0xFFD8D8DE),
+    ink = Color(0xFF111113), ash = Color(0xFF6E6E76), line = Color(0x1A000000), onInk = Color(0xFFFFFFFF),
     gleam = Color(0xFFDEA13F), gleamInk = Color(0xFF241703), dark = false,
 )
 val Dark = FgColors(

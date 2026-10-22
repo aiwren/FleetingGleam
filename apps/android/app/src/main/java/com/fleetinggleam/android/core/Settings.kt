@@ -26,6 +26,8 @@ data class AppSettings(
     val tier: String? = null,
     /** 每次有意换了更好的模型就加一（正在看的项目跟着重新看一遍）。 */
     val tierRev: Int = 0,
+    /** 液态玻璃（折射、模糊、高光）。关掉就是普通的半透明磨砂，弱机器和模拟器上省很多 GPU。 */
+    val glass: Boolean = true,
 )
 
 object Settings {
@@ -42,11 +44,15 @@ object Settings {
 
     fun init(ctx: Context) {
         prefs = ctx.getSharedPreferences("fg", Context.MODE_PRIVATE)
-        _state.value = prefs.getString("settings", null)?.let { runCatching { Fg.camel.decodeFromString<AppSettings>(it) }.getOrNull() } ?: AppSettings()
+        // 第一次运行：模拟器（没有真 GPU，玻璃的着色器一帧要几百毫秒）默认关掉液态玻璃；真机默认开，设置里随时能改
+        _state.value = prefs.getString("settings", null)?.let { runCatching { Fg.camel.decodeFromString<AppSettings>(it) }.getOrNull() } ?: AppSettings(glass = !isEmulator())
         _info.value = prefs.getString("scaninfo", null)?.let { runCatching { Fg.json.decodeFromString<ScanInfo>(it) }.getOrNull() }
     }
 
     val value: AppSettings get() = _state.value
+
+    /** 模拟器（goldfish / ranchu / generic）。 */
+    fun isEmulator(): Boolean = android.os.Build.HARDWARE.let { it.contains("goldfish") || it.contains("ranchu") } || android.os.Build.FINGERPRINT.contains("generic") || android.os.Build.PRODUCT.contains("sdk_gphone")
 
     fun set(f: (AppSettings) -> AppSettings) {
         val next = f(_state.value)

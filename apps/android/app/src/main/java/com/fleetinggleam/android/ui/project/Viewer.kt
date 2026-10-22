@@ -97,6 +97,7 @@ import com.fleetinggleam.android.ui.components.GlassBox
 import com.fleetinggleam.android.ui.components.Icons
 import com.fleetinggleam.android.ui.components.LocalBackdrop
 import com.fleetinggleam.android.ui.components.glassStyle
+import com.fleetinggleam.android.ui.components.anchor
 import com.fleetinggleam.android.ui.components.rememberPress
 import com.fleetinggleam.android.ui.theme.Ellipsis
 import com.fleetinggleam.android.ui.theme.LocalFg
@@ -138,7 +139,7 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, on
     val enter = remember { Animatable(0f) }
     val drag = remember { Animatable(0f) }
     var stage by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
-    val origin = remember { cull.rects[shown[start].path] }
+    val origin = remember { cull.rect(shown[start].path) }
     var liveOn by remember { mutableStateOf(UiPrefs.bool("live", true)) }
     var playing by remember { mutableIntStateOf(0) }
     var quiet by remember { mutableStateOf(true) }
@@ -193,7 +194,7 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, on
             AsyncImage(File(photo.thumb), null, Modifier.fillMaxSize().blur(60.dp).graphicsLayer { alpha = 0.42f }, contentScale = ContentScale.Crop)
         }
         // ---- 照片
-        Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
+        Box(Modifier.fillMaxSize().then(if (com.fleetinggleam.android.ui.components.LocalGlassOn.current) Modifier.layerBackdrop(backdrop) else Modifier)) {
             HorizontalPager(
                 pager, Modifier.fillMaxSize().pointerInput(scale) {
                     // 没放大时竖着拖：往下关、往上看详情
@@ -221,7 +222,7 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, on
                     onTap = { chrome = !chrome },
                     modifier = Modifier.graphicsLayer {
                         // 打开：从格子飞出来；关上：飞回此刻这张的格子（不在屏幕上就只淡出）
-                        val from = if (isOrigin && page == pager.currentPage) origin else if (page == pager.currentPage) cull.rects[p.path] else null
+                        val from = if (isOrigin && page == pager.currentPage) origin else if (page == pager.currentPage) cull.rect(p.path) else null
                         val st = stage
                         if (from != null && st != null && e < 1f) {
                             val fit = fitRect(p.ratio, st.width, st.height)
@@ -251,13 +252,15 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, on
                         }
                     }
                     if (photo.motion) {
-                        var menu by remember { mutableStateOf(false) }
-                        Box(Modifier.padding(start = 8.dp)) {
-                            GlassPill(t("tag.motion"), on = clip != null) { menu = true }
-                            androidx.compose.material3.DropdownMenu(menu, { menu = false }, containerColor = LocalFg.current.panel) {
-                                androidx.compose.material3.DropdownMenuItem({ Text(if (clip != null) t("viewer.stopMotion") else t("viewer.playMotion"), style = Type.rowTitle) }, onClick = { menu = false; if (clip != null) clip = null else scope.launch { playMotion(true) } })
-                                androidx.compose.material3.DropdownMenuItem({ Text(t("viewer.replayMotion"), style = Type.rowTitle) }, onClick = { menu = false; scope.launch { playMotion(true) } })
-                                androidx.compose.material3.DropdownMenuItem({ Text(if (liveOn) t("viewer.liveOff") else t("viewer.liveOn"), style = Type.rowTitle) }, onClick = { menu = false; liveOn = !liveOn; UiPrefs.put("live", liveOn); if (!liveOn) clip = null })
+                        val overlay = com.fleetinggleam.android.ui.components.LocalOverlay.current
+                        val anchor = com.fleetinggleam.android.ui.components.rememberAnchor()
+                        Box(Modifier.padding(start = 8.dp).then(Modifier.anchor(anchor))) {
+                            GlassPill(t("tag.motion"), on = clip != null) {
+                                overlay.showMenu(anchor.value, listOf(
+                                    com.fleetinggleam.android.ui.components.MenuItem(if (clip != null) t("viewer.stopMotion") else t("viewer.playMotion")) { if (clip != null) clip = null else scope.launch { playMotion(true) } },
+                                    com.fleetinggleam.android.ui.components.MenuItem(t("viewer.replayMotion")) { scope.launch { playMotion(true) } },
+                                    com.fleetinggleam.android.ui.components.MenuItem(if (liveOn) t("viewer.liveOff") else t("viewer.liveOn")) { liveOn = !liveOn; UiPrefs.put("live", liveOn); if (!liveOn) clip = null },
+                                ), dark = true)
                             }
                         }
                     }

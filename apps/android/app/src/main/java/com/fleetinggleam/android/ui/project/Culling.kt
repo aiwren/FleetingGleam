@@ -63,6 +63,9 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.fleetinggleam.android.ui.theme.Motion
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.togetherWith
 import coil3.compose.AsyncImage
 import com.fleetinggleam.android.core.Decision
 import com.fleetinggleam.android.core.Hit
@@ -108,7 +111,6 @@ enum class ViewStyle(val id: String, val icon: String) {
     companion object { fun of(id: String) = entries.firstOrNull { it.id == id } ?: Justified }
 }
 
-const val UNDO_ICON = "M5.5 3.5L2.5 6.5l3 3M2.5 6.5h7a3.8 3.8 0 010 7.6H8"
 
 /**
  * 一个项目的选片界面的状态（桌面端 Culling.tsx 里那一串 useState）：筛选、选中、大图、搜索、场景页、浏览方式。
@@ -134,8 +136,9 @@ class CullState {
         private set
     var hintUses by mutableIntStateOf(UiPrefs.int("hint.dock", 0))
         private set
-    /** 每张照片在屏幕上的位置：打开大图时照片从它的格子里飞出来。 */
-    val rects = HashMap<String, Rect>()
+    /** 每张照片的格子的布局坐标：打开大图时照片从它的格子里飞出来。只记坐标对象，位置在用到时才算（滚动时每帧不算矩形）。 */
+    val coords = HashMap<String, androidx.compose.ui.layout.LayoutCoordinates>()
+    fun rect(path: String): Rect? = coords[path]?.takeIf { it.isAttached }?.boundsInRoot()
 
     fun pickLayout(v: ViewStyle) { layout = v; UiPrefs.put("layout", v.id) }
     fun bumpHint(n: Int = 1) { hintUses = if (n == 99) 99 else maxOf(hintUses, hintUses + 1); UiPrefs.put("hint.dock", hintUses) }
@@ -231,16 +234,21 @@ fun rememberCullData(cull: CullState, photos: List<Photo>, decisions: Map<String
             }
         }
     }
-    val shown = remember(order, decisions, mode, sceneF, personF, selected, hits) {
-        fun matchesView(p: Photo) = (mode == "all" || decisions[p.path]?.state == mode) && (sceneF == null || p.scene == sceneF) && (personF == null || p.people.contains(personF))
-        // 选中的那张一直留在眼前，直到你移开——哪怕刚做的改动让它不再符合这个视图
-        val carried = selected?.let { byPath[it] }?.takeIf { !matchesView(it) }?.path
+    val matchesView = { p: Photo -> (mode == "all" || decisions[p.path]?.state == mode) && (sceneF == null || p.scene == sceneF) && (personF == null || p.people.contains(personF)) }
+    // 选中的那张一直留在眼前，直到你移开——哪怕刚做的改动让它不再符合这个视图。
+    // 只有它真的不再符合时才"带着"；其余情况是 null，这样点选一张不会重算整个列表（也就不会重排整面墙）。
+    val carried = remember(selected, byPath, decisions, mode, sceneF, personF) { selected?.let { byPath[it] }?.takeIf { !matchesView(it) }?.path }
+    val shownRaw = remember(order, decisions, mode, sceneF, personF, carried, hits) {
         val base = order.filter { matchesView(it) || it.path == carried }
         if (hits == null) base else {
             val rank = hits.withIndex().associate { (i, h) -> h.path to i }
             base.filter { it.path in rank }.sortedBy { rank[it.path] }
         }
     }
+    // 同样的照片、同样的顺序就是同一个列表：改判会换一张取舍表，但视图里的照片没变时，下游（排版、每一格的位置）都不重做
+    val shownRef = remember { mutableStateOf(shownRaw) }
+    if (shownRef.value !== shownRaw && (shownRef.value.size != shownRaw.size || shownRef.value.indices.any { shownRef.value[it] !== shownRaw[it] })) shownRef.value = shownRaw
+    val shown = shownRef.value
     return remember(shown, facets, scenes, people, byPath, hits) { CullData(shown, facets.first, scenes, people, byPath, hits) }
 }
 
@@ -269,12 +277,11 @@ fun decideIn(cull: CullState, data: CullData, path: String, st: String?) {
 
 /** 分析好的项目：状态条、照片墙 / 单张 / 对比 / 场景页，底部一条液态玻璃工具栏。 */
 @Composable
-fun Culling(project: Project, cull: CullState, data: CullData, onOpenStyles: () -> Unit, onOrganize: () -> Unit) {
+fun Culling(project: Project, cull: CullState, data: CullData, onOpenStyles: () -> Unit) {
     val c = LocalFg.current
     val photos by Session.photos.collectAsState()
     val decisions by Session.decisions.collectAsState()
     val celebrate by Session.celebrate.collectAsState()
-    val undoN by Session.undoCount.collectAsState()
     val describing by Scenes.describing.collectAsState()
     val packs by Models.packs.collectAsState()
     val haptic = LocalHapticFeedback.current
@@ -297,13 +304,16 @@ fun Culling(project: Project, cull: CullState, data: CullData, onOpenStyles: () 
         if (i >= 0 && (cull.viewer || cull.layout == ViewStyle.Single)) com.fleetinggleam.android.core.Large.prefetch(listOf(1, -1, 2, -2, 3).mapNotNull { data.shown.getOrNull(i + it)?.path })
     }
 
-    val decide: (String, String?) -> Unit = { path, st -> haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); decideIn(cull, data, path, st) }
-    val open: (String) -> Unit = { path -> cull.select(path, byTap = true); cull.viewer = true }
+    // 交给每一格的回调不随重组换新对象，否则参数"变了"，所有格子都得重画
+    val dataRef = androidx.compose.runtime.rememberUpdatedState(data)
+    val decide: (String, String?) -> Unit = remember(cull) { { path, st -> haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); decideIn(cull, dataRef.value, path, st) } }
+    val open: (String) -> Unit = remember(cull) { { path -> cull.select(path, byTap = true); cull.viewer = true } }
+    val selectTile: (String) -> Unit = remember(cull) { { path -> if (cull.selected == path) open(path) else cull.select(path, byTap = true) } }
 
     androidx.activity.compose.BackHandler(cull.sceneView) { cull.sceneView = false }
     androidx.activity.compose.BackHandler(!cull.sceneView && cull.searchOpen) { cull.searchOpen = false; cull.query = "" }
     Box(Modifier.fillMaxSize()) {
-        Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
+        Box(Modifier.fillMaxSize().then(if (com.fleetinggleam.android.ui.components.LocalGlassOn.current) Modifier.layerBackdrop(backdrop) else Modifier)) {
             val bottomPad = 92.dp
             when {
                 cull.sceneView -> SceneGallery(project, data, cull, describing, canDescribe = !scenePack && data.scenes.any { it.text.isEmpty() },
@@ -332,10 +342,10 @@ fun Culling(project: Project, cull: CullState, data: CullData, onOpenStyles: () 
                         val p = data.shown[i]
                         val d = decisions[p.path]
                         val st = d?.state ?: ""
-                        Box(Modifier.onGloballyPositioned { cull.rects[p.path] = it.boundsInRoot() }) {
+                        Box(Modifier.onGloballyPositioned { cull.coords[p.path] = it }) {
                             Tile(p.path, w, h, p, null, st, selected = cull.selected == p.path, reveal = celebrate, dim = st == "reject" && cull.mode == "all", manual = d?.manual == true,
-                                showScore = sortBy == "score", index = i, interactive = true,
-                                onSelect = { path -> if (cull.selected == path) open(path) else cull.select(path, byTap = true) }, onOpen = open, onDecide = decide)
+                                showScore = sortBy == "score", index = i, interactive = true, dock = false,
+                                onSelect = selectTile, onOpen = open, onDecide = decide)
                         }
                     }
                 }
@@ -353,10 +363,9 @@ fun Culling(project: Project, cull: CullState, data: CullData, onOpenStyles: () 
                     }
                 }
             }
-            CullBar(cull, undoN, Modifier.align(Alignment.BottomCenter), onOrganize = onOrganize, onUndo = {
-                Session.undo()?.let { cull.select(it) }
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-            })
+            // 底栏：没选照片时只有浏览方式；选中一张就变成它的快速操作（保留 / 淘汰 / 放大）。撤销和整理都不在这里（作者 2026-10-22）
+            val sel = cull.selected?.let { data.byPath[it] }?.takeIf { cull.layout != ViewStyle.Compare }
+            CullBar(cull, sel, sel?.let { decisions[it.path] }, Modifier.align(Alignment.BottomCenter), onDecide = decide, onOpen = open)
         }
     }
 
@@ -469,17 +478,28 @@ fun FaceAvatar(photo: Photo, box: List<Float>, size: Dp) {
 
 /** 底部的液态玻璃工具栏：筛选、浏览方式、撤销。 */
 @Composable
-private fun CullBar(cull: CullState, undoN: Int, modifier: Modifier, onOrganize: () -> Unit, onUndo: () -> Unit) {
+private fun CullBar(cull: CullState, sel: Photo?, d: Decision?, modifier: Modifier, onDecide: (String, String?) -> Unit, onOpen: (String) -> Unit) {
     val c = LocalFg.current
     Box(modifier.navigationBarsPadding().padding(bottom = 10.dp)) {
         GlassBox(shape = RoundedCornerShape(50)) {
-            Row(Modifier.padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (cull.sceneView) {
-                    BarItem("M10 3L5 8l5 5", t("cull.backToPhotos")) { cull.sceneView = false }
-                } else {
-                    BarItem(cull.layout.icon, t("cull.layout.${cull.layout.id}")) { cull.viewSheet = true }
-                    BarItem("M2.5 5.5h11M2.5 8h11M2.5 10.5h7", t("organize.button"), onClick = onOrganize)
-                    BarItem(UNDO_ICON, t("android.cull.undo"), enabled = undoN > 0, onClick = onUndo)
+            // 内容切换时胶囊的宽度跟着变
+            androidx.compose.animation.AnimatedContent(
+                targetState = Triple(cull.sceneView, sel?.path, d?.state), label = "bar",
+                transitionSpec = { (androidx.compose.animation.fadeIn(tween(Motion.FAST)) togetherWith androidx.compose.animation.fadeOut(tween(Motion.FAST))).using(androidx.compose.animation.SizeTransform(clip = false)) },
+            ) { (scene, path, state) ->
+                Row(Modifier.padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    when {
+                        scene -> BarItem("M10 3L5 8l5 5", t("cull.backToPhotos")) { cull.sceneView = false }
+                        path != null -> {
+                            val manual = d?.manual == true
+                            BarItem("star", t(if (state == "keep" && manual) "mark.clear" else "state.keep"), on = state == "keep", gold = true) { onDecide(path, if (state == "keep" && manual) null else "keep") }
+                            BarItem("M3 3l6 6M9 3L3 9", t(if (state == "reject" && manual) "mark.clear" else "state.reject"), on = state == "reject", box = 12f) { onDecide(path, if (state == "reject" && manual) null else "reject") }
+                            BarItem("M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5L9 7M2.5 13.5L7 9", t("inspector.zoomLabel")) { onOpen(path) }
+                            Box(Modifier.width(1.dp).height(24.dp).background(c.line))
+                            BarItem(cull.layout.icon, t("cull.layout.${cull.layout.id}")) { cull.viewSheet = true }
+                        }
+                        else -> BarItem(cull.layout.icon, t("cull.layout.${cull.layout.id}")) { cull.viewSheet = true }
+                    }
                 }
             }
         }
@@ -487,21 +507,24 @@ private fun CullBar(cull: CullState, undoN: Int, modifier: Modifier, onOrganize:
 }
 
 @Composable
-private fun BarItem(icon: String, label: String, enabled: Boolean = true, dot: Boolean = false, onClick: () -> Unit) {
+private fun BarItem(icon: String, label: String, enabled: Boolean = true, dot: Boolean = false, on: Boolean = false, gold: Boolean = false, box: Float = 16f, onClick: () -> Unit) {
     val c = LocalFg.current
     val src = remember { MutableInteractionSource() }
     val press = rememberPress(src)
+    // 选中态：保留是琥珀色（只有"保留"用它），淘汰是墨色
+    val bg = if (!on) Color.Transparent else if (gold) c.gleam else c.ink
+    val fg = if (!on) c.ink else if (gold) c.gleamInk else c.onInk
     Column(
-        Modifier.width(72.dp).height(46.dp).clip(RoundedCornerShape(23.dp))
+        Modifier.width(68.dp).height(46.dp).clip(RoundedCornerShape(23.dp)).background(bg)
             .graphicsLayer { val s = 1f + 0.08f * press(); scaleX = s; scaleY = s; alpha = if (enabled) 1f else 0.35f }
             .clickable(interactionSource = src, indication = null, enabled = enabled, onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
     ) {
         Box {
-            FgIcon(icon, size = 18.dp, color = c.ink)
+            if (icon == "star") Star(true, 18.dp, color = if (on) fg else c.gleam, glow = false) else FgIcon(icon, size = 18.dp, box = box, color = fg)
             if (dot) Box(Modifier.align(Alignment.TopEnd).offset(4.dp, (-2).dp).size(7.dp).clip(CircleShape).background(c.ink))
         }
-        Text(label, style = Type.monoSmall.copy(fontFamily = com.fleetinggleam.android.ui.theme.Geist, color = c.ink, fontWeight = FontWeight.SemiBold, fontSize = androidx.compose.ui.unit.TextUnit(10f, androidx.compose.ui.unit.TextUnitType.Sp), lineHeight = androidx.compose.ui.unit.TextUnit(12f, androidx.compose.ui.unit.TextUnitType.Sp)), maxLines = 1, overflow = Ellipsis, modifier = Modifier.padding(top = 1.dp))
+        Text(label, style = Type.monoSmall.copy(fontFamily = com.fleetinggleam.android.ui.theme.Geist, color = fg, fontWeight = FontWeight.SemiBold, fontSize = androidx.compose.ui.unit.TextUnit(10f, androidx.compose.ui.unit.TextUnitType.Sp), lineHeight = androidx.compose.ui.unit.TextUnit(12f, androidx.compose.ui.unit.TextUnitType.Sp)), maxLines = 1, overflow = Ellipsis, modifier = Modifier.padding(top = 1.dp))
     }
 }
 

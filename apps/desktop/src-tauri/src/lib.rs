@@ -495,6 +495,7 @@ fn set_locale(app: AppHandle, locale: String) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let handle = app.handle().clone();
             // macOS 的平台能力：ImageIO 边车、Apple Vision 边车、Metal 上的 CLIP、访达的废纸篓

@@ -37,6 +37,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.layout.layout
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -70,6 +71,7 @@ import com.fleetinggleam.android.ui.components.FgField
 import com.fleetinggleam.android.ui.components.FgSwitch
 import com.fleetinggleam.android.ui.components.IconBtn
 import com.fleetinggleam.android.ui.components.Icons
+import com.fleetinggleam.android.ui.components.FgIcon
 import com.fleetinggleam.android.ui.components.Ktag
 import com.fleetinggleam.android.ui.components.LearnMeter
 import com.fleetinggleam.android.ui.components.Segmented
@@ -186,6 +188,7 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                 SettingRow(t("settings.theme"), t("settings.themeDesc"), below = {
                     Segmented(listOf("system" to t("nav.systemLang"), "light" to t("settings.light"), "dark" to t("settings.dark")), s.theme, { v -> Settings.set { it.copy(theme = v) } }, block = true)
                 })
+                SettingRow(t("android.settings.glass"), t("android.settings.glassDesc")) { FgSwitch(s.glass, { v -> Settings.set { it.copy(glass = v) } }, t("android.settings.glass")) }
             }
         }
         if (section == "analysis") item {
@@ -204,6 +207,31 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                     Text(s.tier?.let { t(if (it == "ultra") "settings.qualityUltra" else if (it == "high") "settings.qualityHigh" else "settings.qualityFast") } ?: t("settings.auto"), style = Type.mono.copy(color = c.ash))
                 }
             }
+        }
+        if (section == "analysis") item {
+            // 模型档位（作者 2026-10-22："怎么只剩标准的了"）：自动 / 标准 / 高质量 / 极致，没装的选了就下载；换了之后正在看的项目重新评估
+            SettingGroup(t("android.settings.tierTitle")) {
+                val options = listOf(null to "auto", "fast" to "fast", "high" to "high", "ultra" to "ultra")
+                options.forEachIndexed { i, (tier, id) ->
+                    val pack = if (tier == null) null else packs.firstOrNull { it.id == (if (tier == "high") "high" else if (tier == "ultra") "ultra" else "standard") }
+                    val installed = tier == null || pack?.installed == true
+                    val title = if (tier == null) t("android.settings.tierAuto") else t(if (tier == "ultra") "settings.qualityUltra" else if (tier == "high") "settings.qualityHigh" else "settings.qualityFast")
+                    val desc = if (tier == null) t("android.settings.tierAutoDesc") else t("android.settings.tierDesc.$id") + " · " + (if (installed) t("android.settings.tierInstalled") else t("android.settings.tierNeeds", "size" to fmtBytes(pack?.bytes ?: 0)))
+                    val on = s.tier == tier
+                    SettingRow(title, desc, first = i == 0, onClick = {
+                        scope.launch {
+                            if (tier == null) { Settings.set { it.copy(tier = null, tierRev = it.tierRev + 1) }; return@launch }
+                            if (Models.ensurePacks(Strategy.tierPacks(tier)) == Answer.Cancelled) return@launch
+                            Settings.set { it.copy(tier = tier, tierRev = it.tierRev + 1) }
+                        }
+                    }) {
+                        Box(Modifier.size(20.dp).clip(CircleShape).border(1.5.dp, if (on) c.ink else c.line, CircleShape), contentAlignment = Alignment.Center) {
+                            if (on) Box(Modifier.size(10.dp).clip(CircleShape).background(c.ink))
+                        }
+                    }
+                }
+            }
+            Text(t("android.settings.tierHint"), style = Type.rowDesc.copy(color = c.ash), modifier = Modifier.padding(start = 16.dp, top = 6.dp))
         }
         if (section == "personal") item {
             SettingGroup("") {
@@ -343,9 +371,33 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
             }
         }
         if (section == "about") item {
-            SettingGroup("") {
-                SettingRow(t("brand.name"), if (I18n.lang.value == "en") null else t("brand.latin"), info = t("android.settings.modelsBody"), first = true) {
-                    Text("v$version", style = Type.mono.copy(color = c.ash))
+            // 关于：应用介绍、几条链接（官网、源代码、隐私、条款、反馈、第三方许可）、版本（作者 2026-10-22 要求）
+            val zh = I18n.isZh
+            val site = "https://fleetinggleam.fleetinggleam-web.workers.dev"; val repo = "https://github.com/lcopilot/FleetingGleam"
+            val openUrl = { url: String -> runCatching { ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) } }
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.panel).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(com.fleetinggleam.android.R.mipmap.ic_launcher), null, Modifier.size(64.dp).clip(RoundedCornerShape(16.dp)))
+                    Text(t("brand.name"), style = Type.title.copy(color = c.ink), modifier = Modifier.padding(top = 10.dp))
+                    if (zh) Text(t("brand.latin"), style = Type.monoSmall.copy(color = c.ash))
+                    Text(t("brand.tagline"), style = Type.rowDesc.copy(color = c.ash), textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.padding(top = 6.dp))
+                    Text(t("settings.aboutIntro"), style = Type.body.copy(color = c.ink), textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.padding(top = 12.dp))
+                }
+                SettingGroup(t("settings.aboutLinks")) {
+                    val rows = listOf(
+                        Triple(Icons.CULL, t("settings.aboutSite") to t("settings.aboutSiteDesc"), if (zh) "$site/zh" else site),
+                        Triple("M5.5 2.5L2 8l3.5 5.5M10.5 2.5L14 8l-3.5 5.5M9 2l-2 12", t("settings.aboutSource") to t("settings.aboutSourceDesc"), repo),
+                        Triple("M3.5 2.5h9a1 1 0 011 1v9a1 1 0 01-1 1h-9a1 1 0 01-1-1v-9a1 1 0 011-1zM5 5.5h6M5 8h6M5 10.5h3", t("settings.aboutPrivacy") to "", if (zh) "$site/zh/privacy" else "$site/privacy"),
+                        Triple("M4 2.5h8v11H4zM6 5.5h4M6 8h4", t("settings.aboutTerms") to "", if (zh) "$site/zh/terms" else "$site/terms"),
+                        Triple("M8 2.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM8 5v3.5M8 11h.01", t("settings.aboutIssues") to t("settings.aboutIssuesDesc"), "$repo/issues"),
+                        Triple("M2.5 4.5h11M2.5 8h11M2.5 11.5h7", t("settings.aboutLicenses") to t("settings.aboutLicensesDesc"), "$repo/blob/main/docs/THIRD_PARTY.md"),
+                    )
+                    rows.forEachIndexed { i, (icon, text, url) ->
+                        SettingRow(text.first, text.second.ifEmpty { null }, first = i == 0, control = { FgIcon(Icons.CHEVRON, size = 14.dp, stroke = 1.6f, color = c.ash) }, onClick = { openUrl(url) }, icon = icon)
+                    }
+                }
+                SettingGroup("") {
+                    SettingRow(t("settings.aboutVersion"), t("android.settings.modelsBody"), first = true) { Text("v$version", style = Type.mono.copy(color = c.ash)) }
                 }
             }
         }

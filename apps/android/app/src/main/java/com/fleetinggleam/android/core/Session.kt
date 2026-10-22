@@ -94,7 +94,13 @@ object Session {
 
     fun current(): Project? = Projects.store.value.let { s -> s.projects.firstOrNull { it.id == s.activeId && it.trashed == null } }
 
-    private fun flush() { tick.value += 1 }
+    // 分析中的事件一秒几十个；界面每帧最多刷新一次（攒 32 毫秒再发一个 tick），否则每张照片到达都重组整面墙
+    @Volatile private var flushPending = false
+    private fun flush() {
+        if (flushPending) return
+        flushPending = true
+        scope.launch { delay(32); flushPending = false; tick.value += 1 }
+    }
 
     private fun listen() {
         Core.listen("scan-progress") { raw -> if (phase.value == Phase.Scanning) runCatching { progress.value = Fg.json.decodeFromString<Progress>(raw) } }

@@ -247,7 +247,7 @@ private fun Cell(
     Box(Modifier.size(w, h), contentAlignment = Alignment.Center) {
         Box(
             Modifier.size(with(density) { fw.toDp() }, with(density) { fh.toDp() })
-                .onGloballyPositioned { cull.rects[p.path] = it.boundsInRoot() }
+                .onGloballyPositioned { cull.coords[p.path] = it }
                 .clip(shape)
                 .border(if (st == "keep") 1.5.dp else 0.dp, if (st == "keep") c.gleam else Color.Transparent, shape)
                 .background(c.surface)

@@ -324,12 +324,13 @@ fun SettingGroup(title: String, content: @Composable () -> Unit) {
 
 /** 一项设置：标题加一句平实的话；技术细节放到"?"后面。行与行之间一条细线。 */
 @Composable
-fun SettingRow(label: String, desc: String? = null, info: String? = null, first: Boolean = false, below: (@Composable () -> Unit)? = null, control: (@Composable RowScope.() -> Unit)? = null) {
+fun SettingRow(label: String, desc: String? = null, info: String? = null, first: Boolean = false, below: (@Composable () -> Unit)? = null, onClick: (() -> Unit)? = null, icon: String? = null, control: (@Composable RowScope.() -> Unit)? = null) {
     val c = LocalFg.current
     Column(Modifier.fillMaxWidth()) {
         // 行与行之间一条从文字起头处开始的细线（iOS 分组列表的样子）
-        if (!first) Box(Modifier.padding(start = 16.dp).fillMaxWidth().height(0.5.dp).background(c.line))
-        Row(Modifier.fillMaxWidth().heightIn(min = 50.dp).padding(horizontal = 16.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (!first) Box(Modifier.padding(start = if (icon != null) 56.dp else 16.dp).fillMaxWidth().height(0.5.dp).background(c.line))
+        Row(Modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier).heightIn(min = 50.dp).padding(horizontal = 16.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (icon != null) Box(Modifier.size(28.dp).clip(RoundedCornerShape(8.dp)).background(c.ink), contentAlignment = Alignment.Center) { FgIcon(icon, size = 16.dp, stroke = 1.5f, color = c.onInk) }
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(label, style = Type.rowTitle.copy(color = c.ink))
@@ -448,7 +449,7 @@ fun FgDialog(open: Boolean, onDismiss: () -> Unit, title: String, locked: Boolea
     val c = LocalFg.current
     Dialog(onDismissRequest = { if (!locked) onDismiss() }, properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = !locked, dismissOnClickOutside = !locked)) {
         Column(
-            Modifier.padding(20.dp).widthIn(max = 520.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(c.canvas).border(1.dp, c.line, RoundedCornerShape(18.dp)),
+            Modifier.padding(20.dp).widthIn(max = 520.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(c.panel),
         ) {
             Text(title, style = Type.heading.copy(color = c.ink), modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 10.dp))
             Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
@@ -586,19 +587,16 @@ fun NavBar(title: String, back: String?, onBack: (() -> Unit)?, modifier: Modifi
     }
 }
 
-/** ⋯ 按钮带一个下拉菜单；`items` 是 (文字, 是否可点, 动作)。`dot`：有新东西（比如偏好变了可以重新评估）。 */
+/** ⋯ 按钮带一个玻璃菜单；`items` 是 (文字, 是否可点, 动作)。`dot`：有新东西（比如偏好变了可以重新评估）。`glass`：按钮本身也是玻璃（浮在内容上的顶栏里用）。 */
 @Composable
-fun MenuButton(label: String, items: List<Triple<String, Boolean, () -> Unit>>, dot: Boolean = false) {
+fun MenuButton(label: String, items: List<Triple<String, Boolean, () -> Unit>>, dot: Boolean = false, glass: Boolean = false) {
     val c = LocalFg.current
-    var open by remember { mutableStateOf(false) }
-    Box {
-        IconBtn(Icons.MORE, label, { open = true }, plain = true)
+    val overlay = LocalOverlay.current
+    val anchor = rememberAnchor()
+    val show = { overlay.showMenu(anchor.value, items.map { (t, e, a) -> MenuItem(t, e, a) }, alignEnd = true) }
+    if (glass) GlassIconBtn(Icons.MORE, label, show, Modifier.anchor(anchor), dot = dot)
+    else Box(Modifier.anchor(anchor)) {
+        IconBtn(Icons.MORE, label, show, plain = true)
         if (dot) Box(Modifier.align(Alignment.TopEnd).padding(top = 9.dp, end = 9.dp).size(7.dp).clip(CircleShape).background(c.ink))
-        androidx.compose.material3.DropdownMenu(open, { open = false }, containerColor = c.canvas, shape = RoundedCornerShape(14.dp)) {
-            items.forEach { (text, enabled, action) ->
-                androidx.compose.material3.DropdownMenuItem({ Text(text, style = Type.rowTitle.copy(color = if (enabled) c.ink else c.ash)) }, onClick = { open = false; action() }, enabled = enabled,
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 0.dp), modifier = Modifier.heightIn(min = 40.dp))
-            }
-        }
     }
 }

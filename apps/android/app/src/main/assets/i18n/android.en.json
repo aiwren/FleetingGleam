@@ -38,7 +38,20 @@
    "modelsBody": "The models are downloaded to this phone only when needed and run fully offline afterwards: the same models and manifest as the Mac app.",
    "modelsStorage": "Models & storage",
    "on": "On",
-   "off": "Off"
+   "off": "Off",
+   "tierTitle": "Model tier",
+   "tierAuto": "Automatic",
+   "tierAutoDesc": "Decided by this phone's memory and cores",
+   "tierDesc": {
+    "fast": "Good for everyday, fast",
+    "high": "More accurate; more sensitive to blur, composition and look",
+    "ultra": "Latest-generation aesthetic scoring; slower, experimental"
+   },
+   "tierNeeds": "Needs a {{size}} download",
+   "tierInstalled": "Installed",
+   "tierHint": "After switching, the project in view is re-evaluated.",
+   "glass": "Liquid glass",
+   "glassDesc": "The tab bar and floating controls refract what is behind them. Off, they are plain frosted panels, smoother on older phones."
   },
   "cull": {
    "hint": "Tap a photo to select it, then ★ to keep or ✕ to reject; in Single view push up to keep and pull down to reject. Undo is in the bar below.",
@@ -60,6 +73,13 @@
   },
   "tab": {
    "photos": "Photos"
+  },
+  "home": {
+   "continue": "Continue culling",
+   "allProjects": "All projects",
+   "marked": "{{count}} marked",
+   "recent": "Recent",
+   "justNow": "just now"
   }
  },
  "models": {

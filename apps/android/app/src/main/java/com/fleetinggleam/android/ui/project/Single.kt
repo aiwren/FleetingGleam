@@ -141,7 +141,7 @@ private fun SwipeDecide(p: Photo, d: Decision?, onDecide: (String) -> Unit, onOp
         val kept = d?.state == "keep"
         Box(
             Modifier.size(with(density) { fw.toDp() }, with(density) { fh.toDp() })
-                .onGloballyPositioned { cull.rects[p.path] = it.boundsInRoot() }
+                .onGloballyPositioned { cull.coords[p.path] = it }
                 .graphicsLayer {
                     translationY = dy.value
                     val s = 1f - 0.08f * abs(k).coerceAtMost(1f)

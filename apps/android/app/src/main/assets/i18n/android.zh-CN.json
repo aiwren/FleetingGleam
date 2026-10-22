@@ -38,7 +38,20 @@
    "modelsBody": "分析所用的模型只在需要时下载到这台手机，之后完全离线运行；和 Mac 端是同一批模型、同一份清单。",
    "modelsStorage": "模型与存储",
    "on": "已开启",
-   "off": "未开启"
+   "off": "未开启",
+   "tierTitle": "模型档位",
+   "tierAuto": "自动选择",
+   "tierAutoDesc": "按这台手机的内存和核心数决定",
+   "tierDesc": {
+    "fast": "日常够用，速度快",
+    "high": "更准，对模糊、构图和观感更敏感",
+    "ultra": "最新一代美学评分，更慢，实验性"
+   },
+   "tierNeeds": "需下载 {{size}}",
+   "tierInstalled": "已安装",
+   "tierHint": "换档位后，正在看的项目会重新评估一遍。",
+   "glass": "液态玻璃",
+   "glassDesc": "标签栏和浮动控件折射后面的内容。关掉后换成普通磨砂，老机器上更流畅。"
   },
   "cull": {
    "hint": "点一张照片选中，再点 ★ 留下、✕ 淘汰；单张模式里上推留下、下拉淘汰。点错了用下面的撤销。",
@@ -60,6 +73,13 @@
   },
   "tab": {
    "photos": "照片"
+  },
+  "home": {
+   "continue": "继续挑选",
+   "allProjects": "全部项目",
+   "marked": "已标 {{count}} 张",
+   "recent": "最近",
+   "justNow": "刚刚"
   }
  },
  "models": {

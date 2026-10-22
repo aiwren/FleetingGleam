@@ -11,8 +11,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -28,27 +26,24 @@ import com.fleetinggleam.android.core.StyleInfo
 import com.fleetinggleam.android.core.t
 import com.fleetinggleam.android.ui.theme.Ellipsis
 import com.fleetinggleam.android.ui.theme.LocalFg
+import com.fleetinggleam.android.ui.components.anchor
 import com.fleetinggleam.android.ui.theme.Type
 
 /** 下拉选择（桌面端的 <Select>）：显示当前项，点开是一列选项。 */
 @Composable
 fun <T> Select(value: T, options: List<Pair<T, String>>, onChange: (T) -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val c = LocalFg.current
-    var open by remember { mutableStateOf(false) }
-    Box(modifier) {
+    val overlay = com.fleetinggleam.android.ui.components.LocalOverlay.current
+    val anchor = com.fleetinggleam.android.ui.components.rememberAnchor()
+    Box(modifier.then(Modifier.anchor(anchor))) {
         Row(
             Modifier.graphicsLayer { alpha = if (enabled) 1f else 0.4f }.clip(CircleShape).background(c.surface)
-                .clickable(enabled = enabled) { open = true }.padding(start = 12.dp, end = 8.dp, top = 9.dp, bottom = 9.dp),
+                .clickable(enabled = enabled) { overlay.showMenu(anchor.value, options.map { (v, label) -> com.fleetinggleam.android.ui.components.MenuItem(if (v == value) "✓  $label" else "     $label") { onChange(v) } }) }
+                .padding(start = 12.dp, end = 8.dp, top = 9.dp, bottom = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(options.firstOrNull { it.first == value }?.second ?: "", style = Type.small.copy(color = c.ink), maxLines = 1, overflow = Ellipsis)
             FgIcon("M4 6.5l4 3.5 4-3.5", size = 14.dp, color = c.ash, modifier = Modifier.padding(start = 6.dp))
-        }
-        DropdownMenu(open, { open = false }, containerColor = c.canvas) {
-            options.forEach { (v, label) ->
-                DropdownMenuItem(text = { Text(label, style = Type.body.copy(color = c.ink)) }, onClick = { open = false; onChange(v) },
-                    trailingIcon = if (v == value) ({ FgIcon("M3.5 8.5l3 3 6-7", size = 16.dp) }) else null)
-            }
         }
     }
 }

@@ -22,6 +22,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
+import com.fleetinggleam.android.ui.components.IconBtn
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import com.fleetinggleam.android.core.Project
 import com.fleetinggleam.android.core.Projects
 import com.fleetinggleam.android.core.baseName
@@ -36,6 +40,7 @@ import com.fleetinggleam.android.ui.theme.LocalFg
 import com.fleetinggleam.android.ui.theme.Type
 import kotlinx.coroutines.delay
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 /** Everything about one project in one place: its name, folders, how it suggests keepers, re-analysing, and deleting it (the Mac's ProjectSettings.tsx). */
 @Composable
 fun ProjectSettings(open: Boolean, project: Project, onClose: () -> Unit, onAddFolder: () -> Unit, onRemoveFolder: (String) -> Unit, onTrash: () -> Unit, onForceRescan: () -> Unit) {
@@ -44,11 +49,19 @@ fun ProjectSettings(open: Boolean, project: Project, onClose: () -> Unit, onAddF
     var armed by remember(project.id, open) { mutableStateOf(false) }
     LaunchedEffect(armed) { if (armed) { delay(3000); armed = false } }
     val commit = { name.trim().takeIf { it.isNotEmpty() && it != project.name }?.let { v -> Projects.update(project.id) { it.copy(name = v) } } }
-    FgDialog(open, { commit(); onClose() }, t("pset.title"), footer = { FgButton(t("organize.done"), { commit(); onClose() }, primary = true, small = true) }) {
-        Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+    if (!open) return
+    val sheet = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    // 手机上是从底部推上来的一整页：左上 ✕ 关掉（作者 2026-10-22：对话框没有关闭按钮），右上"完成"
+    androidx.compose.material3.ModalBottomSheet(onDismissRequest = { commit(); onClose() }, sheetState = sheet, containerColor = c.canvas, dragHandle = null) {
+        Box(Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 8.dp)) {
+            IconBtn(Icons.CLOSE, t("viewer.close"), { commit(); onClose() }, Modifier.align(Alignment.CenterStart), plain = true)
+            Text(t("pset.title"), style = Type.navTitle.copy(color = c.ink), modifier = Modifier.align(Alignment.Center))
+            FgButton(t("organize.done"), { commit(); onClose() }, Modifier.align(Alignment.CenterEnd).padding(end = 4.dp), primary = true, small = true)
+        }
+        Column(Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 16.dp).padding(top = 4.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
             FgField(name, { name = it }, label = t("pset.name"), onDone = { commit() })
             Column {
-                Text(t("pset.folders").uppercase(), style = Type.overline.copy(color = c.ash), modifier = Modifier.padding(bottom = 6.dp))
+                Text(t("pset.folders"), style = Type.overline.copy(color = c.ash), modifier = Modifier.padding(bottom = 6.dp))
                 project.folders.forEach { f ->
                     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
@@ -64,7 +77,7 @@ fun ProjectSettings(open: Boolean, project: Project, onClose: () -> Unit, onAddF
                 Text(t("cull.folderHint"), style = Type.small.copy(color = c.ash), modifier = Modifier.padding(top = 6.dp))
             }
             Column {
-                Text(t("pset.prefs").uppercase(), style = Type.overline.copy(color = c.ash), modifier = Modifier.padding(bottom = 10.dp))
+                Text(t("pset.prefs"), style = Type.overline.copy(color = c.ash), modifier = Modifier.padding(bottom = 10.dp))
                 ProjectPrefs(project)
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {

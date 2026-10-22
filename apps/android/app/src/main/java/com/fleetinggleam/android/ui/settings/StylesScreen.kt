@@ -20,8 +20,6 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -52,6 +50,7 @@ import com.fleetinggleam.android.ui.components.FgField
 import com.fleetinggleam.android.ui.components.FgIcon
 import com.fleetinggleam.android.ui.components.FgSwitch
 import com.fleetinggleam.android.ui.components.Icons
+import com.fleetinggleam.android.ui.components.anchor
 import com.fleetinggleam.android.ui.components.Ktag
 import com.fleetinggleam.android.ui.components.LearnMeter
 import com.fleetinggleam.android.ui.components.Segmented
@@ -133,19 +132,19 @@ fun StylesScreen(from: String, onBack: () -> Unit) {
             val created = createdAt(s.id)
             val hasData = s.info.labels + s.info.refs > 0
             var name by remember(s.id, s.name) { mutableStateOf(s.name) }
-            var menu by remember { mutableStateOf(false) }
             Column(Modifier.riseIn(i).animateItem().fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.panel).padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Box(Modifier.size(34.dp).clip(CircleShape).background(c.surface2), contentAlignment = Alignment.Center) { Text(display(s).take(1).uppercase(), style = Type.bodyStrong.copy(color = c.ink)) }
                     FgField(name, { name = it }, placeholder = t("styles.defaultName"), modifier = Modifier.weight(1f), onDone = { name.trim().takeIf { it.isNotEmpty() && it != s.name }?.let { v -> scope.launch { Styles.rename(s.id, v) } } })
-                    Box {
-                        Box(Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).clickable { menu = true }, contentAlignment = Alignment.Center) { FgIcon(Icons.MORE, size = 18.dp, stroke = 1.5f) }
-                        DropdownMenu(menu, { menu = false }, containerColor = c.canvas) {
-                            if (!s.isDefault) DropdownMenuItem(text = { Text(t("styles.makeDefault"), style = Type.body.copy(color = c.ink)) }, onClick = { menu = false; scope.launch { Styles.setDefault(s.id) } })
-                            if (hasData) DropdownMenuItem(text = { Text(t("styles.reset"), style = Type.body.copy(color = c.ink)) }, onClick = { menu = false; scope.launch { Styles.reset(s.id) } })
-                            if (!s.isDefault) DropdownMenuItem(text = { Text(t("styles.delete"), style = Type.body.copy(color = c.ink)) }, onClick = { menu = false; confirming = s })
-                        }
-                    }
+                    val overlay = com.fleetinggleam.android.ui.components.LocalOverlay.current
+                    val anchor = com.fleetinggleam.android.ui.components.rememberAnchor()
+                    Box(Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).then(Modifier.anchor(anchor)).clickable {
+                        overlay.showMenu(anchor.value, buildList {
+                            if (!s.isDefault) add(com.fleetinggleam.android.ui.components.MenuItem(t("styles.makeDefault")) { scope.launch { Styles.setDefault(s.id) } })
+                            if (hasData) add(com.fleetinggleam.android.ui.components.MenuItem(t("styles.reset")) { scope.launch { Styles.reset(s.id) } })
+                            if (!s.isDefault) add(com.fleetinggleam.android.ui.components.MenuItem(t("styles.delete")) { confirming = s })
+                        })
+                    }, contentAlignment = Alignment.Center) { FgIcon(Icons.MORE, size = 18.dp, stroke = 1.5f) }
                 }
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     if (s.isDefault) Ktag(t("styles.isDefault"))

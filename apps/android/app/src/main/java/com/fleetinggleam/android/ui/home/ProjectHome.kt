@@ -43,6 +43,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.fleetinggleam.android.ui.components.anchor
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.semantics.contentDescription
@@ -181,6 +182,14 @@ fun ProjectHome(onOpenStyles: () -> Unit) {
             }
             return@LazyVerticalGrid
         }
+        // 最近的那个项目做成一张通栏的大卡（封面为主，底部一条渐变上写名字、张数和"继续挑选"），其余两列
+        val hero = if (view == "projects" && live.size >= 2) live.maxByOrNull { it.updated } else null
+        if (hero != null) {
+            item(span = { GridItemSpan(maxLineSpan) }, key = "hero") { HeroCard(hero, onOpen = { Projects.setActive(hero.id) }, modifier = Modifier.animateItem()) }
+            item(span = { GridItemSpan(maxLineSpan) }, key = "all-title") {
+                Text(t("android.home.allProjects"), style = Type.overline.copy(color = c.ash), modifier = Modifier.padding(start = 2.dp, top = 4.dp))
+            }
+        }
         items(list, key = { it.id }) { p ->
             val i = list.indexOf(p)
             ProjectCard(
@@ -254,21 +263,25 @@ private fun ProjectCard(p: Project, inBin: Boolean, index: Int, armed: Boolean, 
     val c = LocalFg.current
     val src = rememberSource()
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
-    var menu by remember { mutableStateOf(false) }
+    val overlay = com.fleetinggleam.android.ui.components.LocalOverlay.current
+    val anchor = com.fleetinggleam.android.ui.components.rememberAnchor()
     // 像相册里的相簿：封面是主角，下面一行名字、一行张数；没有卡片底和描边。长按出菜单（重命名、移到回收站）
     Column(
         modifier
             .riseIn(index + 1)
             .pressScale(src, 0.97f)
-            .combinedClickable(interactionSource = src, indication = null, enabled = !inBin, onClick = onOpen, onLongClick = { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress); menu = true }),
+            .then(Modifier.anchor(anchor))
+            .combinedClickable(interactionSource = src, indication = null, enabled = !inBin, onClick = onOpen, onLongClick = {
+                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                overlay.showMenu(anchor.value.let { androidx.compose.ui.geometry.Rect(it.left, it.top, it.right, it.top + it.width * 0.55f) }, listOf(
+                    com.fleetinggleam.android.ui.components.MenuItem(t("bin.rename"), action = onRename),
+                    com.fleetinggleam.android.ui.components.MenuItem(t("bin.toBin"), action = onTrash),
+                ), alignEnd = false)
+            }),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Box {
             Cover(p.cover.orEmpty().take(4))
-            androidx.compose.material3.DropdownMenu(menu, { menu = false }, containerColor = c.canvas, shape = RoundedCornerShape(14.dp)) {
-                androidx.compose.material3.DropdownMenuItem({ Text(t("bin.rename"), style = Type.rowTitle.copy(color = c.ink)) }, onClick = { menu = false; onRename() })
-                androidx.compose.material3.DropdownMenuItem({ Text(t("bin.toBin"), style = Type.rowTitle.copy(color = c.ink)) }, onClick = { menu = false; onTrash() })
-            }
         }
         Column(Modifier.padding(horizontal = 2.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
             Text(p.name, style = Type.rowTitle.copy(color = c.ink, fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = Ellipsis)
@@ -281,6 +294,41 @@ private fun ProjectCard(p: Project, inBin: Boolean, index: Int, armed: Boolean, 
         if (inBin) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             FgButton(t("bin.restore"), onRestore, small = true)
             FgButton(if (armed) t("bin.purgeConfirm") else t("bin.purge"), onPurge, small = true, on = armed)
+        }
+    }
+}
+
+/** 最近的项目：通栏大卡，封面铺满，底部一条深色渐变托着名字、张数、上次时间和"继续挑选"。 */
+@Composable
+private fun HeroCard(p: Project, onOpen: () -> Unit, modifier: Modifier) {
+    val c = LocalFg.current
+    val src = rememberSource()
+    Box(
+        modifier.riseIn(1).pressScale(src, 0.985f).fillMaxWidth().aspectRatio(16f / 10f).clip(RoundedCornerShape(20.dp)).background(c.surface)
+            .clickable(interactionSource = src, indication = null, onClick = onOpen),
+    ) {
+        val cover = p.cover.orEmpty()
+        if (cover.isEmpty()) Text(t("home.empty"), style = Type.small.copy(color = c.ash), modifier = Modifier.align(Alignment.Center))
+        else Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            AsyncImage(File(cover[0]), null, Modifier.weight(1.6f).fillMaxSize(), contentScale = ContentScale.Crop)
+            if (cover.size > 1) Column(Modifier.weight(1f).fillMaxSize(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                cover.drop(1).take(2).forEach { AsyncImage(File(it), null, Modifier.weight(1f).fillMaxWidth(), contentScale = ContentScale.Crop) }
+            }
+        }
+        Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(120.dp).background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color.Transparent, Color(0xCC000000)))))
+        Row(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.Bottom) {
+            Column(Modifier.weight(1f)) {
+                Text(t("android.home.recent"), style = Type.monoSmall.copy(color = Color.White.copy(alpha = 0.7f)))
+                Text(p.name, style = Type.title.copy(color = Color.White), maxLines = 1, overflow = Ellipsis)
+                Text(
+                    listOf(t("home.photos", "count" to p.count), p.overrides.size.takeIf { it > 0 }?.let { t("android.home.marked", "count" to it) }, p.updated.takeIf { it > 0 }?.let { if (System.currentTimeMillis() - it < 60_000) t("android.home.justNow") else android.text.format.DateUtils.getRelativeTimeSpanString(it, System.currentTimeMillis(), android.text.format.DateUtils.MINUTE_IN_MILLIS).toString() }).filterNotNull().joinToString(" · "),
+                    style = Type.monoSmall.copy(color = Color.White.copy(alpha = 0.85f)), maxLines = 1, overflow = Ellipsis,
+                )
+            }
+            Text(
+                t("android.home.continue"), style = Type.label.copy(color = Color(0xFF111113), fontWeight = FontWeight.SemiBold),
+                modifier = Modifier.padding(start = 12.dp).clip(CircleShape).background(Color.White).padding(horizontal = 14.dp, vertical = 8.dp),
+            )
         }
     }
 }

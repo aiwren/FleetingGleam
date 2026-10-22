@@ -1310,3 +1310,12 @@ img { -webkit-user-drag: none; }
 .stepper-btn:disabled { opacity: .35; cursor: default; }
 .stepper-input { width: 64px; border: 0; border-left: 1px solid var(--line); border-right: 1px solid var(--line); background: transparent; color: var(--ink); font: inherit; font-size: 13px; text-align: center; outline: none; padding: 0 4px; }
 .stepper-input:focus { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+
+/* 设置 → 关于：介绍块和链接行 */
+.about-head { align-items: flex-start; }
+.about-icon { width: 56px; height: 56px; border-radius: 14px; flex: none; }
+.about-latin { margin-left: 8px; font-weight: 400; font-size: 12px; }
+.about-intro { margin: 8px 0 0; max-width: 60ch; line-height: 1.55; }
+.about-link { width: 100%; text-align: left; background: none; border: 0; border-top: 1px solid var(--line); color: var(--ink); cursor: pointer; font: inherit; }
+.about-link:hover { background: var(--surface); }
+.about-link svg { color: var(--ash); flex: none; }

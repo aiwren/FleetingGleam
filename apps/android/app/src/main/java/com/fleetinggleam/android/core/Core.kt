@@ -36,14 +36,22 @@ object Core {
     lateinit var models: File; private set
     lateinit var scratch: File; private set
 
+    /** 引擎建好之前的调用在这里等（建引擎要加载 JNA 和核心库、读喜好与模型清单，上百毫秒，不该挡着首帧）。 */
+    private val ready = java.util.concurrent.CountDownLatch(1)
+
     fun init(ctx: Context, version: String) {
         if (engine != null) return
+        // 目录立刻可用（设置页、下载服务会直接读它们）；引擎本身在后台建
+        data = ctx.filesDir
+        thumbs = File(ctx.cacheDir, "thumbs")
+        models = File(ctx.filesDir, "models")
+        scratch = File(ctx.cacheDir, "scratch")
+        Thread({ initNow(ctx, version) }, "fg-engine-init").start()
+    }
+
+    private fun initNow(ctx: Context, version: String) {
         synchronized(this) {
             if (engine != null) return
-            data = ctx.filesDir
-            thumbs = File(ctx.cacheDir, "thumbs")
-            models = File(ctx.filesDir, "models")
-            scratch = File(ctx.cacheDir, "scratch")
             val cm = ctx.getSystemService(ConnectivityManager::class.java)
             val config = args(
                 "data" to data.absolutePath, "thumbs" to thumbs.absolutePath, "models" to models.absolutePath, "scratch" to scratch.absolutePath,
@@ -56,6 +64,7 @@ object Core {
                 }
             })
             engine = e
+            ready.countDown()
             // 换了网络（或用户在系统里改了代理）：模型下载与云备份跟着走新的代理
             cm?.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
                 override fun onLinkPropertiesChanged(network: Network, lp: LinkProperties) { e.setProxy(proxyOf(lp)) }
@@ -75,6 +84,7 @@ object Core {
     suspend fun call(method: String, args: JsonObject = JsonObject(emptyMap())): String = withContext(Dispatchers.IO) { callBlocking(method, args) }
 
     fun callBlocking(method: String, args: JsonObject = JsonObject(emptyMap())): String {
+        if (engine == null) ready.await()
         val e = engine ?: throw CoreException("the engine is not ready")
         try {
             return e.call(method, args.toString())

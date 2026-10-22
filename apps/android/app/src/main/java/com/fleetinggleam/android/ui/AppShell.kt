@@ -32,6 +32,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -86,14 +87,19 @@ fun AppShell() {
     val project = store.projects.firstOrNull { it.id == store.activeId && it.trashed == null }
     // 页面内容录进这一层，悬浮的玻璃件（标签栏）把它折射出来
     val backdrop = com.kyant.backdrop.backdrops.rememberLayerBackdrop()
+    /** 浮在最上面的玻璃件（菜单）：画在内容层之外，所以能折射整页。 */
+    val overlay = remember { com.fleetinggleam.android.ui.components.OverlayState() }
 
     BackHandler(enabled = styles != null) { styles = null }
     BackHandler(enabled = styles == null && tab == Tab.Cull && project != null) { Projects.setActive(null) }
     BackHandler(enabled = styles == null && tab == Tab.Settings) { tab = Tab.Cull }
 
+    // 模拟器没有真 GPU：玻璃的着色器一帧要几秒，直接 ANR，所以模拟器上一律关（设置里的开关只对真机有效）
+    val glassOn = com.fleetinggleam.android.core.Settings.state.collectAsState().value.glass && !com.fleetinggleam.android.core.Settings.isEmulator()
+    androidx.compose.runtime.CompositionLocalProvider(com.fleetinggleam.android.ui.components.LocalOverlay provides overlay, LocalBackdrop provides backdrop, com.fleetinggleam.android.ui.components.LocalGlassOn provides glassOn) {
     Box(Modifier.fillMaxSize().background(c.canvas)) {
         if (!status.loaded) return@Box
-        Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
+        Box(Modifier.fillMaxSize().then(if (com.fleetinggleam.android.ui.components.LocalGlassOn.current) Modifier.layerBackdrop(backdrop) else Modifier)) {
             val screen = when {
                 styles != null -> "styles"
                 tab == Tab.Settings -> "settings"
@@ -133,6 +139,8 @@ fun AppShell() {
                 }
             }
         }
+        overlay.content?.invoke()
+    }
     }
     ModelGate()
     FolderPicker()
@@ -159,7 +167,7 @@ private fun FloatingTabBar(backdrop: com.kyant.backdrop.Backdrop, current: Tab, 
     Box(Modifier.navigationBarsPadding().padding(bottom = 10.dp)) {
         Box(
             Modifier
-                .glass(backdrop, RoundedCornerShape(50), glassStyle(), press = { maxOf(press(), lift.value * 0.6f) })
+                .glass(backdrop, RoundedCornerShape(50), glassStyle(), press = { maxOf(press(), lift.value * 0.6f) }, on = com.fleetinggleam.android.ui.components.LocalGlassOn.current)
                 .padding(4.dp)
                 .pointerInput(itemPx) {
                     detectHorizontalDragGestures(
