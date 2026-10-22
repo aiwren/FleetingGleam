@@ -57,6 +57,8 @@ object Core {
                 "data" to data.absolutePath, "thumbs" to thumbs.absolutePath, "models" to models.absolutePath, "scratch" to scratch.absolutePath,
                 "proxy" to proxyOf(cm?.getLinkProperties(cm.activeNetwork)), "version" to version,
             )
+            // 核心库的解码交给系统：按需缩放、分块解码，两亿像素的照片也不整张进内存；顺带认识 HEIC / AVIF
+            uniffi.fleetinggleam.setImageHelper(AndroidImages)
             val e = FgEngine(config.toString(), object : EventSink {
                 // 从核心库的线程上来：监听者自己负责把状态交给界面（StateFlow 是线程安全的）
                 override fun onEvent(name: String, payload: String) {

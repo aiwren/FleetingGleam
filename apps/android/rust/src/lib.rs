@@ -6,7 +6,7 @@
 //! 这样 Kotlin 的界面层可以照着桌面端的 TypeScript 一行行对过去，功能不会漏。
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use base64::Engine as _;
@@ -52,6 +52,50 @@ pub trait EventSink: Send + Sync {
 }
 
 struct SinkEvents(Arc<dyn EventSink>);
+
+/// Android 的图片解码器，Kotlin 侧用 BitmapFactory / BitmapRegionDecoder 实现：按需缩放解码、分块解码，两亿像素的照片也不用整张进内存；
+/// 顺带认识 HEIC / AVIF。失败的调用返回错误文字，成功返回空串（UniFFI 的回调接口不方便抛错）。
+#[uniffi::export(foreign)]
+pub trait ImageHelper: Send + Sync {
+    /// 认识的扩展名（小写、不带点）。
+    fn supports(&self, ext: String) -> bool;
+    /// 显示尺寸（方向已套用），"宽,高"；打不开给空串。
+    fn info(&self, path: String) -> String;
+    /// 一张摆正、长边不超过 `max` 的 JPEG 写到 `out`。
+    fn render(&self, path: String, out: String, max: u32) -> String;
+    /// 一块区域（摆正后的比例坐标，左上为原点），宽至多 `out_w`，存成 JPEG。
+    fn crop(&self, path: String, out: String, x: f64, y: f64, w: f64, h: f64, out_w: u32) -> String;
+}
+
+struct AndroidImages(Arc<dyn ImageHelper>);
+
+impl fg_core::platform::SystemImages for AndroidImages {
+    fn supports(&self, ext: &str) -> bool {
+        self.0.supports(ext.to_string())
+    }
+    fn info(&self, path: &Path, _with_hdr: bool) -> Option<fg_core::platform::ImageInfo> {
+        let s = self.0.info(path.to_string_lossy().into_owned());
+        let (w, h) = s.split_once(',')?;
+        Some(fg_core::platform::ImageInfo { w: w.trim().parse().ok()?, h: h.trim().parse().ok()?, hdr: false })
+    }
+    fn render(&self, src: &Path, out: &Path, max: u32, _sdr: bool) -> Result<(), String> {
+        let e = self.0.render(src.to_string_lossy().into_owned(), out.to_string_lossy().into_owned(), max);
+        if e.is_empty() { Ok(()) } else { Err(e) }
+    }
+    fn crop(&self, src: &Path, out: &Path, f: [f64; 4], out_w: u32) -> Result<(), String> {
+        let e = self.0.crop(src.to_string_lossy().into_owned(), out.to_string_lossy().into_owned(), f[0], f[1], f[2], f[3], out_w);
+        if e.is_empty() { Ok(()) } else { Err(e) }
+    }
+    fn prefers_native(&self) -> bool {
+        true
+    }
+}
+
+/// 注册 Android 的图片解码器；建引擎之前调一次。
+#[uniffi::export]
+pub fn set_image_helper(helper: Arc<dyn ImageHelper>) {
+    fg_core::platform::set_images(Box::new(AndroidImages(helper)));
+}
 
 impl engine::Events for SinkEvents {
     fn emit(&self, event: &str, payload: Value) {

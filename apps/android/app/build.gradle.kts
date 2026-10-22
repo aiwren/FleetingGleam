@@ -64,7 +64,9 @@ android {
         }
     }
     packaging {
-        jniLibs { useLegacyPackaging = false }
+        // 原生库在 APK 里压缩存放（34 MB 的核心库压完约 14 MB，APK 小一半）；代价是安装时解压一份到 lib/，装完多占约 34 MB。
+        // 我们的包走 GitHub Release 直接下载，下载体积比安装体积更要紧。
+        jniLibs { useLegacyPackaging = true }
     }
 }
 
@@ -74,6 +76,12 @@ val cargoBuild by tasks.registering(Exec::class) {
     workingDir = repoRoot
     environment("PATH", cargoPath)
     commandLine("cargo", "ndk", "-t", "arm64-v8a", "-P", "31", "-o", jniLibs.asFile.absolutePath, "build", "-p", rustCrate, "--release")
+    // 去掉符号表（cargo 的 strip 不一定落到 cdylib 上，AGP 又只在 NDK 配好时才 strip）：少 12 MB
+    doLast {
+        val strip = fileTree(File(android.ndkDirectory, "toolchains/llvm/prebuilt")) { include("*/bin/llvm-strip") }.files.firstOrNull()
+        val so = File(jniLibs.asFile, "arm64-v8a/libfg_android.so")
+        if (strip != null && so.exists()) exec { commandLine(strip.absolutePath, "--strip-all", so.absolutePath) }
+    }
     inputs.dir(File(repoRoot, "packages/core/src"))
     inputs.dir(File(repoRoot, "apps/android/rust/src"))
     inputs.files(File(repoRoot, "Cargo.toml"), File(repoRoot, "Cargo.lock"), File(repoRoot, "apps/android/rust/Cargo.toml"), File(repoRoot, "packages/core/Cargo.toml"))
@@ -140,6 +148,8 @@ dependencies {
     implementation("androidx.compose.animation:animation:1.10.3")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.4")
     implementation("androidx.lifecycle:lifecycle-process:2.9.4")
+    // 读照片的 EXIF 方向（核心库的解码交给 BitmapFactory 时要自己摆正）
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
     // 照片墙的缩略图：异步解码、内存与磁盘缓存、按显示尺寸缩小
     implementation("io.coil-kt.coil3:coil-compose:3.3.0")
     // 隐私政策、使用条款在应用内的半屏浏览器（Chrome Custom Tabs 的局部高度）里打开

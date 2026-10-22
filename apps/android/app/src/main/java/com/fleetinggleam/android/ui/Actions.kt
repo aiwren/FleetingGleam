@@ -15,7 +15,9 @@ object Actions {
     /** Choose a folder and start a new project from it (it opens right away, like on the Mac). `source` 见 `Nas.pick`。 */
     suspend fun newProjectFromDialog(shareId: String? = null, source: String? = null): Boolean {
         val dir = pickFolder(shareId, source) ?: return false
-        Projects.create(baseName(dir), listOf(dir))
+        // 手机存储的根目录叫"手机存储"，不叫 "0"
+        val root = android.os.Environment.getExternalStorageDirectory().absolutePath
+        Projects.create(if (dir.trimEnd('/') == root) com.fleetinggleam.android.core.t("android.picker.storageRoot") else baseName(dir), listOf(dir))
         return true
     }
 }

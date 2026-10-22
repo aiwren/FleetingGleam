@@ -90,6 +90,14 @@
    "nas": "Connect a NAS",
    "sample": "Try it with sample photos",
    "sampleName": "Sample photos"
+  },
+  "pset": {
+   "keepShareOff": "Every photo that makes the grade is kept",
+   "keepShareOn": "Good photos beyond the share go to review",
+   "onePerGroupDesc": "The others go to review or are rejected"
+  },
+  "ready": {
+   "note": "Everything runs on this phone; the originals are never changed."
   }
  },
  "models": {

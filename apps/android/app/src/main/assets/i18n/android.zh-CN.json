@@ -90,6 +90,14 @@
    "nas": "连接 NAS",
    "sample": "用示例照片先试试",
    "sampleName": "示例照片"
+  },
+  "pset": {
+   "keepShareOff": "达标的照片都保留",
+   "keepShareOn": "超出比例的好照片放进待复查",
+   "onePerGroupDesc": "其余的放进待复查或淘汰"
+  },
+  "ready": {
+   "note": "全程只在这台手机上运行，原图不会被改动。"
   }
  },
  "models": {

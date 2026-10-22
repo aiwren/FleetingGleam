@@ -59,41 +59,20 @@ fun ProjectSettings(open: Boolean, project: Project, onClose: () -> Unit, onAddF
             FgButton(t("organize.done"), { commit(); onClose() }, Modifier.align(Alignment.CenterEnd).padding(end = 4.dp), primary = true, small = true)
         }
         Column(Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 16.dp).padding(top = 4.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+            // 和准备页同一套 iOS 分组列表（作者 2026-10-22 嫌旧样式丑）
             FgField(name, { name = it }, label = t("pset.name"), onDone = { commit() })
-            Column {
-                Text(t("pset.folders"), style = Type.overline.copy(color = c.ash), modifier = Modifier.padding(bottom = 6.dp))
-                project.folders.forEach { f ->
-                    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(baseName(f), style = Type.bodyStrong.copy(color = c.ink), maxLines = 1, overflow = Ellipsis)
-                            Text(f, style = Type.monoSmall.copy(color = c.ash), maxLines = 1, overflow = Ellipsis)
-                        }
-                        Box(Modifier.size(32.dp).clip(RoundedCornerShape(8.dp)).clickable { onRemoveFolder(f) }, contentAlignment = Alignment.Center) { FgIcon(Icons.CLOSE, size = 14.dp, color = c.ash) }
-                    }
+            com.fleetinggleam.android.ui.components.SettingGroup(t("pset.folders")) {
+                project.folders.forEachIndexed { i, f ->
+                    com.fleetinggleam.android.ui.components.SettingRow(baseName(f), f.removePrefix("/storage/emulated/0/"), first = i == 0, icon = Icons.FOLDER, control = {
+                        Box(Modifier.size(32.dp).clip(RoundedCornerShape(16.dp)).clickable { onRemoveFolder(f) }, contentAlignment = Alignment.Center) { FgIcon(Icons.CLOSE, size = 14.dp, color = c.ash) }
+                    })
                 }
-                Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    FgButton(t("cull.addFolder"), onAddFolder, small = true)
-                }
-                Text(t("cull.folderHint"), style = Type.small.copy(color = c.ash), modifier = Modifier.padding(top = 6.dp))
+                com.fleetinggleam.android.ui.components.SettingRow(t("cull.addFolder"), t("cull.folderHint"), icon = Icons.PLUS, onClick = onAddFolder, control = { FgIcon(Icons.CHEVRON, size = 14.dp, stroke = 1.6f, color = c.ash) })
             }
-            Column {
-                Text(t("pset.prefs"), style = Type.overline.copy(color = c.ash), modifier = Modifier.padding(bottom = 10.dp))
-                ProjectPrefs(project)
-            }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Column(Modifier.weight(1f)) {
-                    Text(t("pset.rescan"), style = Type.bodyStrong.copy(color = c.ink))
-                    Text(t("pset.rescanDesc"), style = Type.small.copy(color = c.ash))
-                }
-                FgButton(t("pset.rescanBtn"), onForceRescan, small = true)
-            }
-            Box(Modifier.fillMaxWidth().height(1.dp).background(c.line))
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Column(Modifier.weight(1f)) {
-                    Text(t("pset.danger"), style = Type.bodyStrong.copy(color = c.ink))
-                    Text(t("pset.dangerDesc"), style = Type.small.copy(color = c.ash))
-                }
-                FgButton(if (armed) t("pset.confirmBin") else t("bin.toBin"), { if (armed) onTrash() else armed = true }, small = true, on = armed)
+            com.fleetinggleam.android.ui.components.SettingGroup(t("pset.prefs")) { ProjectPrefs(project) }
+            com.fleetinggleam.android.ui.components.SettingGroup("") {
+                com.fleetinggleam.android.ui.components.SettingRow(t("pset.rescan"), t("pset.rescanDesc"), first = true) { FgButton(t("pset.rescanBtn"), onForceRescan, small = true) }
+                com.fleetinggleam.android.ui.components.SettingRow(t("pset.danger"), t("pset.dangerDesc")) { FgButton(if (armed) t("pset.confirmBin") else t("bin.toBin"), { if (armed) onTrash() else armed = true }, small = true, on = armed) }
             }
         }
     }

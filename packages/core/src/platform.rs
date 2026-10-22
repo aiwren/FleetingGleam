@@ -28,6 +28,11 @@ pub trait SystemImages: Send + Sync {
     fn render(&self, src: &Path, out: &Path, max: u32, sdr: bool) -> Result<(), String>;
     /// 照片的一块区域（摆正后的照片的比例，左上为原点），宽至多 `out_w` 像素，存成 JPEG。
     fn crop(&self, src: &Path, out: &Path, f: [f64; 4], out_w: u32) -> Result<(), String>;
+    /// `image` crate 自己能读的格式（JPEG / PNG / WebP）也优先交给它：进程内的解码器（Android 的 BitmapFactory）按需缩放解码，
+    /// 两亿像素的照片也不用整张进内存；macOS 的边车是另一个进程，每次调用都有开销，所以默认不。
+    fn prefers_native(&self) -> bool {
+        false
+    }
 }
 
 /// 系统视觉信号对一张照片的回答（macOS 上来自 Apple Vision）。
