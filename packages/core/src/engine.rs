@@ -191,9 +191,10 @@ fn scan_threads() -> usize {
     std::env::var("FG_SCAN_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).max(2))
 }
 
-/// Apple Vision 边车的进程数：边车一次只答一张，两个进程在十核的机器上拖了后腿；核数的三分之一，至少两个、最多四个。
+/// 系统视觉信号的并发路数（Mac 上是一个 Apple Vision 边车进程里同时做几张；Android 的人脸流水线用不上）：核数的一半，至少两路、最多四路。
+/// 量过（M1 Max 十核，60 张 12 MP）：一个进程里四路的吞吐是一路的三四倍，再多不涨；整条流水线四路比三路快一点点、六路反而慢。
 fn vision_workers() -> usize {
-    std::env::var("FG_VISION_WORKERS").ok().and_then(|v| v.parse().ok()).unwrap_or_else(|| (std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4) / 3).clamp(2, 4))
+    std::env::var("FG_VISION_WORKERS").ok().and_then(|v| v.parse().ok()).unwrap_or_else(|| (std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4) / 2).clamp(2, 4))
 }
 
 /// 设置页看到的一个备份目标；从不带 Secret。
@@ -744,8 +745,8 @@ impl Engine {
             return Err("cancelled".to_string());
         }
 
-        // A photo missing eyes_open (analysed before that signal existed), or whose cached value came from the other
-        // method than the one now selected, gets it (re)measured from its saved analysis copy.
+        // 缓存里没有睁眼值（分析时还没有这项信号）或值是另一种方法算的照片，这里（重新）量一遍：有分析副本读副本，
+        // 没有（现在分析不再存副本）就从原图现解一张（见 `analyze::look_again`）。
         let mut hits = hits;
         if hits.iter().any(|p| p.face_count > 0 && !analyze::eyes_current(p.eye_method.as_deref(), eye_method)) {
             if let Some(v) = self.start_vision(vision_workers(), cpu_only) {
@@ -772,9 +773,8 @@ impl Engine {
                 }
             }
         }
-        // Photos analysed before the recognition model was there get their faces looked at now, from the saved analysis copy.
-        // This is a minute of Vision calls for a big project, so it gets a pool of its own (one thread per Vision process):
-        // on the shared pool it would starve everything else that needs a worker, such as reading a folder.
+        // 人物识别模型装上之前就分析过的照片，现在补看一遍人脸（同样：有分析副本读副本，没有就从原图现解）。
+        // 大项目上这是一分钟量级的 Vision 调用，给它一个自己的小线程池：放在公共池里会把读文件夹之类也要线程的事饿死。
         if let (Some(f), Ok(pool)) = (fe.as_deref(), rayon::ThreadPoolBuilder::new().num_threads(2).build()) {
             let total = hits.iter().filter(|p| !p.faces_done).count();
             if total > 0 {

@@ -7,6 +7,8 @@
 use std::path::Path;
 use std::sync::OnceLock;
 
+use image::DynamicImage;
+
 use crate::faces::FaceMark;
 
 /// 系统图像解码器能告诉我们的：显示尺寸（已套用 EXIF 方向）和是否 HDR。
@@ -54,8 +56,19 @@ pub struct VisionOut {
 }
 
 /// 系统视觉信号：美学分、实用图片、人脸与眼睛。没有就什么信号都没有，分析照常进行。
+///
+/// 两条路：`analyze_pixels` 直接看分析线程内存里那张摆正的 1024px 副本（Mac 的边车经管道收像素，Android 的人脸流水线本来就在进程内），
+/// 不用先写一张 JPEG 到盘上再读回来；`analyze` 从文件读，留给手头只有缓存副本的地方（重新量眼睛、补人物向量）。
 pub trait SystemVision: Send + Sync {
     fn analyze(&self, path: &Path) -> Option<VisionOut>;
+    /// 这个实现能直接看像素吗？能，分析就走 `analyze_pixels`；不能（默认），分析先存一张分析副本再按路径问。
+    fn takes_pixels(&self) -> bool {
+        false
+    }
+    /// 直接看内存里的像素（摆正、长边 1024 的分析副本）。只有 `takes_pixels` 为真才会被调用；默认没有这条路。
+    fn analyze_pixels(&self, _img: &DynamicImage) -> Option<VisionOut> {
+        None
+    }
 }
 
 /// 每次分析起一套系统视觉信号：桌面端是几个 Apple Vision 边车进程，Android 是核心库自己的人脸流水线（`facepipe::Factory`）。

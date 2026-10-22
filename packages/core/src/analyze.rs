@@ -11,7 +11,7 @@ use crate::faces::FaceEmbedder;
 use crate::mediapipe::MediapipeEyes;
 use crate::scoring;
 use crate::scorer::AiScorer;
-use crate::platform::SystemVision;
+use crate::platform::{SystemVision, VisionOut};
 
 pub const ANALYZE_SIZE: u32 = 1024;
 const THUMB_SIZE: u32 = 640;
@@ -125,20 +125,37 @@ pub struct Photo {
     pub embedding: Vec<f32>,
 }
 
-/// Eye openness for a photo whose cached value is missing or was computed by the other method: asks Vision about the
-/// saved analysis copy, then (for `Mediapipe`) hands Vision's face crops to the learned model instead of trusting
-/// Vision's own ratio.
-pub fn measure_eyes(path: &Path, cache_dir: &Path, vision: &dyn SystemVision, method: EyeMethod, mp: Option<&MediapipeEyes>) -> Option<(f32, &'static str)> {
+/// 分析过后再看一张照片（重新量眼睛、补人物向量）：老版本分析时存过分析副本（`.a.jpg`）的就读副本；没有的（分析现在把像素直接交给
+/// 视觉信号，不再存副本）从原图重新解一张同样的副本出来。给出这张副本和视觉信号对它的回答。
+fn look_again(path: &Path, cache_dir: &Path, vision: &dyn SystemVision) -> Option<(DynamicImage, VisionOut)> {
     let copy = cache_name(path, ".a.jpg", cache_dir);
-    let copy = if copy.exists() { copy } else { return None };
-    let v = vision.analyze(&copy)?;
+    if copy.exists() {
+        let v = vision.analyze(&copy)?;
+        return Some((image::open(&copy).ok()?, v));
+    }
+    let img = load_for_embedding(path).ok()?;
+    let v = if vision.takes_pixels() {
+        vision.analyze_pixels(&img)?
+    } else {
+        // 只认路径的实现：临时存一张问完就删
+        let tmp = save_analysis_copy(&img, path, cache_dir)?;
+        let v = vision.analyze(&tmp);
+        let _ = std::fs::remove_file(&tmp);
+        v?
+    };
+    Some((img, v))
+}
+
+/// 缓存里没有睁眼值（分析时还没有这项信号）或值是另一种方法算的照片：再问一次视觉信号，`Mediapipe` 时把它找到的眼睛框交给
+/// 学习模型，而不是信 Vision 自己的比值。
+pub fn measure_eyes(path: &Path, cache_dir: &Path, vision: &dyn SystemVision, method: EyeMethod, mp: Option<&MediapipeEyes>) -> Option<(f32, &'static str)> {
+    let (img, v) = look_again(path, cache_dir, vision)?;
     let ratio = v.eyes.iter().cloned().reduce(f32::min).unwrap_or(1.0).min(1.0);
     match method {
         EyeMethod::Vision => Some((ratio, "vision")),
         EyeMethod::Mediapipe if v.eyes_mediapipe => Some((ratio, "mediapipe")),
         EyeMethod::Mediapipe => {
-            let img = image::open(&copy).ok()?;
-            // the value's tag says which scale it is on: the learned model's, or (when it was not sure) Vision's ratio
+            // 标签记下值在哪个量表上：学习模型的，或（它没把握时）Vision 的比值
             Some(match mp.and_then(|m| m.openness(&img, &v.eye_boxes)) {
                 Some(e) => (e, "mediapipe"),
                 None => (ratio, MEDIAPIPE_FALLBACK),
@@ -147,15 +164,10 @@ pub fn measure_eyes(path: &Path, cache_dir: &Path, vision: &dyn SystemVision, me
     }
 }
 
-/// Faces of a photo analysed before the recognition model was there: looked at again on its saved analysis copy.
+/// 人物识别模型装上之前就分析过的照片：再看一遍，算出每张脸的向量。
 pub fn measure_faces(path: &Path, cache_dir: &Path, vision: &dyn SystemVision, faces: &FaceEmbedder) -> Option<(Vec<[f32; 4]>, Vec<Vec<f32>>)> {
-    let copy = cache_name(path, ".a.jpg", cache_dir);
-    if !copy.exists() {
-        return None;
-    }
-    let marks = vision.analyze(&copy)?.face_marks;
-    let img = image::open(&copy).ok()?;
-    let found = faces.embed(&img, &marks);
+    let (img, v) = look_again(path, cache_dir, vision)?;
+    let found = faces.embed(&img, &v.face_marks);
     Some((found.iter().map(|f| f.bbox).collect(), found.into_iter().map(|f| f.emb).collect()))
 }
 
@@ -193,13 +205,20 @@ pub fn analyze(
     let hash = dhash(&work);
 
     on_stage("ai", 50, None);
-    let ai = scorer.and_then(|s| s.analyze(&work).map_err(|e| eprintln!("ai: {e}")).ok());
+    // CLIP 与系统视觉信号同时进行：两边都是在等别处干活（Metal 上的 CLIP、Vision 边车），串着等只会把两段等待加在一起。
+    // 能直接看像素的视觉信号（Mac 的边车经管道收像素、Android 的人脸流水线在进程内）就看内存里这张摆正的副本，
+    // 不再先写一张 JPEG 到盘上；不能的（别的实现）才存一张分析副本再按路径问。
+    let (ai, sys) = std::thread::scope(|s| {
+        let work = &work;
+        let sys = vision.map(|v| {
+            s.spawn(move || if v.takes_pixels() { v.analyze_pixels(work) } else { save_analysis_copy(work, path, cache_dir).and_then(|p| v.analyze(&p)) })
+        });
+        let ai = scorer.and_then(|s| s.analyze(&work).map_err(|e| eprintln!("ai: {e}")).ok());
+        on_stage("system", 70, None);
+        (ai, sys.and_then(|h| h.join().ok().flatten()))
+    });
     let clip_score = ai.as_ref().map(|a| a.score);
     let embedding = ai.map(|a| a.embedding).unwrap_or_default();
-
-    on_stage("system", 70, None);
-    // Vision gets the small, already-upright copy: no need to decode the full-size original twice.
-    let sys = vision.and_then(|v| save_analysis_copy(&work, path, cache_dir).and_then(|p| v.analyze(&p)));
     let utility = sys.as_ref().map_or(false, |s| s.utility);
     let sys_score = sys.as_ref().and_then(|s| s.aesthetic);
     let face_min = sys.as_ref().and_then(|s| s.faces.iter().cloned().reduce(f32::min));

@@ -143,6 +143,15 @@ impl SystemVision for FacePipeline {
         let img = image::open(path).ok()?;
         Some(self.analyze_image(&img))
     }
+
+    /// 流水线在进程内，分析时直接看内存里的副本，省掉每张照片一次 JPEG 编码加解码。
+    fn takes_pixels(&self) -> bool {
+        true
+    }
+
+    fn analyze_pixels(&self, img: &DynamicImage) -> Option<VisionOut> {
+        Some(self.analyze_image(img))
+    }
 }
 
 #[cfg(test)]

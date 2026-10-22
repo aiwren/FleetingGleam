@@ -14,6 +14,14 @@ use image::RgbImage;
 
 use crate::vision::Vision;
 
+/// 一个进程（自己或已回收的子进程）到现在为止用掉的 CPU 秒数（用户态 + 内核态）。
+fn cpu_seconds(who: libc::c_int) -> f64 {
+    let mut ru: libc::rusage = unsafe { std::mem::zeroed() };
+    unsafe { libc::getrusage(who, &mut ru) };
+    let secs = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 / 1e6;
+    secs(ru.ru_utime) + secs(ru.ru_stime)
+}
+
 /// 开发机上的模型目录（`apps/desktop/models/`，不进仓库）。
 fn dev_models_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../models")
@@ -89,6 +97,47 @@ mod tests {
         }
     }
 
+    /// 像素路径（分析现在走的）与文件路径（以前先写 JPEG 副本再读回）在真实照片上给出的信号是否一致：
+    /// `FG_LIBRARY=<文件夹> [FG_N=60] cargo test -p fleetinggleam --lib vision_pixels_match_the_file_path -- --ignored --nocapture`。
+    #[test]
+    #[ignore = "needs FG_LIBRARY and bin/fg-vision"]
+    fn vision_pixels_match_the_file_path() {
+        let Ok(dir) = std::env::var("FG_LIBRARY") else { return };
+        let n: usize = std::env::var("FG_N").ok().and_then(|v| v.parse().ok()).unwrap_or(60);
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let vision = Vision::start(&root.join("bin/fg-vision"), 2, false).expect("fg-vision (macOS only)");
+        let tmp = std::env::temp_dir().join("fg_vision_match_test");
+        std::fs::create_dir_all(&tmp).unwrap();
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| is_image(p)).collect();
+        files.sort();
+        files.truncate(n);
+        let (mut same_faces, mut total, mut max_aes, mut max_eyes, mut with_faces, mut max_aes_decoded) = (0, 0, 0f32, 0f32, 0, 0f32);
+        for f in &files {
+            let work = analyze::load_for_embedding(f).unwrap();
+            let copy = save_analysis_copy(&work, f, &tmp).unwrap();
+            // 第三路：同一张 JPEG 副本由 image crate 解码后再走像素路径——它和像素路径接近、和文件路径差得远，就说明差异来自边车读 JPEG 的方式，而不是 JPEG 压缩
+            let decoded = image::open(&copy).unwrap();
+            let (Some(a), Some(b), Some(c)) = (vision.analyze(&copy), fg_core::platform::SystemVision::analyze_pixels(&vision, &work), fg_core::platform::SystemVision::analyze_pixels(&vision, &decoded)) else { continue };
+            total += 1;
+            if a.faces.len() == b.faces.len() { same_faces += 1; } else { println!("{}: faces {} (file) vs {} (pixels) vs {} (decoded copy)", f.file_name().unwrap().to_string_lossy(), a.faces.len(), b.faces.len(), c.faces.len()); }
+            let d = (a.aesthetic.unwrap() - b.aesthetic.unwrap()).abs();
+            // 量过（2026-10-22，120 张）：差超过 0.05 的只有两张雾蒙蒙的天空——image crate 的 q90 JPEG 把噪点抹平，Vision 的美学模型对这类画面敏感；
+            // 同一张 JPEG 解码后再走像素路径与文件路径一致，原始像素怎么喂都是另一个值，所以差异来自 JPEG 再编码，不是协议
+            if d > 0.05 { println!("{}: aesthetic file {:.4} pixels {:.4} decoded copy {:.4}", f.file_name().unwrap().to_string_lossy(), a.aesthetic.unwrap(), b.aesthetic.unwrap(), c.aesthetic.unwrap()); }
+            max_aes = max_aes.max(d);
+            max_aes_decoded = max_aes_decoded.max((c.aesthetic.unwrap() - b.aesthetic.unwrap()).abs());
+            if !a.eyes.is_empty() && a.eyes.len() == b.eyes.len() {
+                with_faces += 1;
+                let ea = a.eyes.iter().cloned().reduce(f32::min).unwrap();
+                let eb = b.eyes.iter().cloned().reduce(f32::min).unwrap();
+                max_eyes = max_eyes.max((ea - eb).abs());
+                println!("{}: faces {} aesthetic {:.4} / {:.4} eyes {:.4} / {:.4}", f.file_name().unwrap().to_string_lossy(), a.faces.len(), a.aesthetic.unwrap(), b.aesthetic.unwrap(), ea, eb);
+            }
+        }
+        println!("{total} photos: same face count on {same_faces}; max |Δaesthetic| file vs pixels {max_aes:.4}, decoded copy vs pixels {max_aes_decoded:.4}; {with_faces} with measurable eyes, max |Δeyes| {max_eyes:.4}");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
     /// Where the time of a scan goes, on real photos: one at a time (per stage), then all at once the way a scan runs them.
     #[test]
     #[ignore = "timing only: FG_LIBRARY=<folder of photos> [FG_N=24] [FG_QUALITY=fast|high|ultra] [FG_COPIES=n] [FG_VISION=workers], models/ and bin/fg-vision; run with --ignored --nocapture"]
@@ -118,8 +167,8 @@ mod tests {
         files.truncate(n);
         // warm up the models (the first call pays for loading and compiling them)
         let _ = analyze(&files[0], &tmp, Some(&scorer as &dyn AiScorer), Some(&vision as &dyn SystemVision), EyeMethod::Vision, None, None, &|_, _, _| {});
-        // marks: [start, "decode" (the first call), "quality" (decode, resize and the thumbnail are done), "ai" (stats done), "system" (CLIP done), "thumb" (Vision, faces done)], then the end
-        let names = ["decode+resize+thumb", "quality stats", "CLIP", "Vision+faces", "tail (exif, media)"];
+        // 标记：[开始, "decode"（第一次回调）, "quality"（解码、缩放、缩略图完成）, "ai"（统计完成）, "system"（CLIP 完成，Vision 同时在做）, "thumb"（等到 Vision、人脸完成）]，然后结束
+        let names = ["decode+resize+thumb", "quality stats", "CLIP (Vision alongside)", "Vision rest + faces", "tail (exif, media)"];
         let timed = |f: &PathBuf| -> Option<[f64; 5]> {
             let marks: std::sync::Mutex<Vec<Instant>> = std::sync::Mutex::new(vec![Instant::now()]);
             let r = analyze(f, &tmp, Some(&scorer as &dyn AiScorer), Some(&vision as &dyn SystemVision), EyeMethod::Vision, None, None, &|_, _, _| marks.lock().unwrap().push(Instant::now()));
@@ -334,13 +383,20 @@ mod tests {
         let t = std::time::Instant::now();
         let first = e.scan_project(args.clone()).expect("scan");
         let warm = t.elapsed();
+        // 第二遍的 CPU 时间：本进程（分析线程）与子进程（边车；分析结束时边车被杀并回收，所以算得进来）
+        let cpu_before = (cpu_seconds(libc::RUSAGE_SELF), cpu_seconds(libc::RUSAGE_CHILDREN));
         let t = std::time::Instant::now();
         let photos = e.scan_project(args).expect("scan");
         let d = t.elapsed();
+        let (own, children) = (cpu_seconds(libc::RUSAGE_SELF) - cpu_before.0, cpu_seconds(libc::RUSAGE_CHILDREN) - cpu_before.1);
         println!(
             "{} photos: first pass {:?} (models loading included), second pass {:?} = {:.0} ms/photo, {:.2} photos/s; faces on {} photos, eyes measured on {}",
             photos.len(), warm, d, d.as_secs_f64() * 1000.0 / photos.len() as f64, photos.len() as f64 / d.as_secs_f64(),
             photos.iter().filter(|p| p.face_count > 0).count(), photos.iter().filter(|p| p.eye_method.as_deref() == Some("mediapipe")).count()
+        );
+        println!(
+            "second pass CPU: this process {own:.1} s = {:.1} cores, helpers {children:.1} s = {:.1} cores, together {:.1} cores",
+            own / d.as_secs_f64(), children / d.as_secs_f64(), (own + children) / d.as_secs_f64()
         );
         assert_eq!(first.len(), photos.len());
         let _ = std::fs::remove_dir_all(&tmp);
