@@ -337,8 +337,10 @@ fn huge_photo_permit(path: &Path) -> HugePermit {
 /// The photo upright, no larger than about `max` on its long side where the decoder can do that cheaply, and its true displayed size.
 /// JPEG / PNG / WebP are decoded in full by the `image` crate; everything else (HEIC, RAW...) by the system decoder, at `max`.
 fn load_with_size(path: &Path, max: u32) -> Result<(DynamicImage, u32, u32), String> {
-    // 系统解码器愿意接原生格式时（Android）就交给它：按需缩放解码，不整张解出来
-    if crate::imageio::is_native(path) && !crate::platform::images().map_or(false, |s| s.prefers_native()) {
+    // 系统解码器愿意接原生格式时（Android）就交给它：按需缩放解码，不整张解出来。
+    // 别的平台（Mac 的 ImageIO 边车）只在照片特别大（超过 4000 万像素）时才请它缩着解：整张解出来要几百 MB、好几秒。
+    let huge = || crate::files::oriented_dims(path).map_or(false, |(w, h)| (w as u64) * (h as u64) > 40_000_000);
+    if crate::imageio::is_native(path) && !crate::platform::images().map_or(false, |s| s.prefers_native() || huge()) {
         let full = load_oriented(path)?;
         let (w, h) = (full.width(), full.height());
         return Ok((full, w, h));

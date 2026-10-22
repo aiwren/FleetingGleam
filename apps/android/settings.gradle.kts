@@ -15,3 +15,5 @@ dependencyResolutionManagement {
 }
 rootProject.name = "FleetingGleam"
 include(":app")
+// Baseline Profile 的生成模块（只在生成时用，不进包）
+include(":baselineprofile")

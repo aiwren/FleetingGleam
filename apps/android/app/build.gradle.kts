@@ -5,6 +5,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
+    id("androidx.baselineprofile")
 }
 
 // 仓库根目录（Cargo 工作区的根）
@@ -148,6 +149,8 @@ dependencies {
     implementation("androidx.compose.animation:animation:1.10.3")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.4")
     implementation("androidx.lifecycle:lifecycle-process:2.9.4")
+    // 随包的 Baseline Profile（app/src/main/generated/baselineProfiles）在安装时就让 ART 预编译热路径：冷启动少 20–30%
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     // 读照片的 EXIF 方向（核心库的解码交给 BitmapFactory 时要自己摆正）
     implementation("androidx.exifinterface:exifinterface:1.3.7")
     // 照片墙的缩略图：异步解码、内存与磁盘缓存、按显示尺寸缩小
@@ -175,3 +178,10 @@ kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarg
 // 于是每次父级重组照片墙上的每一格都重画。声明稳定后，参数没变的格子会被跳过（滚动和改判时不再重组整面墙）。
 composeCompiler { stabilityConfigurationFiles.add(layout.projectDirectory.file("compose_stability.conf")) }
 
+
+// Baseline Profile：`./gradlew :app:generateBaselineProfile`（连着一台 API 33+ 的设备或模拟器）跑 :baselineprofile 里的脚本，
+// 把热路径写进 src/main/generated/baselineProfiles/，提交进仓库；平时构建不重新生成。
+baselineProfile {
+    automaticGenerationDuringBuild = false
+    saveInSrc = true
+}
