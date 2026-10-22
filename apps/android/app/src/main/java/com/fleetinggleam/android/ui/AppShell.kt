@@ -71,7 +71,7 @@ import com.fleetinggleam.android.ui.theme.Motion
 import com.fleetinggleam.android.ui.theme.Type
 
 /** 底部的两个页签（作者 2026-10-21：只有"照片"和"设置"；NAS、模型、备份都在设置里）。 */
-private enum class Tab(val label: String, val icon: String) { Cull("android.tab.photos", Icons.CULL), Settings("settings.title", Icons.SETTINGS) }
+private enum class Tab(val label: String, val icon: String) { Cull("nav.cull", Icons.CULL), Settings("settings.title", Icons.SETTINGS) }
 
 /**
  * 应用的外壳（桌面端 App.tsx 的手机版）：左侧栏换成浮在底部的液态玻璃标签栏；进了项目它让位给照片墙（像 iOS 推进详情页时那样）。
