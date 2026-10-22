@@ -13,6 +13,8 @@ use sha2::{Digest, Sha256};
 /// 备份对象在桶里的键：固定一份"最新"，另外按天在 `auto/` 下轮转一份（只留最近 `keep` 份）；"立即备份"走的也是这一套。
 pub const KEY_LATEST: &str = "fleetinggleam/taste.json";
 pub const KEY_AUTO: &str = "fleetinggleam/auto";
+/// "最新"那份的说明（谁、什么时候、几个风格），恢复前先看一眼，不用把整个包拉下来。
+pub const KEY_META: &str = "fleetinggleam/taste.meta.json";
 /// 自动备份默认留这么多份。
 pub const DEFAULT_KEEP: usize = 30;
 

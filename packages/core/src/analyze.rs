@@ -114,6 +114,9 @@ pub struct Photo {
     /// True once `hdr` and `motion` were looked at (photos analysed before they existed are told apart from plain ones).
     #[serde(default)]
     pub media_done: bool,
+    /// 显示时顺时针转的角度（0 / 90 / 180 / 270），用户在查看器里转的。只换缩略图、大图和显示尺寸，原文件不动，分析结果也不变。
+    #[serde(default)]
+    pub rotation: u16,
     #[serde(skip)]
     pub face_embs: Vec<Vec<f32>>,
     #[serde(skip)]
@@ -265,6 +268,7 @@ pub fn analyze(
         hdr: media.hdr,
         motion: media.motion,
         media_done: true,
+        rotation: 0,
         face_embs,
         hash,
         embedding,
@@ -397,6 +401,60 @@ pub fn save_thumb(img: &DynamicImage, src: &Path, cache_dir: &Path) -> Result<Pa
     let out = cache_name(src, ".jpg", cache_dir);
     img.thumbnail(THUMB_SIZE, THUMB_SIZE).to_rgb8().save(&out).map_err(|e| e.to_string())?;
     Ok(out)
+}
+
+// ---------------------------------------------------------------- 旋转
+
+/// 把任意角度收成 0 / 90 / 180 / 270（顺时针）。
+pub fn norm_rotation(deg: i64) -> u16 {
+    (((deg % 360) + 360) % 360 / 90 * 90) as u16
+}
+
+/// 一张图顺时针转 `deg`。
+pub fn rotate_image(img: DynamicImage, deg: u16) -> DynamicImage {
+    match deg {
+        90 => img.rotate90(),
+        180 => img.rotate180(),
+        270 => img.rotate270(),
+        _ => img,
+    }
+}
+
+/// 把一个 JPEG 文件转 `deg` 后写到另一处（先写临时文件再改名，读的一方不会看到半张）。
+pub fn rotate_jpeg(from: &Path, to: &Path, deg: u16, quality: u8) -> Result<(), String> {
+    let img = image::open(from).map_err(|e| format!("{}: {e}", from.display()))?;
+    let tmp = to.with_extension("tmp");
+    let file = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
+    image::codecs::jpeg::JpegEncoder::new_with_quality(std::io::BufWriter::new(file), quality).encode_image(&rotate_image(img, deg).to_rgb8()).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, to).map_err(|e| e.to_string())
+}
+
+/// 转过的缩略图（`.r90.jpg` 之类）：从原缩略图转出来，原缩略图不在了就先做一张。0 度就是原缩略图本身。
+pub fn rotated_thumb(src: &Path, deg: u16, cache_dir: &Path) -> Result<PathBuf, String> {
+    let base = cache_name(src, ".jpg", cache_dir);
+    if !base.exists() {
+        quick_thumb(src, &base)?;
+    }
+    if deg == 0 {
+        return Ok(base);
+    }
+    let out = cache_name(src, &format!(".r{deg}.jpg"), cache_dir);
+    if !out.exists() {
+        rotate_jpeg(&base, &out, deg, 90)?;
+    }
+    Ok(out)
+}
+
+/// 给一条照片记录套上旋转：角度、缩略图、显示尺寸（90 / 270 时宽高对调）。先还原记录里原来的角度再套新的，所以可以反复调用。
+pub fn apply_rotation(p: &mut Photo, deg: u16, cache_dir: &Path) -> Result<(), String> {
+    let (ow, oh) = if p.rotation % 180 == 90 { (p.height, p.width) } else { (p.width, p.height) };
+    let thumb = rotated_thumb(Path::new(&p.path), deg, cache_dir)?;
+    p.thumb = thumb.to_string_lossy().into_owned();
+    p.rotation = deg;
+    let (w, h) = if deg % 180 == 90 { (oh, ow) } else { (ow, oh) };
+    p.width = w;
+    p.height = h;
+    Ok(())
 }
 
 /// Focus measured where the photo is sharpest, not everywhere: the mean Laplacian energy of the

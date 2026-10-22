@@ -174,6 +174,11 @@ fn dispatch(e: &Arc<Engine>, method: &str, a: &Value) -> Result<Value, String> {
             e.scan_cancel();
             Ok(Value::Null)
         }
+        "set_rotation" => out(e.set_rotation(&s(a, "path")?, a.get("deg").and_then(Value::as_i64).unwrap_or(0))?),
+        "set_device" => {
+            e.set_device(&s(a, "name")?);
+            Ok(Value::Null)
+        }
         "decide_photos" => {
             let overrides: HashMap<String, String> = parse(a, "overrides").unwrap_or_default();
             out(e.decide_photos(&s(a, "key")?, f(a, "keep_ratio") as f32, os(a, "pick_mode").as_deref(), b(a, "one_per_group"), &overrides)?)
@@ -208,6 +213,7 @@ fn dispatch(e: &Arc<Engine>, method: &str, a: &Value) -> Result<Value, String> {
         "backup_set_options" => out(e.backup_set_options(ob(a, "enabled"), a.get("keep").and_then(Value::as_u64).map(|n| n as usize))?),
         "backup_now" => out(e.backup_now(a.get("settings").cloned().unwrap_or(Value::Null))?),
         "backup_restore" => out(e.backup_restore(&s(a, "id")?)?),
+        "backup_peek" => out(e.backup_peek(&s(a, "id")?)?),
         // NAS
         "nas_list" => out(e.nas_list()),
         "nas_probe" => out(e.nas_probe(&s(a, "host")?, &os(a, "user").unwrap_or_default(), &os(a, "password").unwrap_or_default(), os(a, "id").as_deref())?),

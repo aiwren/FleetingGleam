@@ -102,7 +102,10 @@
  "cull": {
   "analyzing": "Analyzing on this phone",
   "emptyBody": "Open a folder and {{brand}} scores every photo on this phone, groups similar bursts, and suggests the best of each. Your originals are never moved or modified.",
-  "readyBody": "Analysis decodes each photo, checks sharpness and exposure, scores it with on-device models, then groups similar shots. Everything runs on this phone and your originals stay untouched."
+  "readyBody": "Analysis decodes each photo, checks sharpness and exposure, scores it with on-device models, then groups similar shots. Everything runs on this phone and your originals stay untouched.",
+  "layout": {
+   "grid": "Grid"
+  }
  },
  "searchset": {
   "info": "The first time it is turned on, a search model is downloaded and the photos are indexed in the background (a few tens of milliseconds each). It all happens on this phone; photos are never uploaded."

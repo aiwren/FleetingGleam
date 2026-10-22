@@ -24,6 +24,12 @@ pub struct Pack {
     pub format: String,
     pub exported_at: u64,
     pub app_version: String,
+    /// 哪台设备做的这份（备份恢复前显示；老文件没有）。
+    #[serde(default)]
+    pub device: String,
+    /// "mac" / "android" / …
+    #[serde(default)]
+    pub platform: String,
     /// The frontend's settings object, carried as it is; the importer picks what makes sense on the other machine.
     pub settings: serde_json::Value,
     pub styles: Vec<PackedStyle>,
@@ -76,7 +82,7 @@ pub struct Summary {
 }
 
 /// Builds the file from the styles and the embeddings the cache has for their labelled photos.
-pub fn pack(styles: &Styles, settings: serde_json::Value, app_version: &str, emb_of: impl Fn(&str) -> Option<Vec<f32>>) -> (Pack, Summary) {
+pub fn pack(styles: &Styles, settings: serde_json::Value, app_version: &str, device: &str, platform: &str, emb_of: impl Fn(&str) -> Option<Vec<f32>>) -> (Pack, Summary) {
     let mut sum = Summary::default();
     let mut out = Vec::new();
     for s in &styles.list {
@@ -103,7 +109,7 @@ pub fn pack(styles: &Styles, settings: serde_json::Value, app_version: &str, emb
     }
     sum.styles = out.len();
     let exported_at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    (Pack { format: FORMAT.to_string(), exported_at, app_version: app_version.to_string(), settings, styles: out }, sum)
+    (Pack { format: FORMAT.to_string(), exported_at, app_version: app_version.to_string(), device: device.to_string(), platform: platform.to_string(), settings, styles: out }, sum)
 }
 
 /// Merges the file into the styles: a style with the same name takes the examples and references in (without duplicates); a new
@@ -175,7 +181,7 @@ mod tests {
         here.get_mut(None).prefs.retrain(emb_of, Vec::new);
         assert!(here.get(None).prefs.active());
 
-        let (pack, sum) = pack(&here, serde_json::json!({ "theme": "dark" }), "0.1.0", emb_of);
+        let (pack, sum) = pack(&here, serde_json::json!({ "theme": "dark" }), "0.1.0", "test box", "mac", emb_of);
         assert_eq!((sum.styles, sum.examples, sum.skipped), (1, 12, 0));
         let text = serde_json::to_string(&pack).unwrap();
         assert!(!text.contains("/Users/me"), "no path leaves the machine");
@@ -202,7 +208,7 @@ mod tests {
 
     #[test]
     fn a_file_of_another_kind_is_refused() {
-        let pack = Pack { format: "something-else/9".into(), exported_at: 0, app_version: String::new(), settings: serde_json::Value::Null, styles: Vec::new() };
+        let pack = Pack { format: "something-else/9".into(), exported_at: 0, app_version: String::new(), device: String::new(), platform: String::new(), settings: serde_json::Value::Null, styles: Vec::new() };
         let mut s = Styles::load(&std::env::temp_dir().join("fg_taste_refuse"));
         assert!(unpack(&mut s, &pack).is_err());
     }

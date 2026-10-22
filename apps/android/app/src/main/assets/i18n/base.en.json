@@ -380,7 +380,9 @@
   "overall": "Overall",
   "ai": "AI",
   "tech": "Technical",
-  "hint": "Scroll to zoom · Drag to pan · Double-click to magnify · ← → to navigate"
+  "rotate": "Rotate",
+  "rotateTip": "Turn 90° clockwise (⌘]; ⌘[ the other way). Only how it is shown changes; the file is untouched.",
+  "hint": "Scroll to zoom · Drag to pan · Double-click to magnify · ← → to navigate · ⌘] rotate"
  },
  "reason": {
   "blur": "Subject isn't sharp enough — likely missed focus or camera shake",
@@ -499,6 +501,7 @@
   "backupDone": "Backed up.",
   "backupFailed": "The backup did not go through: {{error}}",
   "backupRestoreConfirm": "Restore from the latest backup in “{{name}}”? The taste in it is merged into the styles here, and the app settings follow the backup.",
+  "backupFrom": "This backup was made by {{device}} on {{when}}.",
   "backupSetupTitle": "Set up cloud backup (Cloudflare R2)",
   "backupHow": "In the Cloudflare dashboard, under R2, create a bucket; then under “Manage R2 API tokens” create a token with object read and write on that bucket. Enter the bucket's S3 API endpoint (on the bucket's settings page), the bucket name and the token's two keys here. Backups only touch the bucket's fleetinggleam/ folder: taste.json is the latest, auto/ keeps one per day.",
   "backupAccount": "S3 endpoint",
@@ -590,8 +593,6 @@
   "aboutTerms": "Terms of use",
   "aboutIssues": "Report a problem",
   "aboutIssuesDesc": "File a bug or suggestion on GitHub",
-  "aboutLicenses": "Third-party models & licences",
-  "aboutLicensesDesc": "The licences of the models and libraries used for analysis",
   "aboutVersion": "Version",
   "models": "On-device models",
   "modelsBody": "The models used for analysis ship with the app and run entirely offline. On macOS the system's own image aesthetics and face-quality checks are used as well."

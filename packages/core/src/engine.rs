@@ -287,6 +287,30 @@ pub struct Engine {
     downloads: Downloads,
     /// Writes of `projects.json` are serialised and go through a temporary file and a rename.
     projects_write: Mutex<()>,
+    /// 这台设备的名字（备份里记下来，另一端恢复前能看到是谁做的）；应用启动时告诉引擎，没告诉就用平台名。
+    device: Mutex<String>,
+}
+
+/// 这一端是哪种设备（备份的来源说明里显示）。
+pub const PLATFORM: &str = if cfg!(target_os = "android") {
+    "android"
+} else if cfg!(target_os = "macos") {
+    "mac"
+} else if cfg!(target_os = "windows") {
+    "windows"
+} else {
+    "other"
+};
+
+/// 桶里"最新"那份备份的说明。
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct BackupMeta {
+    pub device: String,
+    pub platform: String,
+    pub exported_at: u64,
+    pub app_version: String,
+    pub styles: usize,
+    pub examples: usize,
 }
 
 impl Engine {
@@ -313,11 +337,22 @@ impl Engine {
             nas: nas::Pool::start(),
             downloads: Downloads::default(),
             projects_write: Mutex::new(()),
+            device: Mutex::new(String::new()),
         })
     }
 
     pub fn paths(&self) -> &Paths {
         &self.paths
+    }
+
+    /// 这台设备的名字（Mac 的电脑名、手机的型号），写进备份。
+    pub fn set_device(&self, name: &str) {
+        *self.device.lock().unwrap_or_else(|e| e.into_inner()) = name.trim().to_string();
+    }
+
+    fn device_name(&self) -> String {
+        let d = self.device.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if d.is_empty() { PLATFORM.to_string() } else { d }
     }
 
     fn emit<T: Serialize + ?Sized>(&self, event: &str, payload: &T) {
@@ -646,6 +681,14 @@ impl Engine {
         let mut photos = hits;
         photos.extend(fresh);
         photos.sort_by(|a, b| a.path.cmp(&b.path));
+        // 刚分析出来的记录是 0 度；文件没变、用户转过的，缓存里（`put` 时）已经套上了角度，这里把它拿回来
+        self.with_cache(|c| {
+            for p in photos.iter_mut() {
+                if let Some(r) = c.photo(&p.path).map(|q| q.rotation).filter(|r| *r != p.rotation) {
+                    let _ = analyze::apply_rotation(p, r, &cache_dir);
+                }
+            }
+        });
         let prefs = if a.learn { Some(self.prefs.lock().unwrap_or_else(|e| e.into_inner()).get(a.style.as_deref()).prefs.clone()) } else { None };
         analyze::group_and_score(&mut photos, prefs.as_ref().filter(|p| p.active()));
         {
@@ -663,6 +706,35 @@ impl Engine {
     /// the person asks for it, and whenever the page leaves a project (its scan may still be running).
     pub fn scan_cancel(&self) {
         self.scan_job.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// 把一张照片顺时针转到 `deg`（0 / 90 / 180 / 270）。只改缓存里的记录（缩略图、显示尺寸），原文件不动、分析结果不变；
+    /// 大图与清晰块按角度另存。返回转过的记录，界面拿它替换手里那张。
+    pub fn set_rotation(&self, path: &str, deg: i64) -> Result<Photo, String> {
+        let deg = analyze::norm_rotation(deg);
+        let cache_dir = self.paths.thumbs.clone();
+        let p = self.with_cache(|c| {
+            let out = {
+                let p = c.photo_mut(path).ok_or_else(|| format!("{path}: not analysed yet"))?;
+                analyze::apply_rotation(p, deg, &cache_dir)?;
+                p.clone()
+            };
+            c.save();
+            Ok::<Photo, String>(out)
+        })?;
+        let mut last = self.last_photos.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(q) = last.1.iter_mut().find(|q| q.path == path) {
+            q.thumb = p.thumb.clone();
+            q.width = p.width;
+            q.height = p.height;
+            q.rotation = p.rotation;
+        }
+        Ok(p)
+    }
+
+    /// 一张照片现在的角度和显示尺寸（没分析过的按 0 度）。
+    fn rotation_of(&self, path: &str) -> (u16, u32, u32) {
+        self.with_cache(|c| c.photo(path).map(|p| (p.rotation, p.width, p.height)).unwrap_or((0, 0, 0)))
     }
 
     /// Keep / review / reject for the project last returned by `scan_project`. Only the small bits that can change between calls
@@ -716,7 +788,8 @@ impl Engine {
     /// "我的设置与喜好"打成一个包（JSON 字节）：导出到文件和备份到云端用的是同一份。
     pub fn taste_pack_bytes(&self, settings: serde_json::Value) -> Result<(Vec<u8>, taste::Summary), String> {
         let styles = self.prefs.lock().unwrap_or_else(|e| e.into_inner());
-        let (pack, summary) = self.with_cache(|c| taste::pack(&styles, settings, &self.app_version, |k| c.embedding(k)));
+        let device = self.device_name();
+        let (pack, summary) = self.with_cache(|c| taste::pack(&styles, settings, &self.app_version, &device, PLATFORM, |k| c.embedding(k)));
         drop(styles);
         let bytes = serde_json::to_vec_pretty(&pack).map_err(|e| e.to_string())?;
         Ok((bytes, summary))
@@ -843,14 +916,21 @@ impl Engine {
         if !cfg.configured() {
             return Err("cloud backup is not set up".to_string());
         }
-        let (bytes, _) = self.taste_pack_bytes(settings)?;
+        let (bytes, sum) = self.taste_pack_bytes(settings)?;
         let copy = format!("{}/{}.json", r2::KEY_AUTO, r2::today());
         let keep = cfg.keep();
         let now = now_secs();
+        // 说明单独一个小文件：另一端恢复前看一眼是谁、什么时候做的，不用把整个包拉下来
+        let meta = serde_json::to_vec(&BackupMeta { device: self.device_name(), platform: PLATFORM.to_string(), exported_at: now, app_version: self.app_version.clone(), styles: sum.styles, examples: sum.examples }).map_err(|e| e.to_string())?;
         let mut failures = Vec::new();
         let total = cfg.targets.iter().filter(|t| t.configured()).count();
         for t in cfg.targets.iter_mut().filter(|t| t.configured()) {
-            let r = self.target_secret(t).and_then(|secret| r2::put(t, &secret, r2::KEY_LATEST, &bytes).and_then(|_| r2::put(t, &secret, &copy, &bytes)).and_then(|_| r2::prune_auto(t, &secret, keep).map(|_| ())));
+            let r = self.target_secret(t).and_then(|secret| {
+                r2::put(t, &secret, r2::KEY_LATEST, &bytes)
+                    .and_then(|_| r2::put(t, &secret, r2::KEY_META, &meta))
+                    .and_then(|_| r2::put(t, &secret, &copy, &bytes))
+                    .and_then(|_| r2::prune_auto(t, &secret, keep).map(|_| ()))
+            });
             match r {
                 Ok(()) => {
                     t.last_ok = now;
@@ -864,6 +944,17 @@ impl Engine {
         }
         r2::save(dir, &cfg)?;
         if failures.len() == total { Err(failures.join("; ")) } else { Ok(self.backup_status()) }
+    }
+
+    /// 某个目标里"最新"备份的说明（谁、什么时候做的）；老版本做的备份没有说明，给 None。
+    pub fn backup_peek(&self, id: &str) -> Result<Option<BackupMeta>, String> {
+        let cfg = r2::load(&self.paths.data);
+        let t = cfg.targets.iter().find(|t| t.id == id).ok_or("unknown backup target")?;
+        let secret = self.target_secret(t)?;
+        match r2::get(t, &secret, r2::KEY_META)? {
+            Some(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|e| format!("the backup's note cannot be read: {e}")),
+            None => Ok(None),
+        }
     }
 
     /// 从某个目标的"最新"备份恢复：喜好并进本机的风格，设置交给页面去套用。
@@ -1139,10 +1230,12 @@ impl Engine {
         let dir = self.paths.thumbs.join("large");
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let src = Path::new(path);
+        let (rot, _, _) = self.rotation_of(path);
         // The original file itself whenever the viewer can show it: that is the only way to see what the camera recorded (HDR, wide
         // colour, every pixel). Only formats it cannot show (camera RAW) or enormous files get a rendered preview.
         // Only the full-size viewer gets it (decoding a 15-30 MB original is too heavy for the several previews on screen in compare or single).
-        if full && showable && imageio::web_can_show(src) && std::fs::metadata(src).map_or(false, |m| m.len() < 120 * 1024 * 1024) {
+        // 转过的照片总是渲染出来（原文件没转）。
+        if rot == 0 && full && showable && imageio::web_can_show(src) && std::fs::metadata(src).map_or(false, |m| m.len() < 120 * 1024 * 1024) {
             return Ok(path.to_string());
         }
         let out = analyze::cache_name(src, ".l.jpg", &dir);
@@ -1151,7 +1244,14 @@ impl Engine {
             analyze::large_preview(src, &tmp)?;
             std::fs::rename(&tmp, &out).map_err(|e| e.to_string())?;
         }
-        Ok(out.to_string_lossy().into_owned())
+        if rot == 0 {
+            return Ok(out.to_string_lossy().into_owned());
+        }
+        let turned = analyze::cache_name(src, &format!(".l.r{rot}.jpg"), &dir);
+        if !turned.exists() {
+            analyze::rotate_jpeg(&out, &turned, rot, 88)?;
+        }
+        Ok(turned.to_string_lossy().into_owned())
     }
 
     /// The sharp part of a photo for the full-size viewer when it is zoomed: the region (fractions of the photo, top-left origin) at up to `out_w`
@@ -1161,13 +1261,31 @@ impl Engine {
         let dir = self.paths.thumbs.join("detail");
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let src = Path::new(path);
-        let tag = format!(".d{:.3}-{:.3}-{:.3}-{:.3}-{}.jpg", x, y, w, h, out_w);
+        let (rot, dw, dh) = self.rotation_of(path);
+        let tag = format!(".d{:.3}-{:.3}-{:.3}-{:.3}-{}{}.jpg", x, y, w, h, out_w, if rot == 0 { String::new() } else { format!("-r{rot}") });
         let out = analyze::cache_name(src, &tag, &dir);
         if !out.exists() {
+            // 转过的照片：屏幕上那块（转过之后的坐标）先换算回原图的坐标，裁出来再转回去。
+            // 输出宽度按原图里那块的宽算：90 / 270 时屏幕上的高对应原图的宽。
+            let (region, ow) = match rot {
+                0 => ([x, y, w, h], out_w),
+                180 => ([1.0 - x - w, 1.0 - y - h, w, h], out_w),
+                _ => {
+                    let r = if rot == 90 { [y, 1.0 - x - w, h, w] } else { [1.0 - y - h, x, h, w] };
+                    let ow = (out_w as f64 * (h * dh as f64) / (w * dw as f64).max(1e-6)).round().max(1.0) as u32;
+                    (r, ow)
+                }
+            };
+            let target = if rot == 0 { out.clone() } else { out.with_extension("raw.jpg") };
             if imageio::available() {
-                imageio::crop(src, &out, [x, y, w, h], out_w)?;
+                imageio::crop(src, &target, region, ow)?;
             } else {
-                crop_native(src, &out, [x, y, w, h], out_w)?;
+                crop_native(src, &target, region, ow)?;
+            }
+            if rot != 0 {
+                let r = analyze::rotate_jpeg(&target, &out, rot, 90);
+                let _ = std::fs::remove_file(&target);
+                r?;
             }
             // every new crop is another ~2 MB: look at the folder's size now and then
             if CROPS.fetch_add(1, Ordering::Relaxed) % 24 == 23 {
@@ -1759,6 +1877,41 @@ mod tests {
         assert!(e.projects_load().unwrap().unwrap().contains("projects"));
         let aside = e.projects_quarantine().unwrap();
         assert!(Path::new(&aside).exists() && e.projects_load().unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 转照片：记录换缩略图和显示尺寸，原文件不动；大图与清晰块按角度另存；强制重新分析也记得角度。
+    #[test]
+    fn a_photo_can_be_turned_and_stays_turned() {
+        let (e, root, _) = engine("rotate");
+        let dir = root.join("photos");
+        photos(&dir, 2);
+        let dirs = vec![dir.to_string_lossy().into_owned()];
+        let args = ScanArgs { key: "p".into(), dirs: dirs.clone(), quality: Some("fast".into()), ..Default::default() };
+        let first = e.scan_project(args.clone()).unwrap();
+        let p0 = first.iter().find(|p| p.name == "p0.jpg").unwrap().clone();
+        assert_eq!((p0.width, p0.height, p0.rotation), (640, 480, 0));
+        let turned = e.set_rotation(&p0.path, 90).unwrap();
+        assert_eq!((turned.width, turned.height, turned.rotation), (480, 640, 90));
+        assert_ne!(turned.thumb, p0.thumb);
+        let th = image::image_dimensions(&turned.thumb).unwrap();
+        assert!(th.0 < th.1, "the thumbnail stands upright now: {th:?}");
+        // 大图：转过的照片总是渲染出来，不给原文件
+        let big = e.large_preview(&p0.path, true, true).unwrap();
+        assert_ne!(big, p0.path);
+        let bd = image::image_dimensions(&big).unwrap();
+        assert!(bd.0 < bd.1, "{bd:?}");
+        // 清晰块：屏幕上右上角那一块（转过之后的坐标），裁出来是竖的
+        let crop = e.photo_detail(&p0.path, 0.5, 0.0, 0.5, 0.5, 200).unwrap();
+        let cd = image::image_dimensions(&crop).unwrap();
+        assert!((190..=210).contains(&cd.0) && cd.1 > cd.0, "{cd:?}");
+        // 强制重新分析：文件没变，角度留着
+        let again = e.scan_project(ScanArgs { force: true, ..args.clone() }).unwrap();
+        let q = again.iter().find(|p| p.path == p0.path).unwrap();
+        assert_eq!((q.width, q.height, q.rotation), (480, 640, 90));
+        // 转回去就是原来的缩略图
+        let back = e.set_rotation(&p0.path, 0).unwrap();
+        assert_eq!((back.width, back.height, back.rotation, back.thumb.as_str()), (640, 480, 0, p0.thumb.as_str()));
         let _ = std::fs::remove_dir_all(&root);
     }
 

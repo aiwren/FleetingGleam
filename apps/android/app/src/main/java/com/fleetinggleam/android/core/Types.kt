@@ -59,9 +59,15 @@ data class Photo(
     val people: List<Int> = emptyList(),
     val hdr: Boolean = false,
     val motion: Boolean = false,
+    /** 显示时顺时针转的角度（0 / 90 / 180 / 270）；thumb 与 width / height 已经是转过之后的。 */
+    val rotation: Int = 0,
 ) {
     val ratio: Float get() = width.toFloat() / height.coerceAtLeast(1)
 }
+
+/** 桶里最新那份备份的说明（engine.rs 的 `BackupMeta`）；老版本做的备份没有。 */
+@Serializable
+data class BackupMeta(val device: String = "", val platform: String = "", val exportedAt: Long = 0, val appVersion: String = "", val styles: Int = 0, val examples: Int = 0)
 
 /** 保留 / 待复查 / 淘汰。 */
 enum class State(val key: String) {

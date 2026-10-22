@@ -36,6 +36,11 @@ object Large {
         paths.forEach { p -> if (!jobs.containsKey(keyOf(p, false))) scope.async { get(p) } }
     }
 
+    /** 一张照片转过之后：它的大图换了文件，忘掉手里的，下次再要。 */
+    fun forget(path: String) {
+        for (full in listOf(true, false)) { val k = keyOf(path, full); jobs.remove(k); done.remove(k) }
+    }
+
     /** 清除缓存后：之前的文件已经没了。 */
     fun forget() { jobs.clear(); done.clear() }
 }

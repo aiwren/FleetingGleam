@@ -38,6 +38,8 @@ export type Photo = {
   hdr: boolean;
   /** A motion photo: a short video follows the picture inside the file. */
   motion: boolean;
+  /** 显示时顺时针转的角度（0 / 90 / 180 / 270）；缩略图、大图和 width / height 都已经是转过之后的。 */
+  rotation?: number;
 };
 
 const RAW_EXT = new Set(["dng", "cr2", "cr3", "crw", "nef", "nrw", "arw", "srf", "sr2", "raf", "orf", "rw2", "pef", "srw", "x3f", "3fr", "erf", "kdc", "mef", "mos", "mrw", "raw", "rwl", "iiq", "fff", "dcr", "k25", "rwz"]);

@@ -288,6 +288,8 @@ w.__TAURI_INTERNALS__ = {
       }
       case "reveal": return null;
       case "large_preview": return (args.path as string);
+      case "set_rotation": return null;
+      case "backup_peek": return null;
       case "photo_info": return { format: "JPEG", bytes: 9_400_000, color_space: "sRGB", bit_depth: "8, 8, 8", camera: "FUJIFILM X-T5", lens: "XF35mmF1.4 R", focal: "35 mm", aperture: "f/2", shutter: "1/250 s", iso: "400", software: null, taken: "2026-04-17 18:22:31" };
       case "machine_info": return { memory_gb: 32, cores: 10 };
       case "packs_status": return (["standard", "high", "ultra", "search", "eyes", "faces", "scenetext"] as const).map((id) => ({ id, installed: packState[id], bytes: 0 }));

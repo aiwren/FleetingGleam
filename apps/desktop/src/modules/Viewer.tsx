@@ -19,6 +19,8 @@ type Props = {
   onClose: () => void;
   onStep: (d: number) => void;
   onDecide: (s: State) => void;
+  /** 顺时针（1）或逆时针（-1）转 90°。 */
+  onRotate: (dir: 1 | -1) => void;
   /** Every photo in the current view, in order, for the strip along the bottom, and what has been decided about each. */
   photos: Photo[];
   decisions: Map<string, Decision>;
@@ -42,7 +44,7 @@ const isBig = (p: Photo) => p.width * p.height >= BIG_PIXELS;
 const maybeHdr = (p: Photo) => p.hdr || !SDR_EXT.has((p.path.split(".").pop() ?? "").toLowerCase());
 const hdrSupported = () => (hdrSupport ??= invoke<boolean>("hdr_overlay_supported").catch(() => false));
 
-export default function Viewer({ photo, decision, index, total, onClose, onStep, onDecide, photos, decisions, onJump, from, active = true }: Props) {
+export default function Viewer({ photo, decision, index, total, onClose, onStep, onDecide, onRotate, photos, decisions, onJump, from, active = true }: Props) {
   const { t } = useTranslation();
   const large = useLarge(photo.path, true, true);
   // The view that is on screen lives in `view` and is painted straight onto the elements once per frame, so zooming and panning never wait for a
@@ -222,7 +224,7 @@ export default function Viewer({ photo, decision, index, total, onClose, onStep,
   }, [liveMenu]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!(maybeHdr(photo) || isBig(photo)) || clip || !isPresent) return;
+    if (!(maybeHdr(photo) || isBig(photo)) || clip || !isPresent || photo.rotation) return;
     let live = true;
     // let the photo settle first (the fly-out when opening, the slide when stepping)
     const id = window.setTimeout(async () => {
@@ -291,7 +293,7 @@ export default function Viewer({ photo, decision, index, total, onClose, onStep,
   const [detailSrc, setDetailSrc] = useState<{ src: string; x: number; y: number; w: number; h: number } | null>(null);
   const asked = useRef<{ x0: number; y0: number; x1: number; y1: number; scale: number } | null>(null);
   const detailTok = useRef(0);
-  useEffect(() => { setDetailSrc(null); asked.current = null; detailTok.current++; }, [photo.path]);
+  useEffect(() => { setDetailSrc(null); asked.current = null; detailTok.current++; }, [photo.path, photo.rotation]);
   useEffect(() => {
     const long = Math.max(photo.width, photo.height);
     const have = nativeHdr ? (isBig(photo) ? 2048 : Math.min(long, 4096)) : 2560;
@@ -327,7 +329,7 @@ export default function Viewer({ photo, decision, index, total, onClose, onStep,
     }, 90);
     return () => window.clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scale, pos.x, pos.y, nativeHdr, photo.path, photo.width, photo.height, clip]);
+  }, [scale, pos.x, pos.y, nativeHdr, photo.path, photo.width, photo.height, photo.rotation, clip]);
 
   // follow the photo: while it settles into place, and whenever it is zoomed, panned or the window changes
   useEffect(() => {
@@ -353,13 +355,14 @@ export default function Viewer({ photo, decision, index, total, onClose, onStep,
       else if (k === "-") { ease(); zoom(1 / 1.4); }
       else if (k === "0") reset();
       else if (k === "m") void playMotion();
+      else if ((e.metaKey || e.ctrlKey) && (e.key === "]" || e.key === "[")) { e.preventDefault(); onRotate(e.key === "]" ? 1 : -1); }
       else if (k === "p") onDecide("keep");
       else if (k === "r") onDecide("review");
       else if (k === "x") onDecide("reject");
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, onStep, onDecide, photo.path, photo.motion, clip]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [onClose, onStep, onDecide, onRotate, photo.path, photo.motion, clip]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fly out of the tile on open...
   useLayoutEffect(() => {
@@ -431,6 +434,7 @@ export default function Viewer({ photo, decision, index, total, onClose, onStep,
         <span className="mono ash">{index + 1} / {total} · <span ref={pctRef}>100%</span></span>
         <div className="viewer-actions">
           {btn("keep", "P")}{btn("review", "R")}{btn("reject", "X")}
+          <button className="btn" onClick={() => onRotate(1)} title={t("viewer.rotateTip")}>{t("viewer.rotate")} <kbd>⌘]</kbd></button>
           <button className="btn" onClick={onClose}>{t("viewer.close")} <kbd>Esc</kbd></button>
         </div>
       </div>

@@ -14,7 +14,7 @@ import appIcon from "../assets/logo.png";
 import Modal from "../components/Modal";
 import Stepper from "../components/Stepper";
 import { Share, addShare, probeShare, refreshShares, removeShare, setShareEnabled, updateShare, useShares } from "../nas";
-import { BackupTarget, backupNow, refreshBackup, removeTarget, restoreBackup, saveTarget, setBackupOptions, useBackup } from "../backup";
+import { BackupTarget, backupNow, peekBackup, refreshBackup, removeTarget, restoreBackup, saveTarget, setBackupOptions, useBackup } from "../backup";
 import { motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 import InfoPop from "../components/InfoPop";
@@ -179,7 +179,10 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
   };
   const bkRestoreFrom = async (tg: BackupTarget) => {
     setBkPick(false);
-    if (!window.confirm(t("settings.backupRestoreConfirm", { name: tg.name }))) return;
+    // 手机和电脑可能备份到同一个桶：先说清楚这份是谁、什么时候做的，再问要不要恢复
+    let from = "";
+    try { const m = await peekBackup(tg.id); if (m) from = " " + t("settings.backupFrom", { when: bkWhen(m.exported_at), device: m.device || m.platform }); } catch { /* 没有说明也能恢复 */ }
+    if (!window.confirm(t("settings.backupRestoreConfirm", { name: tg.name }) + from)) return;
     setBkBusy("restore"); setBkMsg(null);
     try {
       const [r, carried] = await restoreBackup(tg.id);
@@ -469,7 +472,6 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
                   [t("settings.aboutPrivacy"), undefined, l.privacy],
                   [t("settings.aboutTerms"), undefined, l.terms],
                   [t("settings.aboutIssues"), t("settings.aboutIssuesDesc"), l.issues],
-                  [t("settings.aboutLicenses"), t("settings.aboutLicensesDesc"), l.licenses],
                 ];
                 return rows.map(([label, desc, url]) => (
                   <button key={url} className="srow about-link" onClick={() => { void openUrl(url).catch(() => window.open(url, "_blank")); }} title={url}>
@@ -478,7 +480,7 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
                   </button>
                 ));
               })()}
-              <Row label={t("settings.aboutVersion")} desc={t("settings.modelsBody")}>
+              <Row label={t("settings.aboutVersion")}>
                 <span className="mono ash">{version ? `v${version}` : ""}</span>
               </Row>
             </Group>

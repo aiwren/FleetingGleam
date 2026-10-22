@@ -483,10 +483,13 @@ private fun CullBar(cull: CullState, sel: Photo?, d: Decision?, modifier: Modifi
     Box(modifier.navigationBarsPadding().padding(bottom = 10.dp)) {
         GlassBox(shape = RoundedCornerShape(50)) {
             // 内容切换时胶囊的宽度跟着变
+            // 只有"有没有选中照片"和"是不是场景页"变了才换内容；改判、换一张选中的都在原地更新（之前把判定也当键，点一下保留整条会闪一下）
             androidx.compose.animation.AnimatedContent(
-                targetState = Triple(cull.sceneView, sel?.path, d?.state), label = "bar",
+                targetState = Pair(cull.sceneView, sel != null), label = "bar",
                 transitionSpec = { (androidx.compose.animation.fadeIn(tween(Motion.FAST)) togetherWith androidx.compose.animation.fadeOut(tween(Motion.FAST))).using(androidx.compose.animation.SizeTransform(clip = false)) },
-            ) { (scene, path, state) ->
+            ) { (scene, hasSel) ->
+                val path = if (hasSel) sel?.path else null
+                val state = d?.state
                 Row(Modifier.padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
                     when {
                         scene -> BarItem("M10 3L5 8l5 5", t("cull.backToPhotos")) { cull.sceneView = false }
@@ -511,9 +514,9 @@ private fun BarItem(icon: String, label: String, enabled: Boolean = true, dot: B
     val c = LocalFg.current
     val src = remember { MutableInteractionSource() }
     val press = rememberPress(src)
-    // 选中态：保留是琥珀色（只有"保留"用它），淘汰是墨色
-    val bg = if (!on) Color.Transparent else if (gold) c.gleam else c.ink
-    val fg = if (!on) c.ink else if (gold) c.gleamInk else c.onInk
+    // 选中态：保留是琥珀色（只有"保留"用它），淘汰是墨色；颜色平滑过渡，不闪
+    val bg by androidx.compose.animation.animateColorAsState(if (!on) Color.Transparent else if (gold) c.gleam else c.ink, tween(Motion.FAST), label = "barBg")
+    val fg by androidx.compose.animation.animateColorAsState(if (!on) c.ink else if (gold) c.gleamInk else c.onInk, tween(Motion.FAST), label = "barFg")
     Column(
         Modifier.width(68.dp).height(46.dp).clip(RoundedCornerShape(23.dp)).background(bg)
             .graphicsLayer { val s = 1f + 0.08f * press(); scaleX = s; scaleY = s; alpha = if (enabled) 1f else 0.35f }

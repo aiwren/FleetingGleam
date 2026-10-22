@@ -134,6 +134,8 @@ object Backup {
     suspend fun setOptions(enabled: Boolean? = null, keep: Int? = null) { _status.value = Core.get("backup_set_options", args("enabled" to enabled, "keep" to keep)) }
     /** 备份一次到每一个目标；"立即备份"和自动触发走的是同一套。 */
     suspend fun now() { _status.value = Core.get("backup_now", args("settings" to Settings.asJson())) }
+    /** 桶里最新那份备份的说明（哪台设备、什么时候）；老版本做的备份没有，给 null。 */
+    suspend fun peek(id: String): BackupMeta? = Core.get("backup_peek", args("id" to id))
     /** 从某个目标的最新备份恢复：返回摘要与备份里带的设置。 */
     suspend fun restore(id: String): Pair<TasteSummary, JsonObject?> = tastePair(Core.call("backup_restore", args("id" to id)))
 

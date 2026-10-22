@@ -42,6 +42,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.layout.layout
 import androidx.compose.runtime.saveable.rememberSaveable
 import com.fleetinggleam.android.core.Backup
+import com.fleetinggleam.android.core.BackupMeta
 import com.fleetinggleam.android.core.BackupTarget
 import com.fleetinggleam.android.core.Core
 import com.fleetinggleam.android.core.I18n
@@ -375,6 +376,17 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
             val zh = I18n.isZh
             val site = "https://fleetinggleam.fleetinggleam-web.workers.dev"; val repo = "https://github.com/lcopilot/FleetingGleam"
             val openUrl = { url: String -> runCatching { ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) } }
+            // 隐私政策、使用条款：在应用里从底部推上来的半屏浏览器（Custom Tabs 的局部高度）里看，不跳出去；没有支持的浏览器就照常打开
+            val openSheet = { url: String ->
+                runCatching {
+                    val h = (ctx.resources.displayMetrics.heightPixels * 0.88f).toInt()
+                    androidx.browser.customtabs.CustomTabsIntent.Builder()
+                        .setInitialActivityHeightPx(h, androidx.browser.customtabs.CustomTabsIntent.ACTIVITY_HEIGHT_ADJUSTABLE)
+                        .setToolbarCornerRadiusDp(16)
+                        .setShowTitle(true)
+                        .build().launchUrl(ctx, android.net.Uri.parse(url))
+                }.onFailure { openUrl(url) }
+            }
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.panel).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(com.fleetinggleam.android.R.mipmap.ic_launcher), null, Modifier.size(64.dp).clip(RoundedCornerShape(16.dp)))
@@ -384,20 +396,21 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                     Text(t("settings.aboutIntro"), style = Type.body.copy(color = c.ink), textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.padding(top = 12.dp))
                 }
                 SettingGroup(t("settings.aboutLinks")) {
+                    // (图标, 标题 to 说明, 地址, 是否在应用内半屏看)
+                    data class Link(val icon: String, val title: String, val desc: String, val url: String, val sheet: Boolean)
                     val rows = listOf(
-                        Triple(Icons.CULL, t("settings.aboutSite") to t("settings.aboutSiteDesc"), if (zh) "$site/zh" else site),
-                        Triple("M5.5 2.5L2 8l3.5 5.5M10.5 2.5L14 8l-3.5 5.5M9 2l-2 12", t("settings.aboutSource") to t("settings.aboutSourceDesc"), repo),
-                        Triple("M3.5 2.5h9a1 1 0 011 1v9a1 1 0 01-1 1h-9a1 1 0 01-1-1v-9a1 1 0 011-1zM5 5.5h6M5 8h6M5 10.5h3", t("settings.aboutPrivacy") to "", if (zh) "$site/zh/privacy" else "$site/privacy"),
-                        Triple("M4 2.5h8v11H4zM6 5.5h4M6 8h4", t("settings.aboutTerms") to "", if (zh) "$site/zh/terms" else "$site/terms"),
-                        Triple("M8 2.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM8 5v3.5M8 11h.01", t("settings.aboutIssues") to t("settings.aboutIssuesDesc"), "$repo/issues"),
-                        Triple("M2.5 4.5h11M2.5 8h11M2.5 11.5h7", t("settings.aboutLicenses") to t("settings.aboutLicensesDesc"), "$repo/blob/main/docs/THIRD_PARTY.md"),
+                        Link(Icons.CULL, t("settings.aboutSite"), t("settings.aboutSiteDesc"), if (zh) "$site/zh" else site, false),
+                        Link("M5.5 2.5L2 8l3.5 5.5M10.5 2.5L14 8l-3.5 5.5M9 2l-2 12", t("settings.aboutSource"), t("settings.aboutSourceDesc"), repo, false),
+                        Link("M3.5 2.5h9a1 1 0 011 1v9a1 1 0 01-1 1h-9a1 1 0 01-1-1v-9a1 1 0 011-1zM5 5.5h6M5 8h6M5 10.5h3", t("settings.aboutPrivacy"), "", if (zh) "$site/zh/privacy" else "$site/privacy", true),
+                        Link("M4 2.5h8v11H4zM6 5.5h4M6 8h4", t("settings.aboutTerms"), "", if (zh) "$site/zh/terms" else "$site/terms", true),
+                        Link("M8 2.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM8 5v3.5M8 11h.01", t("settings.aboutIssues"), t("settings.aboutIssuesDesc"), "$repo/issues", false),
                     )
-                    rows.forEachIndexed { i, (icon, text, url) ->
-                        SettingRow(text.first, text.second.ifEmpty { null }, first = i == 0, control = { FgIcon(Icons.CHEVRON, size = 14.dp, stroke = 1.6f, color = c.ash) }, onClick = { openUrl(url) }, icon = icon)
+                    rows.forEachIndexed { i, l ->
+                        SettingRow(l.title, l.desc.ifEmpty { null }, first = i == 0, control = { FgIcon(Icons.CHEVRON, size = 14.dp, stroke = 1.6f, color = c.ash) }, onClick = { if (l.sheet) openSheet(l.url) else openUrl(l.url) }, icon = l.icon)
                     }
                 }
                 SettingGroup("") {
-                    SettingRow(t("settings.aboutVersion"), t("android.settings.modelsBody"), first = true) { Text("v$version", style = Type.mono.copy(color = c.ash)) }
+                    SettingRow(t("settings.aboutVersion"), null, first = true) { Text("v$version", style = Type.mono.copy(color = c.ash)) }
                 }
             }
         }
@@ -444,6 +457,9 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
             }
         }
     }
+    // 手机和电脑可能备份到同一个桶：恢复前先说清楚这份是谁、什么时候做的
+    var bkMeta by remember { mutableStateOf<BackupMeta?>(null) }
+    LaunchedEffect(bkConfirm?.id) { bkMeta = null; bkConfirm?.let { tg -> bkMeta = runCatching { Backup.peek(tg.id) }.getOrNull() } }
     FgDialog(bkConfirm != null, { bkConfirm = null }, t("settings.backupRestore"), footer = {
         FgButton(t("settings.nasCancel"), { bkConfirm = null })
         FgButton(t("settings.backupRestore"), {
@@ -455,7 +471,12 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                 bkBusy = null
             }
         }, primary = true)
-    }) { Text(t("settings.backupRestoreConfirm", "name" to (bkConfirm?.name ?: "")), style = Type.body.copy(color = c.ink)) }
+    }) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(t("settings.backupRestoreConfirm", "name" to (bkConfirm?.name ?: "")), style = Type.body.copy(color = c.ink))
+            bkMeta?.let { m -> Text(t("settings.backupFrom", "device" to m.device.ifEmpty { m.platform }, "when" to fmtWhen(m.exportedAt)), style = Type.body.copy(color = c.ash)) }
+        }
+    }
 
     // ---- NAS：添加 / 编辑（先"测试连接"，连上才能保存）
     nasForm?.let { f0 ->

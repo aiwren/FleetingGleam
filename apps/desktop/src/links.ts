@@ -7,5 +7,4 @@ export const links = (zh: boolean) => ({
   issues: `${REPO}/issues`,
   privacy: zh ? `${SITE}/zh/privacy` : `${SITE}/privacy`,
   terms: zh ? `${SITE}/zh/terms` : `${SITE}/terms`,
-  licenses: `${REPO}/blob/main/docs/THIRD_PARTY.md`,
 });

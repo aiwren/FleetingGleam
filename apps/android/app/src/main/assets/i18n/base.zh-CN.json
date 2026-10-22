@@ -375,7 +375,9 @@
   "overall": "综合",
   "ai": "AI",
   "tech": "技术",
-  "hint": "滚轮缩放 · 拖动平移 · 双击放大 · ← → 切换"
+  "rotate": "旋转",
+  "rotateTip": "顺时针转 90°（⌘]；⌘[ 反向）。只改显示，原文件不动。",
+  "hint": "滚轮缩放 · 拖动平移 · 双击放大 · ← → 切换 · ⌘] 旋转"
  },
  "reason": {
   "blur": "主体清晰度不足，疑似虚焦或手抖",
@@ -493,6 +495,7 @@
   "backupDone": "备份完成。",
   "backupFailed": "备份没成功：{{error}}",
   "backupRestoreConfirm": "从「{{name}}」的最新备份恢复？备份里的喜好会并进本机的风格，应用设置会按备份里的来。",
+  "backupFrom": "这份备份是 {{device}} 在 {{when}} 做的。",
   "backupSetupTitle": "设置云备份（Cloudflare R2）",
   "backupHow": "在 Cloudflare 控制台 → R2 里建一个桶，再在「管理 R2 API 令牌」里创建一个对这个桶「对象读和写」的令牌，把桶的 S3 API 端点（桶设置页里有）、桶名和令牌的两个密钥填在这里。备份只写桶里的 fleetinggleam/ 目录：taste.json 是最新一份，auto/ 里按天各留一份。",
   "backupAccount": "S3 端点",
@@ -582,8 +585,6 @@
   "aboutTerms": "使用条款",
   "aboutIssues": "反馈问题",
   "aboutIssuesDesc": "在 GitHub 上提交 bug 或建议",
-  "aboutLicenses": "第三方模型与许可",
-  "aboutLicensesDesc": "分析用到的模型和开源库各自的许可",
   "aboutVersion": "版本",
   "models": "本地模型",
   "modelsBody": "分析所用的模型随应用放在本机，全程离线运行；在 macOS 上另外使用系统自带的图像美学与人脸质量评估。"

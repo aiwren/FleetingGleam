@@ -179,6 +179,19 @@ impl Cache {
     pub fn put(&mut self, size: u64, mtime: i64, tag: &str, p: &Photo) {
         // a re-analysis of an unchanged file keeps the search embedding it already has
         let (sem, color) = self.entries.get(&p.path).filter(|e| e.size == size && e.mtime == mtime).map(|e| (e.sem.clone(), e.color.clone())).unwrap_or_default();
+        // 文件没变而记录重做了（换了模型、强制重新分析）：用户转过的角度留着
+        let rot = self.entries.get(&p.path).filter(|e| e.size == size && e.mtime == mtime).map(|e| e.photo.rotation).unwrap_or(0);
+        let turned;
+        let p = if rot != 0 && p.rotation == 0 {
+            let mut q = p.clone();
+            if let Some(dir) = Path::new(&p.thumb).parent().map(Path::to_path_buf) {
+                let _ = crate::analyze::apply_rotation(&mut q, rot, &dir);
+            }
+            turned = q;
+            &turned
+        } else {
+            p
+        };
         self.entries.insert(
             p.path.clone(),
             Entry { tag: tag.to_string(), size, mtime, photo: p.clone(), hash: p.hash, emb: p.embedding.clone(), sem, color, fe: p.face_embs.clone() },
@@ -207,6 +220,11 @@ impl Cache {
     /// The photo record of an entry (any analysis version), for showing search results.
     pub fn photo(&self, key: &str) -> Option<&Photo> {
         self.entries.get(key).map(|e| &e.photo)
+    }
+
+    /// 可改的记录（转照片用）。
+    pub fn photo_mut(&mut self, key: &str) -> Option<&mut Photo> {
+        self.entries.get_mut(key).map(|e| &mut e.photo)
     }
 
     /// Entries the search index still has to look at (no search vector or no colour signature), with their thumbnail (a 640 px JPEG:

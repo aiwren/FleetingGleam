@@ -27,6 +27,9 @@ export async function setBackupOptions(p: { enabled?: boolean; keep?: number }) 
 /** 备份一次到每一个目标；"立即备份"和自动触发走的是同一套。 */
 export async function backupNow() { set(await invoke<BackupStatus>("backup_now", { settings: getSettings() })); }
 export type TasteSummary = { styles: number; examples: number; refs: number; skipped: number };
+/** 桶里最新那份备份的说明：哪台设备、什么时候做的（老版本做的备份没有，给 null）。 */
+export type BackupMeta = { device: string; platform: string; exported_at: number; app_version: string; styles: number; examples: number };
+export const peekBackup = (id: string) => invoke<BackupMeta | null>("backup_peek", { id });
 /** 从某个目标的最新备份恢复。 */
 export const restoreBackup = (id: string) => invoke<[TasteSummary, Record<string, unknown> | null]>("backup_restore", { id });
 

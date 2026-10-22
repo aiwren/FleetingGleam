@@ -64,6 +64,8 @@ object Core {
                 }
             })
             engine = e
+            // 这台手机的名字写进备份：电脑那边恢复前认得出是谁做的
+            runCatching { e.call("set_device", args("name" to "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}".trim()).toString()) }
             ready.countDown()
             // 换了网络（或用户在系统里改了代理）：模型下载与云备份跟着走新的代理
             cm?.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {

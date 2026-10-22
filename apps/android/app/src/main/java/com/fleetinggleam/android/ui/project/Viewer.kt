@@ -279,6 +279,7 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, on
                                 DecideBtn(st, on) { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onDecide(photo.path, if (on && d?.manual == true) null else st) }
                             }
                             Box(Modifier.padding(horizontal = 4.dp).width(1.dp).height(26.dp).background(LocalFg.current.line))
+                            DecideIcon(Icons.ROTATE, t("viewer.rotate")) { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); scope.launch { runCatching { Session.rotate(photo.path) } } }
                             DecideIcon(Icons.INSPECTOR, t("cull.inspector")) { info = true }
                         }
                     }
@@ -312,12 +313,13 @@ private fun ZoomPage(p: Photo, active: Boolean, clip: String?, clipRun: Int, qui
     val ctx = LocalContext.current
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
-    val zoom = remember(p.path) { Animatable(1f) }
-    val pan = remember(p.path) { Animatable(Offset.Zero, Offset.VectorConverter) }
-    var large by remember(p.path) { mutableStateOf(Large.ready(p.path, true)) }
-    var sharp by remember(p.path) { mutableStateOf(false) }
-    var detail by remember(p.path) { mutableStateOf<Pair<String, androidx.compose.ui.geometry.Rect>?>(null) }
-    LaunchedEffect(p.path, active) { if (large == null && active) large = Large.get(p.path, full = true) ?: Large.get(p.path) }
+    // 以缩略图的路径为键：照片转过之后缩略图换了文件，大图、清晰块和缩放都从头来
+    val zoom = remember(p.thumb) { Animatable(1f) }
+    val pan = remember(p.thumb) { Animatable(Offset.Zero, Offset.VectorConverter) }
+    var large by remember(p.thumb) { mutableStateOf(Large.ready(p.path, true)) }
+    var sharp by remember(p.thumb) { mutableStateOf(false) }
+    var detail by remember(p.thumb) { mutableStateOf<Pair<String, androidx.compose.ui.geometry.Rect>?>(null) }
+    LaunchedEffect(p.thumb, active) { if (large == null && active) large = Large.get(p.path, full = true) ?: Large.get(p.path) }
     LaunchedEffect(zoom.value) { if (active) onScale(zoom.value) }
 
     BoxWithConstraints(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

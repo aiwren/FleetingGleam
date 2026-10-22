@@ -21,7 +21,7 @@ import PhotoTags from "../components/PhotoTags";
 import PhotoVerdict from "../components/PhotoVerdict";
 import { FileSection } from "../components/FileFacts";
 import Accordion from "../components/Accordion";
-import { prefetchLarge } from "../largeSrc";
+import { forgetLarge, prefetchLarge } from "../largeSrc";
 import Compare from "./Compare";
 import Ticker from "../components/Ticker";
 import Tile, { StageInfo } from "../components/Tile";
@@ -513,6 +513,19 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   // What the tiles get: functions whose identity never changes, so a tile is redrawn only when its own photo, mark or position changed.
   const openSceneView = useCallback(() => setSceneView(true), []);
   const tileSelect = useCallback((path: string) => { clickedPath.current = path; setSelected(path); }, []);
+  /** 把一张照片顺时针（dir = 1）或逆时针转 90°：核心库换缩略图与显示尺寸（原文件不动），这里只替换手里那张。 */
+  const rotate = useCallback((path: string, dir: 1 | -1) => {
+    const cur = photos.find((p) => p.path === path);
+    if (!cur) return;
+    const deg = ((((cur.rotation ?? 0) + 90 * dir) % 360) + 360) % 360;
+    invoke<Photo | null>("set_rotation", { path, deg })
+      .then((p) => {
+        if (!p) return;
+        forgetLarge(path);
+        setPhotos((ps) => ps.map((x) => (x.path === p.path ? { ...x, thumb: p.thumb, width: p.width, height: p.height, rotation: p.rotation } : x)));
+      })
+      .catch(() => { /* not analysed yet, or not in Tauri */ });
+  }, [photos]);
   const decide = useCallback((path: string, st: State | null, fromUndo = false) => {
     // only photos of the project in view: a stale key press or undo must not write another project's path into this one
     if (!project || !photos.some((p) => p.path === path)) return;
@@ -558,6 +571,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
       if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || isModalOpen()) return;
       const k = e.key.toLowerCase();
       if ((e.metaKey || e.ctrlKey) && k === "z") { e.preventDefault(); undoLast(); return; }
+      if ((e.metaKey || e.ctrlKey) && (e.key === "]" || e.key === "[")) { if (sel) { e.preventDefault(); rotate(sel.path, e.key === "]" ? 1 : -1); } return; }
       if (layout === "compare" && ["arrowright", "arrowleft", "p", "r", "x"].includes(k)) return; // Compare handles these itself (groups; the photo under the pointer)
       if (k === "arrowright") { e.preventDefault(); move(1); }
       else if (k === "arrowleft") { e.preventDefault(); move(-1); }
@@ -568,7 +582,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, zoomed, phase, layout, move, sel, decide, undoLast, openViewer]);
+  }, [active, zoomed, phase, layout, move, sel, decide, rotate, undoLast, openViewer]);
 
   // Single and Compare always show a photo: fall back to the first one when nothing (or something filtered out) is selected.
   useEffect(() => {
@@ -883,7 +897,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
       <AnimatePresence>
         {zoomed && sel && (
           <Viewer key="viewer" photo={sel} decision={decision} index={selIndex} total={shown.length}
-            onClose={() => setZoomed(false)} onStep={move} onDecide={(st) => decide(sel.path, st)} photos={shown} decisions={decisions} onJump={select} from={from} active={active} />
+            onClose={() => setZoomed(false)} onStep={move} onDecide={(st) => decide(sel.path, st)} onRotate={(d) => rotate(sel.path, d)} photos={shown} decisions={decisions} onJump={select} from={from} active={active} />
         )}
       </AnimatePresence>
     </div>

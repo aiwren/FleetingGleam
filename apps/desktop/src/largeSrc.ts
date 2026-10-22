@@ -17,6 +17,11 @@ export function largeSrc(path: string, full = false): Promise<string | null> {
   return job;
 }
 
+/** 一张照片转过之后：它的大图换了文件，忘掉手里的，下次再要。 */
+export function forgetLarge(path: string) {
+  for (const full of [true, false]) { const k = keyOf(path, full); jobs.delete(k); done.delete(k); }
+}
+
 /** Warms the previews of the photos likely to be opened next. */
 export function prefetchLarge(paths: string[]) {
   paths.forEach((p) => { if (!jobs.has(keyOf(p, false))) void largeSrc(p); });

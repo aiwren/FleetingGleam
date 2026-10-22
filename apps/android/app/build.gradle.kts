@@ -142,6 +142,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-process:2.9.4")
     // 照片墙的缩略图：异步解码、内存与磁盘缓存、按显示尺寸缩小
     implementation("io.coil-kt.coil3:coil-compose:3.3.0")
+    // 隐私政策、使用条款在应用内的半屏浏览器（Chrome Custom Tabs 的局部高度）里打开
+    implementation("androidx.browser:browser:1.9.0")
     // 系统文件选择器选的文件夹（SAF）
     implementation("androidx.documentfile:documentfile:1.1.0")
     // 和核心库之间的 JSON（方法的参数与结果、事件载荷、projects.json）

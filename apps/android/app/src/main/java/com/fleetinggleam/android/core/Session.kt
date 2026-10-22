@@ -280,6 +280,14 @@ object Session {
         }
     }
 
+    /** 把一张照片顺时针转 90°：核心库换缩略图与显示尺寸（原文件不动），这里只替换手里那张。 */
+    suspend fun rotate(path: String) {
+        val cur = photos.value.firstOrNull { it.path == path } ?: return
+        val p: Photo = Core.get("set_rotation", args("path" to path, "deg" to (cur.rotation + 90) % 360))
+        Large.forget(path)
+        photos.value = photos.value.map { if (it.path == path) it.copy(thumb = p.thumb, width = p.width, height = p.height, rotation = p.rotation) else it }
+    }
+
     /** 改判一张（null = 去掉我的标记，交还系统的建议）。只有明确的保留 / 淘汰拿来学喜好；关了学习就什么都不记。 */
     fun decide(path: String, st: String?, fromUndo: Boolean = false) {
         val project = current() ?: return

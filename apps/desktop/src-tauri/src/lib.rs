@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use fg_core::analyze::Photo;
-use fg_core::engine::{self, BackupStatus, Engine, ExportResult, FileInfo, Hit, Listing, Machine, Probe, ScanArgs, SceneReq, SearchStatus, TargetArgs, TrashResult};
+use fg_core::engine::{self, BackupMeta, BackupStatus, Engine, ExportResult, FileInfo, Hit, Listing, Machine, Probe, ScanArgs, SceneReq, SearchStatus, TargetArgs, TrashResult};
 use fg_core::{decide, modelfiles, modelpacks, nas, prefs, taste};
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager};
@@ -300,6 +300,26 @@ async fn photo_detail(app: AppHandle, path: String, x: f64, y: f64, w: f64, h: f
     blocking(move || e.photo_detail(&path, x, y, w, h, out_w)).await?
 }
 
+/// 把一张照片转到 `deg`（顺时针，0 / 90 / 180 / 270）；返回转过的记录。
+#[tauri::command]
+async fn set_rotation(app: AppHandle, path: String, deg: i64) -> Result<Photo, String> {
+    let e = engine(&app);
+    blocking(move || e.set_rotation(&path, deg)).await?
+}
+
+/// 某个备份目标里最新一份的说明（哪台设备、什么时候）。
+#[tauri::command]
+async fn backup_peek(app: AppHandle, id: String) -> Result<Option<BackupMeta>, String> {
+    let e = engine(&app);
+    blocking(move || e.backup_peek(&id)).await?
+}
+
+/// 这台电脑的名字（系统偏好里的"电脑名称"），写进备份让另一端认得出来。
+fn device_name() -> String {
+    let run = |c: &str, args: &[&str]| std::process::Command::new(c).args(args).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).filter(|s| !s.is_empty());
+    run("scutil", &["--get", "ComputerName"]).or_else(|| run("hostname", &[])).unwrap_or_else(|| "Mac".to_string())
+}
+
 #[tauri::command]
 async fn motion_clip(app: AppHandle, path: String) -> Result<String, String> {
     let e = engine(&app);
@@ -506,6 +526,7 @@ pub fn run() {
             let paths = engine::Paths { data: data_dir(&handle), thumbs: thumbs_dir(&handle), models: models_dir(&handle), downloads: downloaded_models_dir(&handle) };
             let version = handle.package_info().version.to_string();
             let e = Engine::new(paths, Box::new(WebviewEvents(handle.clone())), &version);
+            e.set_device(&device_name());
             // 启用的 NAS 在后台连上；缩略图旁边的草稿文件（大图、局部、动态照片的视频）修剪到上限以内
             e.start_background();
             app.manage(e);
@@ -516,7 +537,7 @@ pub fn run() {
         .on_menu_event(|app, event| {
             let _ = app.emit("menu", event.id().0.clone());
         })
-        .invoke_handler(tauri::generate_handler![probe_folder, scan_project, scan_cancel, decide_photos, projects_load, projects_save, projects_quarantine, taste_export, taste_import, nas_list, nas_add, nas_remove, nas_connect, nas_disconnect, nas_ensure, nas_browse, nas_probe, nas_update, nas_set_enabled, backup_status, backup_save_target, backup_remove_target, backup_set_options, backup_now, backup_restore, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, trash_photos, reveal, preview_thumbs, photo_info, large_preview, motion_clip, hdrview::hdr_overlay_supported, hdrview::hdr_overlay_show, hdrview::hdr_overlay_move, hdrview::hdr_overlay_hide, hdrview::hdr_overlay_detail, hdrview::hdr_overlay_detail_hide, photo_detail, machine_info, search_status, search_index, search_photos, scene_text, packs_status, pack_size, pack_download, pack_cancel, pack_remove])
+        .invoke_handler(tauri::generate_handler![probe_folder, scan_project, scan_cancel, decide_photos, projects_load, projects_save, projects_quarantine, taste_export, taste_import, nas_list, nas_add, nas_remove, nas_connect, nas_disconnect, nas_ensure, nas_browse, nas_probe, nas_update, nas_set_enabled, backup_status, backup_save_target, backup_remove_target, backup_set_options, backup_now, backup_restore, backup_peek, set_rotation, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, trash_photos, reveal, preview_thumbs, photo_info, large_preview, motion_clip, hdrview::hdr_overlay_supported, hdrview::hdr_overlay_show, hdrview::hdr_overlay_move, hdrview::hdr_overlay_hide, hdrview::hdr_overlay_detail, hdrview::hdr_overlay_detail_hide, photo_detail, machine_info, search_status, search_index, search_photos, scene_text, packs_status, pack_size, pack_download, pack_cancel, pack_remove])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
