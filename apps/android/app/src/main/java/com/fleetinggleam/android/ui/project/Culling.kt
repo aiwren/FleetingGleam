@@ -102,6 +102,7 @@ import java.io.File
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Animatable
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -145,6 +146,11 @@ class CullState {
     /** 每张照片的格子的布局坐标：打开大图时照片从它的格子里飞出来。只记坐标对象，位置在用到时才算（滚动时每帧不算矩形）。 */
     val coords = HashMap<String, androidx.compose.ui.layout.LayoutCoordinates>()
     fun rect(path: String): Rect? = coords[path]?.takeIf { it.isAttached }?.boundsInRoot()
+    /** 状态条上每个页签的坐标：分析中照片"飞进"页签的动效要用。 */
+    val tabCoords = HashMap<String, androidx.compose.ui.layout.LayoutCoordinates>()
+    fun tabRect(id: String): Rect? = tabCoords[id]?.takeIf { it.isAttached }?.boundsInRoot()
+    /** 页签上的数字跳一下（有照片飞进来时加一）。 */
+    val tabBump = androidx.compose.runtime.mutableStateMapOf<String, Int>()
 
     fun pickLayout(v: ViewStyle) { layout = v; UiPrefs.put("layout", v.id) }
     fun bumpHint(n: Int = 1) { hintUses = if (n == 99) 99 else maxOf(hintUses, hintUses + 1); UiPrefs.put("hint.dock", hintUses) }
@@ -346,27 +352,9 @@ fun Culling(project: Project, cull: CullState, data: CullData, onOpenStyles: () 
                     val items = remember(data.shown) { data.shown.map { WallItem(it.path, it.ratio) } }
                     // 选中换了（不是点出来的：撤销、全局搜索、单张里换的）：把它滚到眼前
                     val reveal = cull.selected.takeIf { !cull.selectedByTap }
-                    val dragPx = with(LocalDensity.current) { 64.dp.toPx() }
                     androidx.compose.animation.AnimatedContent(
-                        targetState = cull.mode, label = "mode",
-                        transitionSpec = {
-                            val dir = if (MODES.indexOf(targetState) >= MODES.indexOf(initialState)) 1 else -1
-                            (androidx.compose.animation.slideInHorizontally(tween(260, easing = Motion.easeOut)) { it / 5 * dir } + fadeIn(tween(200)))
-                                .togetherWith(androidx.compose.animation.slideOutHorizontally(tween(200)) { -it / 5 * dir } + fadeOut(tween(140)))
-                                .using(androidx.compose.animation.SizeTransform(clip = false))
-                        },
-                        modifier = Modifier.fillMaxSize().pointerInput(Unit) {
-                            var dx = 0f
-                            detectHorizontalDragGestures(
-                                onDragStart = { dx = 0f },
-                                onDragEnd = {
-                                    if (kotlin.math.abs(dx) > dragPx) {
-                                        val n = MODES.indexOf(cull.mode) + if (dx < 0) 1 else -1
-                                        if (n in MODES.indices) { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); cull.mode = MODES[n] }
-                                    }
-                                },
-                            ) { ch, d -> dx += d; ch.consume() }
-                        },
+                        targetState = cull.mode, label = "mode", transitionSpec = modeTransition,
+                        modifier = Modifier.fillMaxSize().swipeModes(cull),
                     ) { _ ->
                         val state = rememberLazyListState()
                         Wall(items, if (cull.layout == ViewStyle.Grid) "grid" else "justified", state, PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = bottomPad),
@@ -419,7 +407,34 @@ private fun EmptyView(cull: CullState, data: CullData) {
 }
 
 /** 页签的顺序（左右滑动按它走）。 */
-private val MODES = listOf("all", "keep", "review", "reject")
+internal val MODES = listOf("all", "keep", "review", "reject")
+
+/** 页签切换：内容朝滑的方向滑入（分析中和分析完同一套）。 */
+internal val modeTransition: androidx.compose.animation.AnimatedContentTransitionScope<String>.() -> androidx.compose.animation.ContentTransform = {
+    val dir = if (MODES.indexOf(targetState) >= MODES.indexOf(initialState)) 1 else -1
+    (androidx.compose.animation.slideInHorizontally(tween(260, easing = Motion.easeOut)) { it / 5 * dir } + fadeIn(tween(200)))
+        .togetherWith(androidx.compose.animation.slideOutHorizontally(tween(200)) { -it / 5 * dir } + fadeOut(tween(140)))
+        .using(androidx.compose.animation.SizeTransform(clip = false))
+}
+
+/** 墙上左右滑切换页签（米家那种）。 */
+@Composable
+internal fun Modifier.swipeModes(cull: CullState): Modifier {
+    val haptic = LocalHapticFeedback.current
+    val dragPx = with(LocalDensity.current) { 64.dp.toPx() }
+    return pointerInput(Unit) {
+        var dx = 0f
+        detectHorizontalDragGestures(
+            onDragStart = { dx = 0f },
+            onDragEnd = {
+                if (kotlin.math.abs(dx) > dragPx) {
+                    val n = MODES.indexOf(cull.mode) + if (dx < 0) 1 else -1
+                    if (n in MODES.indices) { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); cull.mode = MODES[n] }
+                }
+            },
+        ) { ch, d -> dx += d; ch.consume() }
+    }
+}
 
 /**
  * 状态页签（米家首页那种文字页签）：全部 / 保留 / 待复查 / 淘汰，选中的黑、其余灰，下面一道会滑的短线；每个后面一个小数字是"现在点它墙上会有几张"。
@@ -443,13 +458,18 @@ fun StatusStrip(cull: CullState, data: CullData, padded: Boolean = true) {
                     MODES.forEachIndexed { i, id ->
                         val on = cull.mode == id
                         Row(
-                            Modifier.padding(end = 18.dp).onGloballyPositioned { spans[id] = it.positionInParent().x to it.size.width.toFloat() }
+                            Modifier.padding(end = 18.dp).onGloballyPositioned { spans[id] = it.positionInParent().x to it.size.width.toFloat(); cull.tabCoords[id] = it }
                                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { cull.mode = id }
                                 .padding(top = 8.dp, bottom = 12.dp),
                             verticalAlignment = Alignment.Bottom,
                         ) {
                             Text(t("state.$id"), style = Type.heading.copy(color = if (on) c.ink else c.ash, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal))
-                            Text("${data.status[id] ?: 0}", style = Type.monoSmall.copy(color = if (on) c.ink.copy(alpha = 0.6f) else c.ash.copy(alpha = 0.8f)), modifier = Modifier.padding(start = 4.dp, bottom = 2.dp))
+                            // 分析中有照片飞进来：数字弹一下
+                            val bumpN = cull.tabBump[id] ?: 0
+                            val bump = remember { Animatable(1f) }
+                            LaunchedEffect(bumpN) { if (bumpN > 0) { bump.snapTo(1.4f); bump.animateTo(1f, spring(dampingRatio = 0.45f, stiffness = 600f)) } }
+                            Text("${data.status[id] ?: 0}", style = Type.monoSmall.copy(color = if (on) c.ink.copy(alpha = 0.6f) else c.ash.copy(alpha = 0.8f)),
+                                modifier = Modifier.padding(start = 4.dp, bottom = 2.dp).graphicsLayer { scaleX = bump.value; scaleY = bump.value; transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 1f) })
                         }
                     }
                 }

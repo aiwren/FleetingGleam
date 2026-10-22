@@ -87,6 +87,8 @@ data class Decision(val state: String, val manual: Boolean = false, val reasons:
 @Serializable data class ProbeFile(val path: String, val width: Int, val height: Int, val cached: Boolean)
 @Serializable data class Probe(val files: List<ProbeFile> = emptyList(), val bytes: Long = 0, val uncached: Int = 0)
 @Serializable data class Progress(val done: Int = 0, val total: Int = 0)
+/** "scan-decide" 里的一条：分析中这张照片眼下的判定。 */
+@Serializable data class Judged(val path: String, val decision: Decision)
 
 /** 分析中一张照片走到哪一步（"scan-stage" 事件）。 */
 @Serializable data class StageEvent(val path: String, val stage: String, val pct: Int = 0, val thumb: String? = null, val width: Int? = null, val height: Int? = null)

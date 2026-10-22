@@ -135,6 +135,7 @@ pub fn measure_eyes(path: &Path, cache_dir: &Path, vision: &dyn SystemVision, me
     let ratio = v.eyes.iter().cloned().reduce(f32::min).unwrap_or(1.0).min(1.0);
     match method {
         EyeMethod::Vision => Some((ratio, "vision")),
+        EyeMethod::Mediapipe if v.eyes_mediapipe => Some((ratio, "mediapipe")),
         EyeMethod::Mediapipe => {
             let img = image::open(&copy).ok()?;
             // the value's tag says which scale it is on: the learned model's, or (when it was not sure) Vision's ratio
@@ -207,6 +208,8 @@ pub fn analyze(
     // fallback whenever a face is there but the learned model is not (not downloaded, or not confident about that face).
     // The tag records which scale the value is on, because the two are judged against different lines.
     let (eyes_open, eye_method_used) = match (eye_method, &sys) {
+        // 人脸流水线（Android）已经按 MediaPipe 量表量过了：直接用，不再对每张脸做第二遍网格
+        (EyeMethod::Mediapipe, Some(s)) if s.eyes_mediapipe => (Some(s.eyes.iter().cloned().reduce(f32::min).unwrap_or(1.0)), Some("mediapipe")),
         (EyeMethod::Mediapipe, Some(s)) => match mp.and_then(|m| m.openness(&work, &s.eye_boxes)) {
             Some(e) => (Some(e), Some("mediapipe")),
             None => (Some(s.eyes.iter().cloned().reduce(f32::min).unwrap_or(1.0)), Some(MEDIAPIPE_FALLBACK)),

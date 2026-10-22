@@ -151,17 +151,19 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   // Live scan data lives in refs and is flushed once per frame, so thousands of events stay cheap.
   const results = useRef(new Map<string, Photo>());
   const stages = useRef(new Map<string, StageInfo>());
+  /** 边分析边判：引擎隔一会儿发来的判定（分析完换成正式的 decisions）。 */
+  const live = useRef(new Map<string, Decision>());
   const lastStage = useRef<{ path: string; stage: string } | null>(null);
   const startedAt = useRef(0);
   const raf = useRef(0);
   const token = useRef(0);
-  const [, setTick] = useState(0);
+  const [tick, setTick] = useState(0);
   const flush = useCallback(() => {
     if (!raf.current) raf.current = requestAnimationFrame(() => { raf.current = 0; setTick((n) => n + 1); });
   }, []);
 
   const runScan = useCallback(async (proj: Project, total: number, quiet: boolean, tok: number, force = false) => {
-    results.current.clear(); stages.current.clear(); lastStage.current = null;
+    results.current.clear(); stages.current.clear(); live.current.clear(); lastStage.current = null;
     startedAt.current = performance.now();
     setProgress({ done: 0, total });
     setPhase(quiet ? "loading" : "scanning");
@@ -181,6 +183,12 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
         stages.current.delete(e.payload.path);
         flush();
       }),
+      // 边分析边判：只有判定变了的那些会发来
+      listen<{ path: string; decision: Decision }[]>("scan-decide", (e) => {
+        if (tok !== token.current) return;
+        for (const j of e.payload) live.current.set(j.path, j.decision);
+        flush();
+      }),
       // the photos that were already analysed arrive in batches
       listen<Photo[]>("scan-photos", (e) => {
         if (tok !== token.current) return;
@@ -189,7 +197,9 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
       }),
     ]);
     try {
-      const res = await invoke<Photo[]>("scan_project", { key: proj.id, dirs: proj.folders, compute: "auto", quality: currentTier(), style: proj.style, learn: getSettings().learn && proj.learn !== false, quiet, force, eyeMethod: eyeMethodNow() });
+      // 边分析边判用和分析完一样的参数
+      const liveArgs = quiet ? null : { keep_ratio: proj.keepCap ?? 1, pick_mode: proj.pickMode ?? "diverse", one_per_group: proj.onePerGroup ?? false, overrides: proj.overrides ?? {} };
+      const res = await invoke<Photo[]>("scan_project", { key: proj.id, dirs: proj.folders, compute: "auto", quality: currentTier(), style: proj.style, learn: getSettings().learn && proj.learn !== false, quiet, force, eyeMethod: eyeMethodNow(), live: liveArgs });
       if (tok !== token.current) return;
       setPhotos(res);
       setPhase("done");
@@ -306,6 +316,14 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     decisions.forEach((d) => { c[d.state]++; });
     return c;
   }, [decisions, photos.length]);
+  // 分析中横幅上的保留 / 待复查 / 淘汰数（跟着每帧的 tick 走）
+  const liveCounts = useMemo(() => {
+    if (phase !== "scanning" || live.current.size === 0) return null;
+    const c = { keep: 0, review: 0, reject: 0 };
+    live.current.forEach((d) => { c[d.state]++; });
+    return c;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, tick]);
 
   // Scenes are the same loose, look-alike clusters the backend already groups for scene-diverse picks (see decide.rs);
   // this just surfaces them as a filter, in the order they first appear, each with its highest-scoring photo as the cover.
@@ -718,7 +736,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
                   <div className="banner-text">
                     <div className="banner-line">
                       <b>{t("cull.analyzing")}</b>
-                      <span className="mono ash banner-count"><Ticker value={progress.done} /> / {progress.total}{eta ? ` · ${t("cull.eta", { s: eta })}` : ""}</span>
+                      <span className="mono ash banner-count"><Ticker value={progress.done} /> / {progress.total}{eta ? ` · ${t("cull.eta", { s: eta })}` : ""}{liveCounts ? ` · ${t("cull.doneBody", liveCounts)}` : ""}</span>
                       <button type="button" className="btn banner-stop" onClick={() => { invoke("scan_cancel").catch(() => { /* not in Tauri */ }); }}>{t("cull.stop")}</button>
                     </div>
                     <span className="mono ash banner-now">
@@ -795,8 +813,9 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
           {showWall && !(phase === "done" && sceneView) && !(phase === "done" && (layout === "single" || layout === "compare")) && (
             <Wall ref={wallRef} scrollRef={scrollRef} widthDelta={wallDelta} items={wallItems} selected={phase === "done" ? selected : null} layout={layout === "grid" ? "grid" : "justified"} render={(i, box) => {
               const it = items[i];
-              const d = it.photo ? decisions.get(it.path) : undefined;
-              const state = phase !== "done" || !it.photo ? "" : d?.state ?? "";
+              // 分析中：照片一出结果就按眼下的判定盖章（后来的照片会改变分组和排名，分析完换成正式的）
+              const d = it.photo ? (phase === "scanning" ? live.current.get(it.path) : decisions.get(it.path)) : undefined;
+              const state = !it.photo ? "" : d?.state ?? "";
               return (
                 <Tile key={it.path} path={it.path} ratio={it.ratio} photo={it.photo} stage={stages.current.get(it.path)}
                   state={state} reveal={celebrate && phase === "done"} dim={state === "reject" && mode === "all"}

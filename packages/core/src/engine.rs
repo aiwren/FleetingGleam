@@ -120,6 +120,80 @@ pub struct ScanArgs {
     /// "vision" / "mediapipe"。
     #[serde(default)]
     pub eye_method: Option<String>,
+    /// 给了就边分析边判：每隔一会儿对已经分析出的照片做一次分组 + 取舍，变化的那些发 "scan-decide"（见 `Judged`）。
+    /// 界面上照片一出结果就落到保留 / 淘汰里，不用等到最后。
+    #[serde(default)]
+    pub live: Option<LiveArgs>,
+}
+
+/// 边分析边判要的几样（和 `decide_photos` 的参数一样）。
+#[derive(Deserialize, Clone, Default, Debug)]
+pub struct LiveArgs {
+    pub keep_ratio: f32,
+    #[serde(default)]
+    pub pick_mode: Option<String>,
+    #[serde(default)]
+    pub one_per_group: bool,
+    #[serde(default)]
+    pub overrides: HashMap<String, String>,
+}
+
+/// "scan-decide" 事件里的一条：这张照片眼下的判定（分析完的正式判定由 `decide_photos` 给，可能不同——后来的照片会改变分组和排名）。
+#[derive(Serialize, Clone)]
+pub struct Judged {
+    pub path: String,
+    pub decision: decide::Decision,
+}
+
+/// 边分析边判的工作台：分析线程把出结果的照片放进来，一条线程隔一会儿拿去分组、取舍。
+struct Judge {
+    photos: Mutex<Vec<Photo>>,
+    wake: std::sync::Condvar,
+    dirty: AtomicBool,
+    /// 分析完了：把还没判的最后一批判掉再收工。
+    finish: AtomicBool,
+    /// 分析取消或出错：立刻收工，什么都不再发。
+    stop: AtomicBool,
+}
+
+impl Judge {
+    fn push(&self, p: &Photo) {
+        self.photos.lock().unwrap_or_else(|e| e.into_inner()).push(p.clone());
+        self.dirty.store(true, Ordering::Relaxed);
+        self.wake.notify_one();
+    }
+}
+
+/// 分析一结束就叫判定线程收工：正常结束走 `finish`（判完最后一批、等它发完），取消或出错（`?` 提前返回也算）直接 `stop`。
+struct JudgeGuard(Arc<Judge>, Option<std::thread::JoinHandle<()>>);
+
+impl JudgeGuard {
+    fn finish(mut self) {
+        self.0.finish.store(true, Ordering::Relaxed);
+        self.0.wake.notify_all();
+        if let Some(h) = self.1.take() {
+            let _ = h.join();
+        }
+    }
+}
+
+impl Drop for JudgeGuard {
+    fn drop(&mut self) {
+        self.0.stop.store(true, Ordering::Relaxed);
+        self.0.wake.notify_all();
+    }
+}
+
+/// 分析用的线程数：核数（`FG_SCAN_THREADS` 可改，调性能用）。每条线程分析一张照片时有一大半时间在等别人——Mac 等 Vision 边车和
+/// Metal 上的 CLIP，手机等 NNAPI 和模型会话池——按说多开线程能把解码填进等待里，可量过（M1 Max，60 张 12 MP 与 400 张 1536px）：
+/// 一倍半的线程一点不快，两倍反而慢一成（内核态时间涨，像是大块内存的缺页在排队），所以还是核数。
+fn scan_threads() -> usize {
+    std::env::var("FG_SCAN_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).max(2))
+}
+
+/// Apple Vision 边车的进程数：边车一次只答一张，两个进程在十核的机器上拖了后腿；核数的三分之一，至少两个、最多四个。
+fn vision_workers() -> usize {
+    std::env::var("FG_VISION_WORKERS").ok().and_then(|v| v.parse().ok()).unwrap_or_else(|| (std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4) / 3).clamp(2, 4))
 }
 
 /// 设置页看到的一个备份目标；从不带 Secret。
@@ -571,11 +645,19 @@ impl Engine {
             }
         }
 
+        let prefs = if a.learn { Some(self.prefs.lock().unwrap_or_else(|e| e.into_inner()).get(a.style.as_deref()).prefs.clone()) } else { None };
         let mut fresh: Vec<Photo> = Vec::new();
         if !jobs.is_empty() {
+            // 边分析边判：已经认识的照片先放进去，分析线程每出一张放一张；判定线程隔一会儿发一次 "scan-decide"
+            let judge = a.live.as_ref().filter(|_| !quiet).map(|live| {
+                let j = Arc::new(Judge { photos: Mutex::new(hits.clone()), wake: std::sync::Condvar::new(), dirty: AtomicBool::new(true), finish: AtomicBool::new(false), stop: AtomicBool::new(false) });
+                let (e, j2, live, prefs) = (self.clone(), j.clone(), live.clone(), prefs.clone());
+                let h = std::thread::spawn(move || e.judge_loop(&j2, &live, prefs.as_ref().filter(|p| p.active())));
+                JudgeGuard(j, Some(h))
+            });
             // Models are only loaded when there is real work: re-opening a cached project is instant.
             let scorer = ClipScorer::load(&model_dir, !cpu_only, want).map_err(|e| eprintln!("AI disabled: {e}")).ok();
-            let vision = self.start_vision(2, cpu_only);
+            let vision = self.start_vision(vision_workers(), cpu_only);
             if !quiet {
                 self.emit(
                     "scan-info",
@@ -601,7 +683,9 @@ impl Engine {
                     c.save();
                 });
             };
-            fresh = jobs
+            // 自己的线程池（比核数多一半，见 `scan_threads`）；建不出来就用公共的
+            let pool = rayon::ThreadPoolBuilder::new().num_threads(scan_threads()).build().ok();
+            let work = || jobs
                 .par_iter()
                 .filter_map(|(p, _, _)| {
                     if cancelled() {
@@ -619,6 +703,9 @@ impl Engine {
                     if !quiet {
                         if let Ok(photo) = &r {
                             self.emit("scan-photo", photo);
+                            if let Some(j) = &judge {
+                                j.0.push(photo);
+                            }
                         }
                         self.emit("scan-progress", &Progress { done: d, total });
                     }
@@ -642,9 +729,16 @@ impl Engine {
                     }
                     r.map_err(|e| eprintln!("skip: {e}")).ok()
                 })
-                .collect();
+                .collect::<Vec<Photo>>();
+            fresh = match &pool {
+                Some(pool) => pool.install(work),
+                None => work(),
+            };
             let rest = std::mem::take(&mut pending.lock().unwrap_or_else(|e| e.into_inner()).0);
             save_batch(&rest);
+            if let Some(j) = judge {
+                if cancelled() { drop(j) } else { j.finish() }
+            }
         }
         if cancelled() {
             return Err("cancelled".to_string());
@@ -654,7 +748,7 @@ impl Engine {
         // method than the one now selected, gets it (re)measured from its saved analysis copy.
         let mut hits = hits;
         if hits.iter().any(|p| p.face_count > 0 && !analyze::eyes_current(p.eye_method.as_deref(), eye_method)) {
-            if let Some(v) = self.start_vision(2, cpu_only) {
+            if let Some(v) = self.start_vision(vision_workers(), cpu_only) {
                 let measured: Vec<(usize, (f32, &'static str))> = hits
                     .par_iter()
                     .enumerate()
@@ -684,7 +778,7 @@ impl Engine {
         if let (Some(f), Ok(pool)) = (fe.as_deref(), rayon::ThreadPoolBuilder::new().num_threads(2).build()) {
             let total = hits.iter().filter(|p| !p.faces_done).count();
             if total > 0 {
-                if let Some(v) = self.start_vision(2, cpu_only) {
+                if let Some(v) = self.start_vision(vision_workers(), cpu_only) {
                     let counter = AtomicUsize::new(0);
                     let found: Vec<(usize, Vec<[f32; 4]>, Vec<Vec<f32>>)> = pool.install(|| {
                         hits.par_iter()
@@ -763,7 +857,6 @@ impl Engine {
                 }
             }
         });
-        let prefs = if a.learn { Some(self.prefs.lock().unwrap_or_else(|e| e.into_inner()).get(a.style.as_deref()).prefs.clone()) } else { None };
         analyze::group_and_score(&mut photos, prefs.as_ref().filter(|p| p.active()));
         {
             // grouping took a while; a newer scan of this project may have written meanwhile, and this one must not replace it
@@ -779,6 +872,49 @@ impl Engine {
             }
         }
         Ok(photos)
+    }
+
+    /// 边分析边判的那条线程：有新照片就攒一会儿（一批一起判），拿当时已出结果的全部照片分组、打分、取舍，只把判定变了的发出去。
+    /// 一轮花的时间越长，下一轮等得越久（三倍，至少 0.4 秒、至多 3 秒），几千张的项目也不会把一个核耗在反复判定上。
+    fn judge_loop(&self, j: &Judge, live: &LiveArgs, prefs: Option<&prefs::Prefs>) {
+        let mut last: HashMap<String, decide::State> = HashMap::new();
+        let mut pause = std::time::Duration::from_millis(400);
+        loop {
+            {
+                let mut g = j.photos.lock().unwrap_or_else(|e| e.into_inner());
+                while !j.dirty.load(Ordering::Relaxed) && !j.stop.load(Ordering::Relaxed) && !j.finish.load(Ordering::Relaxed) {
+                    g = j.wake.wait(g).unwrap_or_else(|e| e.into_inner());
+                }
+            }
+            if j.stop.load(Ordering::Relaxed) {
+                return;
+            }
+            let last_pass = j.finish.load(Ordering::Relaxed);
+            if !last_pass {
+                std::thread::sleep(pause);
+                if j.stop.load(Ordering::Relaxed) {
+                    return;
+                }
+            }
+            if !j.dirty.swap(false, Ordering::Relaxed) {
+                return;
+            }
+            let mut snap = j.photos.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            let t = std::time::Instant::now();
+            analyze::group_and_score(&mut snap, prefs);
+            let decided = decide::decide(&snap, live.keep_ratio, decide::PickMode::parse(live.pick_mode.as_deref()), live.one_per_group, &live.overrides);
+            let changed: Vec<Judged> = decided.into_iter().filter(|(p, d)| last.get(p) != Some(&d.state)).map(|(path, decision)| Judged { path, decision }).collect();
+            for c in &changed {
+                last.insert(c.path.clone(), c.decision.state.clone());
+            }
+            if !changed.is_empty() && !j.stop.load(Ordering::Relaxed) {
+                self.emit("scan-decide", &changed);
+            }
+            if last_pass {
+                return;
+            }
+            pause = (t.elapsed() * 3).clamp(std::time::Duration::from_millis(400), std::time::Duration::from_secs(3));
+        }
     }
 
     /// Stops every scan in progress (and any NAS sync of a probe): each ends at the next photo, and what it analysed by then is already
@@ -2078,6 +2214,27 @@ mod tests {
         let out = root.join("out");
         let r = e.export_photos(&paths, &out.to_string_lossy()).unwrap();
         assert_eq!((r.copied, r.skipped, r.remote), (2, 0, false));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 边分析边判：带 `live` 的分析在结束前就发过 "scan-decide"，每张照片都有过一个判定，而且每条的判定值合法。
+    #[test]
+    fn photos_are_judged_while_the_scan_runs() {
+        let (e, root, ev) = engine("live");
+        let dir = root.join("photos");
+        photos(&dir, 6);
+        let live = LiveArgs { keep_ratio: 1.0, ..Default::default() };
+        let out = e.scan_project(ScanArgs { key: "k".into(), dirs: vec![dir.to_string_lossy().into_owned()], live: Some(live), ..Default::default() }).unwrap();
+        assert_eq!(out.len(), 6);
+        let judged: Vec<serde_json::Value> = ev.0.lock().unwrap().iter().filter(|(n, _)| n == "scan-decide").flat_map(|(_, v)| v.as_array().cloned().unwrap_or_default()).collect();
+        assert!(!judged.is_empty(), "scan-decide was sent during the scan");
+        let paths: std::collections::HashSet<&str> = judged.iter().filter_map(|j| j["path"].as_str()).collect();
+        assert_eq!(paths.len(), 6, "every photo was judged at least once");
+        assert!(judged.iter().all(|j| matches!(j["decision"]["state"].as_str(), Some("keep" | "review" | "reject"))));
+        // 安静的分析不判
+        ev.0.lock().unwrap().clear();
+        e.scan_project(ScanArgs { key: "k".into(), dirs: vec![dir.to_string_lossy().into_owned()], quiet: true, force: true, live: Some(LiveArgs { keep_ratio: 1.0, ..Default::default() }), ..Default::default() }).unwrap();
+        assert!(!ev.0.lock().unwrap().iter().any(|(n, _)| n == "scan-decide"));
         let _ = std::fs::remove_dir_all(&root);
     }
 

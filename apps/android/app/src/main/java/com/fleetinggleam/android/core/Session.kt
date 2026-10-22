@@ -67,6 +67,10 @@ object Session {
     val tick = MutableStateFlow(0)
     val results = ConcurrentHashMap<String, Photo>()
     val stages = ConcurrentHashMap<String, StageInfo>()
+    /** 边分析边判：引擎隔一会儿发来的判定（后来的照片会改变分组和排名，所以会变；分析完换成正式的）。 */
+    val live = ConcurrentHashMap<String, Decision>()
+    /** 刚判出来或刚改判的那些（路径 → 状态）：界面上让它们"飞"进对应的页签。 */
+    val judged = kotlinx.coroutines.flow.MutableSharedFlow<List<Pair<String, String>>>(extraBufferCapacity = 32, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)
     @Volatile var lastStage: Pair<String, String>? = null; private set
     @Volatile var startedAt = 0L; private set
 
@@ -140,6 +144,14 @@ object Session {
             val p = runCatching { Fg.json.decodeFromString<Photo>(raw) }.getOrNull() ?: return@listen
             results[p.path] = p
             stages.remove(p.path)
+            flush()
+        }
+        // 边分析边判：只有判定变了的那些会发来
+        Core.listen("scan-decide") { raw ->
+            if (running.value == null) return@listen
+            val list = runCatching { Fg.json.decodeFromString(ListSerializer(Judged.serializer()), raw) }.getOrNull() ?: return@listen
+            for (j in list) live[j.path] = j.decision
+            judged.tryEmit(list.map { it.path to it.decision.state })
             flush()
         }
         // the photos that were already analysed arrive in batches
@@ -234,7 +246,7 @@ object Session {
     private suspend fun runScan(project: Project, total: Int, quiet: Boolean, tok: Int, force: Boolean = false, attach: Boolean = true) {
         if (quiet) phase.value = Phase.Loading
         else {
-            results.clear(); stages.clear(); lastStage = null
+            results.clear(); stages.clear(); live.clear(); lastStage = null
             startedAt = System.currentTimeMillis()
             progress.value = Progress(0, total)
             running.value = Running(project.id, project.name)
@@ -248,6 +260,8 @@ object Session {
             val res = Core.get<List<Photo>>("scan_project", args(
                 "key" to project.id, "dirs" to project.folders, "compute" to "auto", "quality" to Strategy.currentTier(), "style" to project.style,
                 "learn" to (Settings.value.learn && project.learn != false), "quiet" to quiet, "force" to force, "eye_method" to Strategy.eyeMethodNow(),
+                // 边分析边判：和分析完的取舍用同一套参数
+                "live" to if (quiet) null else mapOf("keep_ratio" to (project.keepCap ?: 1f), "pick_mode" to (project.pickMode ?: "diverse"), "one_per_group" to (project.onePerGroup ?: false), "overrides" to project.overrides),
             ))
             if (!quiet) finishRunning()
             if (!mine()) {

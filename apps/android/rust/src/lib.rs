@@ -213,6 +213,8 @@ fn dispatch(e: &Arc<Engine>, method: &str, a: &Value) -> Result<Value, String> {
             style: os(a, "style"),
             force: b(a, "force"),
             eye_method: os(a, "eye_method"),
+            // 边分析边判：有 "live" 就把它整个交给引擎
+            live: a.get("live").filter(|v| !v.is_null()).cloned().map(serde_json::from_value).transpose().map_err(|e| e.to_string())?,
         })?),
         // 带 key 只停那个项目的分析（手机上后台分析的项目不受打开别的项目影响）；不带就全停
         "scan_cancel" => {
@@ -347,9 +349,11 @@ mod tests {
         let dirs = json!({ "dirs": [p("photos")] }).to_string();
         let probe: Value = serde_json::from_str(&e.call("probe_folder".into(), dirs.clone()).unwrap()).unwrap();
         assert_eq!(probe["uncached"], 3);
-        let photos: Value = serde_json::from_str(&e.call("scan_project".into(), json!({ "key": "k", "dirs": [p("photos")], "eye_method": "mediapipe" }).to_string()).unwrap()).unwrap();
+        let photos: Value = serde_json::from_str(&e.call("scan_project".into(), json!({ "key": "k", "dirs": [p("photos")], "eye_method": "mediapipe", "live": { "keep_ratio": 1.0 } }).to_string()).unwrap()).unwrap();
         assert_eq!(photos.as_array().unwrap().len(), 3);
         assert!(sink.0.lock().unwrap().iter().any(|n| n == "scan-photo"));
+        // 边分析边判：分析中就发过判定
+        assert!(sink.0.lock().unwrap().iter().any(|n| n == "scan-decide"));
         let d: Value = serde_json::from_str(&e.call("decide_photos".into(), json!({ "key": "k", "keep_ratio": 1.0 }).to_string()).unwrap()).unwrap();
         assert_eq!(d.as_object().unwrap().len(), 3);
         // 本机照片的回收交给界面

@@ -6,11 +6,10 @@
 //! UltraFace 是现成的 ONNX（MIT），先用它，以后换检测器只动这个文件和清单。
 
 use std::path::Path;
-use std::sync::Mutex;
+use crate::onnx::Pool;
 
 use image::imageops::FilterType;
 use image::DynamicImage;
-use ort::session::Session;
 use ort::value::Tensor;
 
 use crate::faces::FaceMark;
@@ -39,12 +38,12 @@ pub fn available(dir: &Path) -> bool {
 
 /// 人脸检测器：UltraFace。输出已经解码成相对坐标的角点框。
 pub struct FaceDetector {
-    session: Mutex<Session>,
+    session: Pool,
 }
 
 impl FaceDetector {
     pub fn load(dir: &Path) -> Result<Self, String> {
-        Ok(Self { session: Mutex::new(crate::onnx::load(&dir.join(DETECTOR_FILE), None)?) })
+        Ok(Self { session: Pool::load(&dir.join(DETECTOR_FILE), crate::onnx::small_copies(), Some(2))? })
     }
 
     /// 脸框 `[x, y, w, h]`，相对 `img` 归一化、左上为原点，分数高的在前；每个框带它的分数。
@@ -58,13 +57,12 @@ impl FaceDetector {
             }
         }
         let Ok(input) = Tensor::from_array(([1usize, 3, DET_H as usize, DET_W as usize], data)) else { return Vec::new() };
-        let (scores, boxes) = {
-            let Ok(mut s) = self.session.lock() else { return Vec::new() };
-            let Ok(out) = s.run(ort::inputs![input]) else { return Vec::new() };
-            let Ok((_, scores)) = out[0].try_extract_tensor::<f32>() else { return Vec::new() };
-            let Ok((_, boxes)) = out[1].try_extract_tensor::<f32>() else { return Vec::new() };
-            (scores.to_vec(), boxes.to_vec())
-        };
+        let Some((scores, boxes)) = self.session.with(|s| {
+            let out = s.run(ort::inputs![input]).ok()?;
+            let (_, scores) = out[0].try_extract_tensor::<f32>().ok()?;
+            let (_, boxes) = out[1].try_extract_tensor::<f32>().ok()?;
+            Some((scores.to_vec(), boxes.to_vec()))
+        }) else { return Vec::new() };
         let n = scores.len() / 2;
         let mut cands: Vec<([f32; 4], f32)> = (0..n)
             .filter(|&i| scores[i * 2 + 1] >= SCORE_MIN && boxes.len() >= (i + 1) * 4)
@@ -112,7 +110,7 @@ impl FacePipeline {
     }
 
     pub fn analyze_image(&self, img: &DynamicImage) -> VisionOut {
-        let mut out = VisionOut { aesthetic: None, utility: false, faces: Vec::new(), eyes: Vec::new(), eye_boxes: Vec::new(), face_marks: Vec::new() };
+        let mut out = VisionOut { aesthetic: None, utility: false, faces: Vec::new(), eyes: Vec::new(), eye_boxes: Vec::new(), face_marks: Vec::new(), eyes_mediapipe: true };
         for (bbox, _score) in self.detector.detect(img) {
             let bbox = [bbox[0] + bbox[2] * (1.0 - BOX_TIGHTEN) / 2.0, bbox[1] + bbox[3] * (1.0 - BOX_TIGHTEN) / 2.0, bbox[2] * BOX_TIGHTEN, bbox[3] * BOX_TIGHTEN];
             // 网格模型不认的框（侧得太厉害、被挡住）不算脸：和 Vision 一样，只报有把握的

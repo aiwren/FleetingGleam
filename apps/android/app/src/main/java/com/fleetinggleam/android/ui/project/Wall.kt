@@ -295,6 +295,8 @@ fun Tile(
     interactive: Boolean,
     /** 选中时在格子上放保留 / 淘汰的小坞（手机的照片墙把这些放在底栏，不放坞）。 */
     dock: Boolean = true,
+    /** 从"还没判"到有判定也算一次变化（分析中第一次判出来：星星弹出来、淘汰收一下光圈）；分析完的墙上不算，免得整面墙一起动。 */
+    stamp: Boolean = false,
     onSelect: (String) -> Unit,
     onOpen: (String) -> Unit,
     onDecide: (String, String?) -> Unit,
@@ -306,7 +308,7 @@ fun Tile(
     var changedTo by remember(path) { mutableStateOf<String?>(null) }
     var changeN by remember(path) { mutableIntStateOf(0) }
     LaunchedEffect(state) {
-        if (prev.isNotEmpty() && state.isNotEmpty() && prev != state) { changedTo = state; changeN++ }
+        if ((prev.isNotEmpty() || stamp) && state.isNotEmpty() && prev != state) { changedTo = state; changeN++ }
         prev = state
     }
     val recede by animateFloatAsState(if (state == "reject" && dim) 1f else 0f, tween(Motion.SLOW, easing = Motion.easeOut), label = "recede")

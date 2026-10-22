@@ -95,9 +95,9 @@ async fn probe_folder(app: AppHandle, dirs: Vec<String>, compute: Option<String>
 }
 
 #[tauri::command]
-async fn scan_project(app: AppHandle, key: String, dirs: Vec<String>, compute: Option<String>, quality: Option<String>, learn: bool, quiet: bool, style: Option<String>, force: Option<bool>, eye_method: Option<String>) -> Result<Vec<Photo>, String> {
+async fn scan_project(app: AppHandle, key: String, dirs: Vec<String>, compute: Option<String>, quality: Option<String>, learn: bool, quiet: bool, style: Option<String>, force: Option<bool>, eye_method: Option<String>, live: Option<fg_core::engine::LiveArgs>) -> Result<Vec<Photo>, String> {
     let e = engine(&app);
-    let args = ScanArgs { key, dirs, compute, quality, learn, quiet, style, force: force.unwrap_or(false), eye_method };
+    let args = ScanArgs { key, dirs, compute, quality, learn, quiet, style, force: force.unwrap_or(false), eye_method, live };
     blocking(move || e.scan_project(args)).await?
 }
 

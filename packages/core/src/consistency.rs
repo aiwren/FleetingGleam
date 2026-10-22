@@ -113,7 +113,7 @@ pub fn run(photos: &Path, work: &Path, models: &Path) -> Result<Vec<Row>, String
     let dir = photos.to_string_lossy().into_owned();
     let list = engine.scan_project(ScanArgs {
         key: "consistency".into(), dirs: vec![dir], compute: Some("cpu".into()), quality: Some("fast".into()),
-        learn: false, quiet: true, style: None, force: true, eye_method: Some("mediapipe".into()),
+        learn: false, quiet: true, style: None, force: true, eye_method: Some("mediapipe".into()), live: None,
     })?;
     let decisions = engine.decide_photos("consistency", 1.0, None, false, &HashMap::new())?;
     let stem = |p: &str| Path::new(p).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();

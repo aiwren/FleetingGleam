@@ -1,7 +1,7 @@
 use crate::modelfiles;
 use crate::platform::GpuEncoder;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 
 use image::imageops::FilterType;
@@ -126,37 +126,20 @@ impl SiglipAesthetic {
     }
 }
 
-/// Several copies of one ONNX session, used by whichever caller finds one free. One run on the CPU provider does not keep all the cores busy
-/// (the work is a chain of matrix products with waits in between), so several runs at once get more done than one after the other: the scan
-/// feeds it from many threads.
-struct Pool {
-    sessions: Vec<Mutex<Session>>,
-    next: AtomicUsize,
-}
-
-impl Pool {
-    fn run<R>(&self, f: impl FnOnce(&mut Session) -> Result<R, String>) -> Result<R, String> {
-        let n = self.sessions.len();
-        let start = self.next.fetch_add(1, Ordering::Relaxed);
-        let mut f = Some(f);
-        for i in 0..n {
-            if let Ok(mut g) = self.sessions[(start + i) % n].try_lock() {
-                return (f.take().expect("used once"))(&mut g);
-            }
-        }
-        // all busy: wait for one
-        let mut g = self.sessions[start % n].lock().map_err(|e| e.to_string())?;
-        (f.take().expect("used once"))(&mut g)
-    }
-}
+use crate::onnx::Pool;
 
 pub use crate::platform::physical_memory;
 
 /// How many copies of the model are worth their memory. Measured: every copy of the small model holds about 600 MB (the float16 weights are
 /// widened for the CPU) and a second one makes the encoder about 1.4x quicker, a third hardly more; the large model takes more than a
 /// gigabyte a copy for about 10% (it already keeps all the cores busy), so it gets one.
-fn sessions_for(model: &str) -> usize {
-    if model == "ViT-L/14" { 1 } else if physical_memory() >> 30 >= 16 { 2 } else { 1 }
+/// int8 的那份（手机的 CPU 路径）权重只有 90 MB 左右，6 GB 内存的手机也留两份：一份会话在大小核混着的手机上更占不满。
+fn sessions_for(model: &str, file: &str) -> usize {
+    if let Some(n) = std::env::var("FG_CLIP_COPIES").ok().and_then(|v| v.parse().ok()) {
+        return n;
+    }
+    let gb = physical_memory() >> 30;
+    if model == "ViT-L/14" { 1 } else if file == INT8_FILE { if gb >= 6 { 2 } else { 1 } } else if gb >= 16 { 2 } else { 1 }
 }
 
 /// How the CPU runs a CLIP model (ONNX Runtime): what to load and how many copies of it.
@@ -179,7 +162,7 @@ impl CpuSpec {
             hs.into_iter().map(|h| h.join().unwrap_or_else(|_| Err("loading panicked".into()))).collect()
         });
         let sessions = sessions.into_iter().collect::<Result<Vec<_>, _>>()?;
-        Ok(Pool { sessions: sessions.into_iter().map(Mutex::new).collect(), next: AtomicUsize::new(0) })
+        Ok(Pool::new(sessions))
     }
 
     fn build(&self, copies: usize) -> Result<Pool, String> {
@@ -307,7 +290,7 @@ impl ClipScorer {
                 if accel && modelfiles::has_model(model_dir, B32_FP16_FILE) { (B32_FP16_FILE, B32_HEAD, "cpu-fp16", "ViT-B/32") } else { (INT8_FILE, B32_HEAD, "cpu-int8", "ViT-B/32") }
             }
         };
-        let n = copies.unwrap_or_else(|| sessions_for(model)).max(1);
+        let n = copies.unwrap_or_else(|| sessions_for(model, file)).max(1);
         // the cores are shared out between the copies
         let threads = (std::thread::available_parallelism().map(|c| c.get()).unwrap_or(4) / n).max(2);
         let spec = CpuSpec { dir: model_dir.to_path_buf(), file, copies: n, threads };

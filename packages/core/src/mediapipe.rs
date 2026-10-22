@@ -8,11 +8,10 @@
 //! trusted: its blink score would be noise, not signal.
 
 use std::path::Path;
-use std::sync::Mutex;
+use crate::onnx::Pool;
 
 use image::imageops::FilterType;
 use image::DynamicImage;
-use ort::session::Session;
 use ort::value::Tensor;
 
 use crate::modelfiles;
@@ -47,14 +46,16 @@ pub fn available(dir: &Path) -> bool {
 }
 
 pub struct MediapipeEyes {
-    landmarks: Mutex<Session>,
-    blendshapes: Mutex<Session>,
+    landmarks: Pool,
+    blendshapes: Pool,
 }
 
 impl MediapipeEyes {
+    /// 两个模型各几份会话（`onnx::small_copies`），分析线程不用排队。
     pub fn load(dir: &Path) -> Result<Self, String> {
-        let build = |file: &str| crate::onnx::load(&dir.join(file), None);
-        Ok(Self { landmarks: Mutex::new(build(LANDMARKS_FILE)?), blendshapes: Mutex::new(build(BLENDSHAPES_FILE)?) })
+        let n = crate::onnx::small_copies();
+        let build = |file: &str| Pool::load(&dir.join(file), n, Some(2));
+        Ok(Self { landmarks: build(LANDMARKS_FILE)?, blendshapes: build(BLENDSHAPES_FILE)? })
     }
 
     /// Openness of the most closed eye among the given faces (1.0 open .. 0.0 closed), matching the scale
@@ -91,13 +92,12 @@ impl MediapipeEyes {
             }
         }
         let input = Tensor::from_array(([1usize, CROP as usize, CROP as usize, 3usize], data)).ok()?;
-        let (local, confidence) = {
-            let mut s = self.landmarks.lock().ok()?;
+        let (local, confidence) = self.landmarks.with(|s| {
             let out = s.run(ort::inputs!["input_12" => input]).ok()?;
             let (_, points) = out["Identity"].try_extract_tensor::<f32>().ok()?;
             let (_, flag) = out["Identity_1"].try_extract_tensor::<f32>().ok()?;
-            (points.to_vec(), *flag.first()?)
-        };
+            Some((points.to_vec(), *flag.first()?))
+        })?;
         // A raw logit: the model's own confidence there is a well-posed face here, before the classifier is asked anything.
         let confidence = sigmoid(confidence);
         if confidence < CONFIDENCE_MIN || local.len() < 478 * 3 {
@@ -116,10 +116,11 @@ impl MediapipeEyes {
             points[i * 2 + 1] = mesh.points[idx][1] * mesh.frame.1;
         }
         let input = Tensor::from_array(([1usize, 146usize, 2usize], points)).ok()?;
-        let mut s = self.blendshapes.lock().ok()?;
-        let out = s.run(ort::inputs!["serving_default_input_points:0" => input]).ok()?;
-        let (_, scores) = out["StatefulPartitionedCall:0"].try_extract_tensor::<f32>().ok()?;
-        Some(scores[BLINK_LEFT].max(scores[BLINK_RIGHT]))
+        self.blendshapes.with(|s| {
+            let out = s.run(ort::inputs!["serving_default_input_points:0" => input]).ok()?;
+            let (_, scores) = out["StatefulPartitionedCall:0"].try_extract_tensor::<f32>().ok()?;
+            Some(scores[BLINK_LEFT].max(scores[BLINK_RIGHT]))
+        })
     }
 }
 

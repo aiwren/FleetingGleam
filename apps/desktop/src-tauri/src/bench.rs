@@ -99,6 +99,11 @@ mod tests {
         let n: usize = std::env::var("FG_N").ok().and_then(|v| v.parse().ok()).unwrap_or(16);
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let model_dir = dev_models_dir();
+        // 和应用一样：CLIP 走 Metal（FG_GPU=0 时只用 CPU），解码用 ImageIO 边车
+        if std::env::var("FG_GPU").map_or(true, |v| v != "0") {
+            fg_core::platform::set_gpu_clip(Box::new(crate::clipgpu::Factory));
+        }
+        crate::imageio_macos::Helper::register(root.join("bin/fg-image"));
         let quality = scorer::Quality::parse(std::env::var("FG_QUALITY").ok().as_deref());
         let copies = std::env::var("FG_COPIES").ok().and_then(|v| v.parse().ok());
         let scorer = scorer::ClipScorer::load_with(&model_dir, std::env::var("FG_ACCEL").map_or(true, |v| v != "0"), quality, copies).expect("models/");
@@ -293,6 +298,53 @@ mod tests {
         }
     }
 
+
+    /// 整条分析流水线在一个真实文件夹上的吞吐（调并行度用）：`FG_LIBRARY=<文件夹> [FG_N=64] [FG_QUALITY=fast] [FG_VISION_WORKERS=n]`，
+    /// 睁眼用 MediaPipe、人物识别开着，所有模型都参与。`cargo test -p fleetinggleam --lib whole_scan_on_a_real_folder -- --ignored --nocapture`。
+    #[test]
+    #[ignore = "timing only: FG_LIBRARY=<folder of photos> [FG_N=64]; models/ and bin/"]
+    fn whole_scan_on_a_real_folder() {
+        use fg_core::engine::{Engine, NoEvents, Paths, ScanArgs};
+        let Ok(dir) = std::env::var("FG_LIBRARY") else { return };
+        let n: usize = std::env::var("FG_N").ok().and_then(|v| v.parse().ok()).unwrap_or(64);
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        crate::imageio_macos::Helper::register(root.join("bin/fg-image"));
+        fg_core::platform::set_vision(Box::new(crate::vision::Factory { bin: root.join("bin/fg-vision") }));
+        fg_core::platform::set_gpu_clip(Box::new(crate::clipgpu::Factory));
+        let tmp = std::env::temp_dir().join(format!("fg-whole-scan-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let photos_dir = tmp.join("photos");
+        std::fs::create_dir_all(&photos_dir).unwrap();
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| is_image(p)).collect();
+        files.sort();
+        files.truncate(n);
+        for f in &files {
+            std::fs::copy(f, photos_dir.join(f.file_name().unwrap())).unwrap();
+        }
+        let e = Engine::new(Paths { data: tmp.join("data"), thumbs: tmp.join("thumbs"), models: dev_models_dir(), downloads: dev_models_dir() }, Box::new(NoEvents), "test");
+        let args = ScanArgs {
+            key: "bench".into(),
+            dirs: vec![photos_dir.to_string_lossy().into_owned()],
+            quality: Some(std::env::var("FG_QUALITY").unwrap_or_else(|_| "fast".into())),
+            eye_method: Some("mediapipe".into()),
+            force: true,
+            ..Default::default()
+        };
+        // 第一遍含模型加载；第二遍（force）才是稳定的吞吐
+        let t = std::time::Instant::now();
+        let first = e.scan_project(args.clone()).expect("scan");
+        let warm = t.elapsed();
+        let t = std::time::Instant::now();
+        let photos = e.scan_project(args).expect("scan");
+        let d = t.elapsed();
+        println!(
+            "{} photos: first pass {:?} (models loading included), second pass {:?} = {:.0} ms/photo, {:.2} photos/s; faces on {} photos, eyes measured on {}",
+            photos.len(), warm, d, d.as_secs_f64() * 1000.0 / photos.len() as f64, photos.len() as f64 / d.as_secs_f64(),
+            photos.iter().filter(|p| p.face_count > 0).count(), photos.iter().filter(|p| p.eye_method.as_deref() == Some("mediapipe")).count()
+        );
+        assert_eq!(first.len(), photos.len());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 
     /// 引擎在 Mac 上的完整一遍：注册 Apple Vision、ImageIO、Metal CLIP 与废纸篓后，用真模型分析开发用的示例照片，第二次全部走缓存。
     /// `cargo test -p fleetinggleam --lib engine_with_macos_helpers -- --ignored --nocapture`（需要 models/ 与 bin/）。

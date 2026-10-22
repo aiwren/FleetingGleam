@@ -49,6 +49,8 @@ pub struct VisionOut {
     pub eye_boxes: Vec<[f32; 4]>,
     /// 每张有完整关键点的脸，用来区分人物（见 faces.rs）。
     pub face_marks: Vec<FaceMark>,
+    /// `eyes` 已经是 MediaPipe 量表上的睁眼值（Android 的人脸流水线自己量的）：分析时不用再对同一张脸算一遍网格。
+    pub eyes_mediapipe: bool,
 }
 
 /// 系统视觉信号：美学分、实用图片、人脸与眼睛。没有就什么信号都没有，分析照常进行。

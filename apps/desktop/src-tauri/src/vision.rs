@@ -88,6 +88,7 @@ impl Proc {
             return None;
         }
         Some(VisionOut {
+            eyes_mediapipe: false,
             aesthetic: Some(r.aesthetic?),
             utility: r.utility.unwrap_or(false),
             faces: r.faces.unwrap_or_default(),

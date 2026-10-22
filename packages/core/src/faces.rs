@@ -6,10 +6,9 @@
 //! The network is a plain 112x112 ArcFace-style embedder, so any model with that interface can replace the file.
 
 use std::path::Path;
-use std::sync::Mutex;
+use crate::onnx::Pool;
 
 use image::{DynamicImage, RgbImage};
-use ort::session::Session;
 use ort::value::Tensor;
 
 use crate::analyze::Photo;
@@ -57,12 +56,12 @@ pub fn available(dir: &Path) -> bool {
 }
 
 pub struct FaceEmbedder {
-    session: Mutex<Session>,
+    session: Pool,
 }
 
 impl FaceEmbedder {
     pub fn load(dir: &Path) -> Result<Self, String> {
-        Ok(Self { session: Mutex::new(crate::onnx::load(&dir.join(MODEL_FILE), None)?) })
+        Ok(Self { session: Pool::load(&dir.join(MODEL_FILE), crate::onnx::small_copies(), Some(2))? })
     }
 
     /// An embedding for every mark that is big enough to recognise. Faces the network cannot read are left out.
@@ -91,10 +90,11 @@ impl FaceEmbedder {
             }
         }
         let input = Tensor::from_array(([1usize, 3usize, SIZE as usize, SIZE as usize], data)).ok()?;
-        let mut s = self.session.lock().ok()?;
-        let out = s.run(ort::inputs![input]).ok()?;
-        let (_, v) = out[0].try_extract_tensor::<f32>().ok()?;
-        normalise(v)
+        self.session.with(|s| {
+            let out = s.run(ort::inputs![input]).ok()?;
+            let (_, v) = out[0].try_extract_tensor::<f32>().ok()?;
+            normalise(v)
+        })
     }
 }
 

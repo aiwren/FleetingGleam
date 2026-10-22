@@ -111,6 +111,9 @@
   "ready": {
    "note": "Everything runs on this phone; the originals are never changed.",
    "resume": "{{done}} already analysed; only the rest are analysed this time."
+  },
+  "scan": {
+   "landing": "Photos land here as they are analysed"
   }
  },
  "models": {
