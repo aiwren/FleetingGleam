@@ -5,7 +5,6 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
-    id("androidx.baselineprofile")
 }
 
 // 仓库根目录（Cargo 工作区的根）
@@ -179,9 +178,15 @@ kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarg
 composeCompiler { stabilityConfigurationFiles.add(layout.projectDirectory.file("compose_stability.conf")) }
 
 
-// Baseline Profile：`./gradlew :app:generateBaselineProfile`（连着一台 API 33+ 的设备或模拟器）跑 :baselineprofile 里的脚本，
-// 把热路径写进 src/main/generated/baselineProfiles/，提交进仓库；平时构建不重新生成。
-baselineProfile {
-    automaticGenerationDuringBuild = false
-    saveInSrc = true
+// Baseline Profile 的插件只在收集时挂上（`-PFG_BASELINE=1`）：它一挂上，release 包就会被签成调试密钥（AGP 把被测应用当测试目标）。
+// 平时构建不需要它——AGP 自己会把 src/main/baseline-prof.txt 与 startup-prof.txt 合进包里。
+// 收集：`./gradlew -PFG_BASELINE=1 :baselineprofile:collectNonMinifiedReleaseBaselineProfile`（连着一台 API 33+ 的设备），
+// 然后把 baselineprofile/build/outputs/connected_android_test_additional_output/…/BaselineProfileGenerator_generate-startup-prof.txt
+// 复制到 app/src/main/baseline-prof.txt 与 startup-prof.txt，提交进仓库。收集完 AGP 会卸载被测应用。
+if (findProperty("FG_BASELINE") != null) {
+    apply(plugin = "androidx.baselineprofile")
+    extensions.configure<androidx.baselineprofile.gradle.consumer.BaselineProfileConsumerExtension> {
+        automaticGenerationDuringBuild = false
+        saveInSrc = true
+    }
 }
