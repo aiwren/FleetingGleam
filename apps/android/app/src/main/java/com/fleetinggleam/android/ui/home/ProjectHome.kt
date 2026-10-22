@@ -73,6 +73,9 @@ import com.fleetinggleam.android.ui.theme.Type
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 
 /** The module's landing page: every project as a card, plus a recycle bin for the ones you delete (the Mac's ProjectHome.tsx). */
 @Composable
@@ -93,8 +96,9 @@ fun ProjectHome(onOpenStyles: () -> Unit) {
     LaunchedEffect(view, bin.size) { if (view == "bin" && bin.isEmpty()) view = "projects" }
     androidx.activity.compose.BackHandler(view == "bin") { view = "projects" }
 
-    if (store.projects.isEmpty()) {
-        EmptyState()
+    // 一个项目都没有（全在回收站里也算）：起始屏；回收站还有东西就在最下面给个入口
+    if (live.isEmpty() && view == "projects") {
+        StartScreen(binCount = bin.size, onBin = { view = "bin" })
         return
     }
     val list = if (view == "projects") live else bin
@@ -182,15 +186,15 @@ fun ProjectHome(onOpenStyles: () -> Unit) {
             }
             return@LazyVerticalGrid
         }
-        // 最近的那个项目做成一张通栏的大卡（封面为主，底部一条渐变上写名字、张数和"继续挑选"），其余两列
-        val hero = if (view == "projects" && live.size >= 2) live.maxByOrNull { it.updated } else null
+        // 最近的那个项目做成一张通栏的大卡（封面为主，底部一条渐变上写名字、张数和"继续挑选"），其余两列；只有一个项目时就只有大卡
+        val hero = if (view == "projects" && live.isNotEmpty()) live.maxByOrNull { it.updated } else null
         if (hero != null) {
-            item(span = { GridItemSpan(maxLineSpan) }, key = "hero") { HeroCard(hero, onOpen = { Projects.setActive(hero.id) }, modifier = Modifier.animateItem()) }
-            item(span = { GridItemSpan(maxLineSpan) }, key = "all-title") {
+            item(span = { GridItemSpan(maxLineSpan) }, key = "hero") { HeroCard(hero, onOpen = { Projects.setActive(hero.id) }, onTrash = { ask = hero }, onRename = { renaming = hero }, modifier = Modifier.animateItem()) }
+            if (live.size >= 2) item(span = { GridItemSpan(maxLineSpan) }, key = "all-title") {
                 Text(t("android.home.allProjects"), style = Type.overline.copy(color = c.ash), modifier = Modifier.padding(start = 2.dp, top = 4.dp))
             }
         }
-        items(list, key = { it.id }) { p ->
+        items(if (hero != null && live.size < 2) emptyList() else list, key = { it.id }) { p ->
             val i = list.indexOf(p)
             ProjectCard(
                 p, inBin = view == "bin", index = i, armed = armed == p.id,
@@ -298,14 +302,24 @@ private fun ProjectCard(p: Project, inBin: Boolean, index: Int, armed: Boolean, 
     }
 }
 
-/** 最近的项目：通栏大卡，封面铺满，底部一条深色渐变托着名字、张数、上次时间和"继续挑选"。 */
+/** 最近的项目：通栏大卡，封面铺满，底部一条深色渐变托着名字、张数、上次时间和"继续挑选"。长按和小卡一样出菜单（重命名、移到回收站）。 */
 @Composable
-private fun HeroCard(p: Project, onOpen: () -> Unit, modifier: Modifier) {
+private fun HeroCard(p: Project, onOpen: () -> Unit, onTrash: () -> Unit, onRename: () -> Unit, modifier: Modifier) {
     val c = LocalFg.current
     val src = rememberSource()
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val overlay = com.fleetinggleam.android.ui.components.LocalOverlay.current
+    val anchor = com.fleetinggleam.android.ui.components.rememberAnchor()
     Box(
         modifier.riseIn(1).pressScale(src, 0.985f).fillMaxWidth().aspectRatio(16f / 10f).clip(RoundedCornerShape(20.dp)).background(c.surface)
-            .clickable(interactionSource = src, indication = null, onClick = onOpen),
+            .then(Modifier.anchor(anchor))
+            .combinedClickable(interactionSource = src, indication = null, onClick = onOpen, onLongClick = {
+                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                overlay.showMenu(anchor.value.let { androidx.compose.ui.geometry.Rect(it.left, it.top, it.right, it.top + it.height * 0.6f) }, listOf(
+                    com.fleetinggleam.android.ui.components.MenuItem(t("bin.rename"), action = onRename),
+                    com.fleetinggleam.android.ui.components.MenuItem(t("bin.toBin"), action = onTrash),
+                ), alignEnd = false)
+            }),
     ) {
         val cover = p.cover.orEmpty()
         if (cover.isEmpty()) Text(t("home.empty"), style = Type.small.copy(color = c.ash), modifier = Modifier.align(Alignment.Center))
@@ -356,29 +370,44 @@ private fun Cover(cover: List<String>) {
     }
 }
 
-/** 第一次打开：品牌名、一句话、三步做什么、新建项目（桌面端没有项目时的 .empty）。 */
+/**
+ * 一个项目都没有时的起始屏（作者 2026-10-22：不做滑动式引导页，空状态本身就是第一步）：插图、一句话、三条事实、整行的"从相册开始"，
+ * 下面文字入口"选一个文件夹" / "连接 NAS"，最后"用示例照片先试试"——不想先给相册权限的人也能看一眼效果。建好第一个项目就直接进去。
+ */
 @Composable
-private fun EmptyState() {
+private fun StartScreen(binCount: Int, onBin: () -> Unit) {
     val c = LocalFg.current
+    val ctx = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
-    Column(Modifier.fillMaxSize().statusBarsPadding().padding(horizontal = 28.dp).padding(top = 72.dp)) {
-        Text(t("brand.name"), style = Type.display.copy(color = c.ink), modifier = Modifier.riseIn(0, scaleFrom = 1f))
-        if (!com.fleetinggleam.android.core.I18n.lang.value.startsWith("en")) Text(t("brand.latin"), style = Type.monoSmall.copy(color = c.ash), modifier = Modifier.padding(top = 2.dp))
-        Text(t("brand.tagline"), style = Type.heading.copy(color = c.ash, fontWeight = FontWeight.Normal), modifier = Modifier.padding(top = 10.dp).riseIn(1, scaleFrom = 1f))
-        Text(t("cull.emptyBody", "brand" to t("brand.name")), style = Type.body.copy(color = c.ash), modifier = Modifier.padding(top = 20.dp).riseIn(2, scaleFrom = 1f))
-        Column(Modifier.padding(top = 20.dp)) {
-            com.fleetinggleam.android.core.I18n.list("cull.steps").forEachIndexed { i, s ->
-                Column(Modifier.riseIn(3 + i, scaleFrom = 1f)) {
-                    Box(Modifier.fillMaxWidth().height(1.dp).background(c.line))
-                    Row(Modifier.padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                        Text("0${i + 1}", style = Type.mono.copy(color = c.ash))
-                        Text(s, style = Type.body.copy(color = c.ink))
-                    }
+    val facts = listOf(
+        Triple("M8 1.5l5.5 2.3v3.4c0 3.3-2.3 6.1-5.5 7.3C4.8 13.3 2.5 10.5 2.5 7.2V3.8z", t("android.start.fact1"), 0),
+        Triple(Icons.CULL, t("android.start.fact2"), 1),
+        Triple("M2.5 8a5.5 5.5 0 109.2-4M11.5 1.5v3h-3M6.2 8.2l1.4 1.4 2.6-2.8", t("android.start.fact3"), 2),
+    )
+    Column(
+        Modifier.fillMaxSize().statusBarsPadding().verticalScroll(rememberScrollState()).padding(horizontal = 28.dp).padding(top = 20.dp, bottom = 150.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(Modifier.riseIn(0, scaleFrom = 0.94f)) { com.fleetinggleam.android.ui.picker.PhotoStack() }
+        Text(t("brand.name"), style = Type.overline.copy(color = c.ash), modifier = Modifier.padding(top = 16.dp).riseIn(1))
+        Text(t("brand.tagline"), style = Type.title.copy(color = c.ink), textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp).riseIn(2))
+        Column(Modifier.padding(top = 22.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            facts.forEach { (icon, text, i) ->
+                Row(Modifier.riseIn(3 + i), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(28.dp).clip(RoundedCornerShape(8.dp)).background(c.surface), contentAlignment = Alignment.Center) { FgIcon(icon, size = 15.dp, stroke = 1.5f, color = c.ink) }
+                    Text(text, style = Type.body.copy(color = c.ink), modifier = Modifier.padding(start = 12.dp))
                 }
             }
         }
-        Spacer(Modifier.height(24.dp))
-        FgButton(t("cull.newProjectBtn"), { scope.launch { Actions.newProjectFromDialog() } }, primary = true, modifier = Modifier.riseIn(7, scaleFrom = 1f))
-        Text(t("nav.privacy"), style = Type.small.copy(color = c.ash), modifier = Modifier.padding(top = 28.dp).width(320.dp))
+        FgButton(t("android.start.album"), { scope.launch { Actions.newProjectFromDialog(source = "albums") } }, primary = true, modifier = Modifier.padding(top = 26.dp).fillMaxWidth().riseIn(6))
+        Row(Modifier.padding(top = 6.dp).riseIn(7), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+            Text(t("android.start.folder"), style = Type.label.copy(color = c.ink), modifier = Modifier.clip(CircleShape).clickable { scope.launch { Actions.newProjectFromDialog(source = "folder") } }.padding(horizontal = 12.dp, vertical = 10.dp))
+            Text("·", style = Type.label.copy(color = c.ash))
+            Text(t("android.start.nas"), style = Type.label.copy(color = c.ink), modifier = Modifier.clip(CircleShape).clickable { com.fleetinggleam.android.core.Nav.openSettings("nas") }.padding(horizontal = 12.dp, vertical = 10.dp))
+        }
+        Text(t("android.start.sample"), style = Type.label.copy(color = c.ash), modifier = Modifier.padding(top = 10.dp).clip(CircleShape).clickable { scope.launch { com.fleetinggleam.android.core.Samples.open(ctx) } }.padding(horizontal = 12.dp, vertical = 8.dp).riseIn(8))
+        Text(t("nav.privacy"), style = Type.small.copy(color = c.ash), textAlign = TextAlign.Center, modifier = Modifier.padding(top = 16.dp).riseIn(9))
+        if (binCount > 0) Text(t("bin.tab") + " · $binCount", style = Type.small.copy(color = c.ash), modifier = Modifier.padding(top = 4.dp).clip(CircleShape).clickable(onClick = onBin).padding(horizontal = 12.dp, vertical = 8.dp))
     }
 }
+

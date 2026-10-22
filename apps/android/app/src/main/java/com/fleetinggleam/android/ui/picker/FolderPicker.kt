@@ -123,7 +123,11 @@ fun FolderPicker() {
         }
     }
     // 设置页"从这里新建项目"：直接进到那个共享
-    LaunchedEffect(req) { req?.shareId?.let { id -> shares.firstOrNull { it.id == id }?.let { enter(it, "") } } }
+    LaunchedEffect(req) {
+        req?.shareId?.let { id -> shares.firstOrNull { it.id == id }?.let { enter(it, "") } }
+        // 起始屏的"从相册开始" / "选一个文件夹"：直接进去
+        when (req?.source) { "albums" -> openAlbums(); "folder" -> pickSystemFolder() }
+    }
 
     val share = shares.firstOrNull { it.id == source }
     ModalBottomSheet(onDismissRequest = { Nas.answer(null) }, sheetState = sheet, containerColor = c.canvas, dragHandle = null) {
@@ -201,9 +205,9 @@ private fun PermissionExplainer(blocked: Boolean, onContinue: () -> Unit, onFold
     }
 }
 
-/** 一叠斜着的照片（三张有渐变的小卡），右下角一粒金色的四角星——应用图标的意象。 */
+/** 一叠斜着的照片（三张有渐变的小卡），右下角一粒金色的四角星——应用图标的意象。授权说明页和起始屏共用。 */
 @Composable
-private fun PhotoStack() {
+fun PhotoStack() {
     val c = LocalFg.current
     Box(Modifier.size(132.dp, 104.dp), contentAlignment = Alignment.Center) {
         listOf(Triple(-14f, 10.dp, 0.55f), Triple(8f, 4.dp, 0.75f), Triple(-2f, 0.dp, 1f)).forEachIndexed { i, (rot, dy, a) ->

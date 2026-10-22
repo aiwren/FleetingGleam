@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,6 +38,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
@@ -90,6 +92,10 @@ fun AppShell() {
     /** 浮在最上面的玻璃件（菜单）：画在内容层之外，所以能折射整页。 */
     val overlay = remember { com.fleetinggleam.android.ui.components.OverlayState() }
 
+    // 起始屏的"连接 NAS"等：切到设置页签，分区由设置页自己进
+    val wanted by com.fleetinggleam.android.core.Nav.settings.collectAsState()
+    LaunchedEffect(wanted) { if (wanted != null) { styles = null; tab = Tab.Settings } }
+
     BackHandler(enabled = styles != null) { styles = null }
     BackHandler(enabled = styles == null && tab == Tab.Cull && project != null) { Projects.setActive(null) }
     BackHandler(enabled = styles == null && tab == Tab.Settings) { tab = Tab.Cull }
@@ -139,7 +145,8 @@ fun AppShell() {
                 }
             }
         }
-        overlay.content?.invoke()
+        // 覆盖层（菜单）压在所有浮动件（标签栏、提示、下载胶囊）之上
+        Box(Modifier.zIndex(10f)) { overlay.content?.invoke() }
     }
     }
     ModelGate()

@@ -80,6 +80,16 @@
    "marked": "{{count}} marked",
    "recent": "Recent",
    "justNow": "just now"
+  },
+  "start": {
+   "fact1": "Analysed on this phone only; nothing is uploaded",
+   "fact2": "Similar shots are grouped, the best one suggested",
+   "fact3": "Originals are never changed; rejects go to the bin",
+   "album": "Start from your photos",
+   "folder": "Pick a folder",
+   "nas": "Connect a NAS",
+   "sample": "Try it with sample photos",
+   "sampleName": "Sample photos"
   }
  },
  "models": {

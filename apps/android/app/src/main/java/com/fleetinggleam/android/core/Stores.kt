@@ -96,14 +96,15 @@ object Nas {
     suspend fun browse(id: String, path: String): Listing = Core.get("nas_browse", args("id" to id, "path" to path))
 
     /** 选文件夹的请求：界面里的 FolderPicker 看到它就出现，回答之后结束。`shareId` 直接进到某个共享（设置页"从这里新建项目"）。 */
-    data class PickRequest(val shareId: String?, val resolve: CompletableDeferred<String?>)
+    data class PickRequest(val shareId: String?, val resolve: CompletableDeferred<String?>, val source: String? = null)
     private val _request = MutableStateFlow<PickRequest?>(null)
     val request: StateFlow<PickRequest?> = _request
 
-    suspend fun pick(shareId: String? = null): String? {
+    /** `source` = "albums" / "folder"：跳过"在哪里"那一层，直接进相册列表或系统文件选择器（起始屏的按钮）。 */
+    suspend fun pick(shareId: String? = null, source: String? = null): String? {
         _request.value?.resolve?.complete(null)
         val d = CompletableDeferred<String?>()
-        _request.value = PickRequest(shareId, d)
+        _request.value = PickRequest(shareId, d, source)
         return d.await()
     }
 

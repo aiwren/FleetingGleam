@@ -119,6 +119,9 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
     /** 打开的分区（null = 根页的分级列表）。 */
     var section by rememberSaveable { mutableStateOf<String?>(null) }
     androidx.activity.compose.BackHandler(section != null) { section = null }
+    // 别的页面要求打开某个分区（起始屏的"连接 NAS"）
+    val wanted by com.fleetinggleam.android.core.Nav.settings.collectAsState()
+    LaunchedEffect(wanted) { if (wanted != null) { section = wanted; com.fleetinggleam.android.core.Nav.consumed() } }
 
     LaunchedEffect(Unit) {
         Styles.refresh(); Nas.refresh(); Backup.refresh(); Models.refresh()
