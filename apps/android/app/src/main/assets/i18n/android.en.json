@@ -54,7 +54,7 @@
    "glassDesc": "The tab bar and floating controls refract what is behind them. Off, they are plain frosted panels, smoother on older phones."
   },
   "cull": {
-   "hint": "Tap a photo to select it, then ★ to keep or ✕ to reject; in Single view push up to keep and pull down to reject. Undo is in the bar below.",
+   "hint": "Tap a photo to select it; the bar below keeps, rejects or opens it. In single view, push up to keep and pull down to reject.",
    "undo": "Undo",
    "peopleScenes": "People & scenes"
   },

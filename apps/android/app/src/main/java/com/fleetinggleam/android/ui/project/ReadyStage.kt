@@ -108,7 +108,7 @@ fun ReadyStage(project: Project, count: Int, bytes: Long, etaSeconds: Int?, file
 }
 
 /** 手机存储的前缀不用看。 */
-private fun shortPath(p: String): String = p.removePrefix("/storage/emulated/0/").removePrefix("/storage/emulated/0").ifEmpty { "/" }
+private fun shortPath(p: String): String = p.substringAfter("/files/", p).removePrefix("/storage/emulated/0/").removePrefix("/storage/emulated/0").ifEmpty { "/" }
 
 /** 名称一行：左边"项目名称"，右边直接改。 */
 @Composable
