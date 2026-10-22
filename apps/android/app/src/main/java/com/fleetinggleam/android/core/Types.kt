@@ -110,7 +110,7 @@ data class Decision(val state: String, val manual: Boolean = false, val reasons:
 )
 @Serializable data class StyleInfo(val id: String, val name: String, val isDefault: Boolean = false, val info: PrefsInfo = PrefsInfo())
 
-@Serializable data class PackStatus(val id: String, val installed: Boolean, val bytes: Long = 0)
+@Serializable data class PackStatus(val id: String, val installed: Boolean, val bytes: Long = 0, val bundled: Boolean = false)
 @Serializable data class ModelProgress(val pack: String = "", val file: String = "", val done: Long = 0, val total: Long = 0)
 
 @Serializable data class Hit(val path: String, val name: String, val thumb: String, val width: Int, val height: Int, val score: Float)

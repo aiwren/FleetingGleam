@@ -1,5 +1,6 @@
 //! Where the model files are and how to read them. Most are downloaded into the app's data folder when first needed (modelpacks.rs).
-//! A few small ones that exist nowhere else (weights we converted ourselves) ship inside the app, from `model-data/`.
+//! Small ones ship inside the app, from `model-data/`: weights we converted ourselves that exist nowhere else, and every pack whose
+//! files add up to less than 10 MB（作者 2026-10-22：10 MB 以下的模型直接放进应用，不让用户为几 MB 再等一次下载）。
 
 use sha2::{Digest, Sha256};
 use std::io::Read;
@@ -18,6 +19,10 @@ static BUNDLED: &[(&str, &[u8])] = bundled_files!(
     "aesthetic_v25_head.json",
     "text_multilingual_dense.bin",
     "opusmt_tokenizer.json",
+    // 整包不到 10 MB 的：眼睛（MediaPipe 网格与表情，6.8 MB）、人脸检测（UltraFace RFB-640，1.6 MB）
+    "face_landmarks.onnx",
+    "face_blendshapes.onnx",
+    "face_detector_rfb640.onnx",
 );
 
 pub fn bundled(name: &str) -> Option<&'static [u8]> {
@@ -66,6 +71,20 @@ mod tests {
         let head: serde_json::Value = serde_json::from_slice(&read_model(nowhere, "aesthetic_head_vit_b_32.json").unwrap()).unwrap();
         assert_eq!(head["weight"].as_array().unwrap().len(), 512);
         assert!(read_model(nowhere, "clip_vit_b32_vision_int8.onnx").is_err());
+    }
+
+    /// 随应用的 ONNX 模型不用下载也能建会话。
+    #[test]
+    fn bundled_onnx_models_load_without_a_folder() {
+        let nowhere = Path::new("/nonexistent-model-dir");
+        assert!(crate::mediapipe::available(nowhere));
+        assert!(crate::facepipe::available(nowhere));
+        crate::mediapipe::MediapipeEyes::load(nowhere).expect("eye models from inside the app");
+        crate::facepipe::FaceDetector::load(nowhere).expect("face detector from inside the app");
+        for f in ["face_landmarks.onnx", "face_blendshapes.onnx", "face_detector_rfb640.onnx"] {
+            let want = crate::modelpacks::manifest_sha(f).unwrap();
+            assert_eq!(sha256_hex(bundled(f).unwrap()), want, "{f} matches the manifest");
+        }
     }
 
     #[test]

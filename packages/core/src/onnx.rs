@@ -32,9 +32,21 @@ pub fn builder(threads: Option<usize>) -> Result<SessionBuilder, String> {
     Ok(b)
 }
 
-/// 在 CPU 上跑的会话。
+/// 路径上没有、但随应用带着的模型：它的字节。
+fn inside_app(path: &Path) -> Option<&'static [u8]> {
+    if path.exists() {
+        return None;
+    }
+    crate::modelfiles::bundled(path.file_name()?.to_str()?)
+}
+
+/// 在 CPU 上跑的会话。下载目录里没有、但随应用带着的模型直接从内存建。
 pub fn load(path: &Path, threads: Option<usize>) -> Result<Session, String> {
-    builder(threads)?.commit_from_file(path).map_err(|e| format!("{}: {e}", path.display()))
+    let mut b = builder(threads)?;
+    match inside_app(path) {
+        Some(bytes) => b.commit_from_memory(bytes).map_err(|e| format!("{}: {e}", path.display())),
+        None => b.commit_from_file(path).map_err(|e| format!("{}: {e}", path.display())),
+    }
 }
 
 /// 用这个平台的加速器的会话：macOS 的 CoreML，Android 的 NNAPI；别的平台就是 CPU。
@@ -51,7 +63,10 @@ pub fn load_accelerated(path: &Path, threads: Option<usize>) -> Result<Session, 
         // NCHW 省掉模型前后的转置；fp16 松弛不开（分数要和别的平台一致）
         b = b.with_execution_providers([ort::ep::NNAPI::default().with_nchw(true).build()]).map_err(|e| e.to_string())?;
     }
-    b.commit_from_file(path).map_err(|e| format!("{}: {e}", path.display()))
+    match inside_app(path) {
+        Some(bytes) => b.commit_from_memory(bytes).map_err(|e| format!("{}: {e}", path.display())),
+        None => b.commit_from_file(path).map_err(|e| format!("{}: {e}", path.display())),
+    }
 }
 
 /// 加速器上的会话是否和 CPU 给出同样的答案，这台机器上只对一次：`check` 建两个会话算一个固定输入、比较并返回是否一致；

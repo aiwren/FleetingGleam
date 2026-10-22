@@ -1634,7 +1634,7 @@ impl Engine {
             .map(|p| {
                 let installed = modelpacks::installed(dir, p);
                 let bytes = if installed || !with_sizes { 0 } else { modelpacks::manifest_sizes(dir, p.id).unwrap_or(0) };
-                modelpacks::PackStatus { id: p.id.to_string(), installed, bytes }
+                modelpacks::PackStatus { id: p.id.to_string(), installed, bundled: modelpacks::bundled(p), bytes }
             })
             .collect()
     }

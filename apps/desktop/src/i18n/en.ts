@@ -75,7 +75,7 @@ const en = {
     download: "Download ({{size}})", retry: "Try again", error: "The download did not succeed. Check your connection and try again.",
     name: { standard: "Standard analysis", high: "High-quality analysis", ultra: "Ultra analysis (experimental)", search: "Photo search", eyes: "MediaPipe eye detection", faces: "People recognition", scenetext: "Scene descriptions" },
     desc: { standard: "Good for everyday use, quick", high: "More accurate; more sensitive to blur, composition and look", ultra: "Newest aesthetic scoring; slower, experimental", search: "Find photos by describing them", eyes: "Tells a laughing squint from an actual closed eye", faces: "Sorts the photos by who is in them, so you can filter by person", scenetext: "Writes a sentence for scenes the vocabulary cannot name, entirely on this computer" },
-    have: "Downloaded", none: "Not downloaded", get: "Download", remove: "Remove", title: "Downloaded models",
+    have: "Downloaded", none: "Not downloaded", bundled: "Comes with the app", get: "Download", remove: "Remove", title: "Downloaded models",
     titleDesc: "Models are only downloaded when needed and then work offline. Remove the ones you do not use; you will be asked again when they are needed.",
   },
   searchset: { title: "Photo search", desc: "Find photos by describing them: \u201cfireworks\u201d, \u201ctwo people\u201d, \u201cumbrella\u201d.", info: "The first time it is turned on, a search model is downloaded and the photos are indexed in the background (a few tens of milliseconds each). It all happens on this computer; photos are never uploaded.", project: "Search in this project", projectDesc: "When off, this project is not indexed and has no search box." },

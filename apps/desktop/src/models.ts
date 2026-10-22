@@ -7,7 +7,7 @@ import { listen } from "@tauri-apps/api/event";
  * needs a pack, and it either says "ready" straight away or asks the person (size shown), downloads with progress, and answers.
  */
 export type PackId = "standard" | "high" | "ultra" | "search" | "eyes" | "faces" | "scenetext";
-export type PackInfo = { id: PackId; installed: boolean };
+export type PackInfo = { id: PackId; installed: boolean; bundled?: boolean };
 export type Answer = "ready" | "downloaded" | "cancelled";
 /** `id` names the dialog's text: a pack, or "bundle" when several are fetched under one question (`ids` says which, `sizes` how big each is). */
 export type Gate = { id: PackId | "bundle"; ids?: PackId[]; sizes?: number[]; phase: "ask" | "downloading" | "error"; bytes: number; done: number; total: number; error?: string; resolve: (a: Answer) => void };

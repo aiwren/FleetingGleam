@@ -67,18 +67,18 @@
       "license": "Apache-2.0"
     },
     "face_landmarks.onnx": {
-      "url": "https://github.com/lcopilot/FleetingGleam/releases/download/models-v1/face_landmarks.onnx",
       "size": 4920995,
       "sha256": "7e9a19e5ce2a2212eab146683334bff0194584789df924f8926067864b7f4506",
       "source": "Google MediaPipe · face_landmarker.task 里的 face_landmarks_detector.tflite（tf2onnx 转换）",
-      "license": "Apache-2.0"
+      "license": "Apache-2.0",
+      "bundled": true
     },
     "face_blendshapes.onnx": {
-      "url": "https://github.com/lcopilot/FleetingGleam/releases/download/models-v1/face_blendshapes.onnx",
       "size": 1883710,
       "sha256": "dd4eff02b5e34bfd692ff1b5735983038dd0195f9d76b3ad9822a159771f018d",
       "source": "Google MediaPipe · face_landmarker.task 里的 face_blendshapes.tflite（tf2onnx 转换）",
-      "license": "Apache-2.0"
+      "license": "Apache-2.0",
+      "bundled": true
     },
     "face_recognition_sface_2021dec.onnx": {
       "url": "https://huggingface.co/opencv/face_recognition_sface/resolve/3d7082438a6e4551e840c9b2bb60b71e8da4b524/face_recognition_sface_2021dec.onnx",
@@ -143,11 +143,11 @@
       "license": "Apache-2.0"
     },
     "face_detector_rfb640.onnx": {
-      "url": "https://huggingface.co/onnxmodelzoo/version-RFB-640/resolve/c39647011b1d0eb48037ce3051438e51b19e2b11/version-RFB-640.onnx",
       "size": 1588012,
       "sha256": "8f4c659275977e7a3bfbfa339a9c769ad793df50f9c0baa8c14b11baa1646430",
       "source": "onnxmodelzoo/version-RFB-640 · version-RFB-640.onnx（ONNX Model Zoo 的 UltraFace RFB-640）",
-      "license": "MIT"
+      "license": "MIT",
+      "bundled": true
     }
   }
 }

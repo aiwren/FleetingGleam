@@ -386,8 +386,8 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
                 <div className="srow"><div className="stext"><b>{t("models.title")}</b><p className="ash">{t("models.titleDesc")}</p></div></div>
               </div>
               {packs.map((p) => (
-                <Row key={p.id} label={t(`models.name.${p.id}`)} desc={p.installed ? `${t("models.have")} · ${t(`models.desc.${p.id}`)}` : `${t("models.none")} · ${t(`models.desc.${p.id}`)}`}>
-                  {p.installed
+                <Row key={p.id} label={t(`models.name.${p.id}`)} desc={`${p.bundled ? t("models.bundled") : p.installed ? t("models.have") : t("models.none")} · ${t(`models.desc.${p.id}`)}`}>
+                  {p.bundled ? null : p.installed
                     ? <button className="btn" onClick={async () => { await removePack(p.id); release(p.id); }}>{t("models.remove")}</button>
                     : <button className="btn" onClick={async () => { if ((await ensurePack(p.id)) !== "cancelled") adopt(p.id); }}>{t("models.get")}</button>}
                 </Row>

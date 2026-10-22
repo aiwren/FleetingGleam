@@ -273,8 +273,9 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
             SettingGroup("") {
                 SettingRow(t("models.title"), t("models.titleDesc"), first = true)
                 packs.forEach { p ->
-                    SettingRow(t("models.name.${p.id}"), "${if (p.installed) t("models.have") else t("models.none") + if (p.bytes > 0) " · " + fmtBytes(p.bytes) else ""} · ${t("models.desc.${p.id}")}") {
-                        if (p.installed) FgButton(t("models.remove"), { scope.launch { runCatching { Models.remove(p.id) }; Strategy.release(p.id) } }, small = true)
+                    SettingRow(t("models.name.${p.id}"), "${if (p.bundled) t("models.bundled") else if (p.installed) t("models.have") else t("models.none") + if (p.bytes > 0) " · " + fmtBytes(p.bytes) else ""} · ${t("models.desc.${p.id}")}") {
+                        if (p.bundled) Unit
+                        else if (p.installed) FgButton(t("models.remove"), { scope.launch { runCatching { Models.remove(p.id) }; Strategy.release(p.id) } }, small = true)
                         else {
                             // 正在（后台）下载的这一包：显示进度，点一下把下载对话框叫回来
                             val gate by Models.gate.collectAsState()

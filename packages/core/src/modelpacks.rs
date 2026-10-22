@@ -42,12 +42,25 @@ pub fn pack(id: &str) -> Option<&'static Pack> {
 pub struct PackStatus {
     pub id: String,
     pub installed: bool,
+    /// 整包随应用安装（不用下载，也不能删）。
+    #[serde(default)]
+    pub bundled: bool,
     /// Bytes still to download (known once the manifest was read; otherwise 0).
     pub bytes: u64,
 }
 
 pub fn installed(dir: &Path, p: &Pack) -> bool {
     p.files.iter().all(|f| modelfiles::has_model(dir, f))
+}
+
+/// 整包都随应用带着。
+pub fn bundled(p: &Pack) -> bool {
+    p.files.iter().all(|f| modelfiles::bundled(f).is_some())
+}
+
+/// 清单里某个文件应有的 SHA-256（测试用）。
+pub fn manifest_sha(name: &str) -> Option<String> {
+    manifest().get(name).map(|i| i.sha256.to_lowercase())
 }
 
 #[derive(Deserialize)]

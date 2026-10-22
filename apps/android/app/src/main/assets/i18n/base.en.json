@@ -201,6 +201,7 @@
   },
   "have": "Downloaded",
   "none": "Not downloaded",
+  "bundled": "Comes with the app",
   "get": "Download",
   "remove": "Remove",
   "title": "Downloaded models",

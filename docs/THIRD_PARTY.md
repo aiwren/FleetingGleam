@@ -6,7 +6,7 @@
 
 ## 模型
 
-模型文件不在本仓库里，应用在第一次用到某项功能时才下载（直接从上游下载，我们不托管，个别例外见 [MODELS.md](MODELS.md)）。每个文件的确切来源、大小、SHA-256 和转换方式见 [MODELS.md](MODELS.md)。
+大的模型文件不在本仓库里，应用在第一次用到某项功能时才下载（直接从上游下载，我们不托管，个别例外见 [MODELS.md](MODELS.md)）。整包不到 10 MB 的随应用一起安装（放在 `packages/core/model-data/`，编进应用）：眼睛检测（MediaPipe，Apache-2.0）与人脸检测（UltraFace RFB-640，MIT），各自的许可照旧适用。每个文件的确切来源、大小、SHA-256 和转换方式见 [MODELS.md](MODELS.md)。
 
 | 用途 | 模型 | 上游 | 许可 |
 |---|---|---|---|

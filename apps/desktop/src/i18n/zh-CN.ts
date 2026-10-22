@@ -73,7 +73,7 @@ const zh = {
     download: "下载（{{size}}）", retry: "重试", error: "下载没有成功，请检查网络后重试。",
     name: { standard: "标准分析", high: "高质量分析", ultra: "极致分析（实验）", search: "照片搜索", eyes: "MediaPipe 眼睛检测", faces: "人物识别", scenetext: "场景描述" },
     desc: { standard: "日常够用，速度快", high: "更准，对模糊、构图和观感更敏感", ultra: "最新一代美学评分，更慢，实验性", search: "用文字描述来找照片", eyes: "更能分辨眯眼大笑和真的闭眼", faces: "把照片里的人分成一个个人物，可以按人筛选", scenetext: "给词库里没有的场景写一句话，只在这台电脑上完成" },
-    have: "已下载", none: "未下载", get: "下载", remove: "删除", title: "已下载的模型",
+    have: "已下载", none: "未下载", bundled: "随应用安装", get: "下载", remove: "删除", title: "已下载的模型",
     titleDesc: "模型只在需要时才下载，之后完全离线使用。不用的可以删除，需要时会再次询问。",
   },
   searchset: { title: "照片搜索", desc: "用文字描述来找照片，比如“烟花”“两个人”“雨伞”。", info: "第一次开启需要下载一个搜索模型，并在后台为照片建立索引（每张只需几十毫秒）。全过程在本机完成，照片不会上传。", project: "在这个项目里启用搜索", projectDesc: "关闭后这个项目不建立搜索索引，也不显示搜索框。" },
