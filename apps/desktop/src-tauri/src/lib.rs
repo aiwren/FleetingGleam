@@ -101,9 +101,13 @@ async fn scan_project(app: AppHandle, key: String, dirs: Vec<String>, compute: O
     blocking(move || e.scan_project(args)).await?
 }
 
+/// 带 key 只停那个项目的分析 / 读取（离开项目时它自己的停，后台分析的那个照跑）；不带就全停。
 #[tauri::command]
-fn scan_cancel(app: AppHandle) {
-    engine(&app).scan_cancel();
+fn scan_cancel(app: AppHandle, key: Option<String>) {
+    match key {
+        Some(k) => engine(&app).scan_cancel_key(&k),
+        None => engine(&app).scan_cancel(),
+    }
 }
 
 /// Deciding is seconds on a very large project, so it runs off the main thread.

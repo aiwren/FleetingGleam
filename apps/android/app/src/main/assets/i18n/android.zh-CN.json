@@ -57,7 +57,7 @@
    "hint": "点一张照片选中，底栏可以保留、淘汰或放大查看；单张模式里上推留下、下拉淘汰。",
    "undo": "撤销",
    "peopleScenes": "人物与场景",
-   "etaLeft": "约剩 {{time}}",
+   "etaLeft": "还要 {{time}}",
    "allowBackground": "切到后台会停？点这里允许惊鸿在后台运行",
    "canLeave": "可以离开这一页或切到别的应用，分析会在后台接着跑。",
    "busyTitle": "「{{name}}」还在分析",

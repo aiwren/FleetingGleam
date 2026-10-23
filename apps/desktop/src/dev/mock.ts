@@ -103,8 +103,27 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 let lastPhotos: Photo[] = [];
 
-async function scan(dirs: string[], quiet: boolean): Promise<Photo[]> {
+type MockDecision = { state: string; manual: boolean; reasons: { k: string; p?: Record<string, number> }[] };
+/** 和 "decide_photos" 同一套粗糙的取舍（真正的算法只在 decide.rs）：分数排名，前面的保留，中间的待复查，其余淘汰。 */
+function judge(photos: Photo[], keepRatio: number, overrides: Record<string, string>): Record<string, MockDecision> {
+  const sorted = [...photos].sort((a, b) => b.score - a.score);
+  const keepN = Math.max(1, Math.round(sorted.length * keepRatio));
+  const reviewN = Math.max(1, Math.round(sorted.length * 0.15));
+  const out: Record<string, MockDecision> = {};
+  sorted.forEach((p, i) => {
+    const good = p.score >= 0.7;
+    const auto = good && i < keepN ? "keep" : good || i < keepN + reviewN ? "review" : "reject";
+    const manual = Object.prototype.hasOwnProperty.call(overrides, p.path);
+    const state = manual ? overrides[p.path] : auto;
+    out[p.path] = { state, manual, reasons: [{ k: state === "keep" ? "reason.keepSolo" : state === "review" ? "reason.nearBest" : "reason.belowLine", p: { score: Math.round(p.score * 100) } }] };
+  });
+  return out;
+}
+
+async function scan(dirs: string[], quiet: boolean, live?: { keep_ratio?: number; overrides?: Record<string, string> } | null, force = false): Promise<Photo[]> {
   const list = inDirs(dirs);
+  // "重新分析"：当作都没分析过
+  if (force) list.forEach((s) => cached.delete(s.path));
   const photos = makePhotos(list);
   lastPhotos = photos;
   const todo = photos.filter((p) => !cached.has(p.path));
@@ -115,6 +134,18 @@ async function scan(dirs: string[], quiet: boolean): Promise<Photo[]> {
   emit("scan-progress", { done, total });
   { const known = photos.filter((p) => cached.has(p.path)); for (let i = 0; i < known.length; i += 250) emit("scan-photos", known.slice(i, i + 250)); }
   const order = todo.map((p) => photos.indexOf(p));
+  // 边分析边判（引擎的判定线程）：每隔一会儿把已出结果的照片整体判一遍，只发变化的
+  const judged = new Map<string, string>();
+  let dirty = true;
+  const judgeNow = () => {
+    if (!live || !dirty) return;
+    dirty = false;
+    const done = photos.filter((p) => cached.has(p.path));
+    const d = judge(done, live.keep_ratio ?? 1, live.overrides ?? {});
+    const changed = Object.entries(d).filter(([path, dec]) => judged.get(path) !== dec.state).map(([path, decision]) => { judged.set(path, decision.state); return { path, decision }; });
+    if (changed.length) emit("scan-decide", changed);
+  };
+  const judgeTimer = setInterval(judgeNow, 500);
   const worker = async () => {
     while (order.length) {
       const i = order.shift()!;
@@ -129,9 +160,12 @@ async function scan(dirs: string[], quiet: boolean): Promise<Photo[]> {
       cached.add(p.path);
       emit("scan-photo", p);
       emit("scan-progress", { done, total });
+      dirty = true;
     }
   };
   await Promise.all([worker(), worker(), worker(), worker()]);
+  clearInterval(judgeTimer);
+  judgeNow();
   return photos;
 }
 
@@ -186,7 +220,7 @@ w.__TAURI_INTERNALS__ = {
         const files = list.map((s) => ({ path: s.path, width: s.w, height: s.h, cached: cached.has(s.path) }));
         return { files, bytes: files.filter((f) => !f.cached).length * 9_000_000, uncached: files.filter((f) => !f.cached).length };
       }
-      case "scan_project": return scan(args.dirs as string[], !!args.quiet);
+      case "scan_project": return scan(args.dirs as string[], !!args.quiet, args.live as { keep_ratio?: number; overrides?: Record<string, string> } | null, !!args.force);
       case "scan_cancel": return null;
       case "projects_load": return localStorage.getItem("fg.projects");
       case "projects_save": localStorage.setItem("fg.projects", String(args.json)); return null;
@@ -254,22 +288,7 @@ w.__TAURI_INTERNALS__ = {
       }
       // A rough stand-in for the real (Rust-side) keep/review/reject logic: just enough to exercise the UI in a
       // plain browser. The actual ranking algorithm lives only in src-tauri/src/decide.rs.
-      case "decide_photos": {
-        const keepRatio = Number(args.keepRatio ?? 1);
-        const overrides = (args.overrides ?? {}) as Record<string, string>;
-        const sorted = [...lastPhotos].sort((a, b) => b.score - a.score);
-        const keepN = Math.max(1, Math.round(sorted.length * keepRatio));
-        const reviewN = Math.max(1, Math.round(sorted.length * 0.15));
-        const out: Record<string, { state: string; manual: boolean; reasons: { k: string; p?: Record<string, number> }[] }> = {};
-        sorted.forEach((p, i) => {
-          const good = p.score >= 0.7;
-          const auto = good && i < keepN ? "keep" : good || i < keepN + reviewN ? "review" : "reject";
-          const manual = Object.prototype.hasOwnProperty.call(overrides, p.path);
-          const state = manual ? overrides[p.path] : auto;
-          out[p.path] = { state, manual, reasons: [{ k: state === "keep" ? "reason.keepSolo" : state === "review" ? "reason.nearBest" : "reason.belowLine", p: { score: Math.round(p.score * 100) } }] };
-        });
-        return out;
-      }
+      case "decide_photos": return judge(lastPhotos, Number(args.keepRatio ?? 1), (args.overrides ?? {}) as Record<string, string>);
       case "record_label": {
         const cur = args.label;
         if (cur !== null) { labels++; if (cur) keeps++; }

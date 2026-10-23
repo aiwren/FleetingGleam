@@ -102,6 +102,7 @@ import java.io.File
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.animation.core.spring
+import com.fleetinggleam.android.ui.components.Ticker
 import androidx.compose.animation.core.Animatable
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.runtime.mutableStateMapOf
@@ -149,8 +150,6 @@ class CullState {
     /** 状态条上每个页签的坐标：分析中照片"飞进"页签的动效要用。 */
     val tabCoords = HashMap<String, androidx.compose.ui.layout.LayoutCoordinates>()
     fun tabRect(id: String): Rect? = tabCoords[id]?.takeIf { it.isAttached }?.boundsInRoot()
-    /** 页签上的数字跳一下（有照片飞进来时加一）。 */
-    val tabBump = androidx.compose.runtime.mutableStateMapOf<String, Int>()
 
     fun pickLayout(v: ViewStyle) { layout = v; UiPrefs.put("layout", v.id) }
     fun bumpHint(n: Int = 1) { hintUses = if (n == 99) 99 else maxOf(hintUses, hintUses + 1); UiPrefs.put("hint.dock", hintUses) }
@@ -464,12 +463,8 @@ fun StatusStrip(cull: CullState, data: CullData, padded: Boolean = true) {
                             verticalAlignment = Alignment.Bottom,
                         ) {
                             Text(t("state.$id"), style = Type.heading.copy(color = if (on) c.ink else c.ash, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal))
-                            // 分析中有照片飞进来：数字弹一下
-                            val bumpN = cull.tabBump[id] ?: 0
-                            val bump = remember { Animatable(1f) }
-                            LaunchedEffect(bumpN) { if (bumpN > 0) { bump.snapTo(1.4f); bump.animateTo(1f, spring(dampingRatio = 0.45f, stiffness = 600f)) } }
-                            Text("${data.status[id] ?: 0}", style = Type.monoSmall.copy(color = if (on) c.ink.copy(alpha = 0.6f) else c.ash.copy(alpha = 0.8f)),
-                                modifier = Modifier.padding(start = 4.dp, bottom = 2.dp).graphicsLayer { scaleX = bump.value; scaleY = bump.value; transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 1f) })
+                            // 数字像计数器一样一位位滚（分析中会一直变）
+                            Box(Modifier.padding(start = 4.dp, bottom = 2.dp)) { Ticker(data.status[id] ?: 0, Type.monoSmall.copy(color = if (on) c.ink.copy(alpha = 0.6f) else c.ash.copy(alpha = 0.8f))) }
                         }
                     }
                 }

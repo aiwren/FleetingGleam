@@ -57,7 +57,7 @@
    "hint": "Tap a photo to select it; the bar below keeps, rejects or opens it. In single view, push up to keep and pull down to reject.",
    "undo": "Undo",
    "peopleScenes": "People & scenes",
-   "etaLeft": "about {{time}} left",
+   "etaLeft": "{{time}} left",
    "allowBackground": "Stops when you switch apps? Tap to let FleetingGleam run in the background",
    "canLeave": "You can leave this page or switch apps; the analysis carries on in the background.",
    "busyTitle": "“{{name}}” is still being analysed",

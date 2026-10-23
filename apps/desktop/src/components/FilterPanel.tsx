@@ -2,6 +2,7 @@ import { memo, useLayoutEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Photo, State, thumbSrc } from "../types";
 import { Star } from "./Tile";
+import Ticker from "./Ticker";
 
 export type ViewMode = "all" | State;
 /** `total` is how many photos the scene has; `count` is how many of them match the other filters right now. */
@@ -73,7 +74,7 @@ function FilterPanel({ counts, mode, onMode, scenes, sceneFilter, onScene, peopl
         <h4>{t("cull.status")}</h4>
         <div className="fp-rows" role="tablist">
           {MODES.map((id) => (
-            <button key={id} role="tab" aria-selected={mode === id} className={`fp-row ${mode === id ? "on" : ""}`} onClick={() => onMode(id)}>
+            <button key={id} id={`fp-${id}`} role="tab" aria-selected={mode === id} className={`fp-row ${mode === id ? "on" : ""}`} onClick={() => onMode(id)}>
               <span className="fp-ico">
                 {id === "keep" && <Star filled size={13} />}
                 {id === "review" && <Star filled={false} size={13} />}
@@ -81,7 +82,7 @@ function FilterPanel({ counts, mode, onMode, scenes, sceneFilter, onScene, peopl
                 {id === "all" && <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden><rect x="1.5" y="1.5" width="4" height="4" rx="1" /><rect x="6.5" y="1.5" width="4" height="4" rx="1" /><rect x="1.5" y="6.5" width="4" height="4" rx="1" /><rect x="6.5" y="6.5" width="4" height="4" rx="1" /></svg>}
               </span>
               <span>{t(`state.${id}`)}</span>
-              <em className="mono">{counts[id]}</em>
+              <em className="mono"><Ticker value={counts[id]} /></em>
             </button>
           ))}
         </div>

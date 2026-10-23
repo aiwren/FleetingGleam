@@ -1319,3 +1319,15 @@ img { -webkit-user-drag: none; }
 .about-link { width: 100%; text-align: left; background: none; border: 0; border-top: 1px solid var(--line); color: var(--ink); cursor: pointer; font: inherit; }
 .about-link:hover { background: var(--surface); }
 .about-link svg { color: var(--ash); flex: none; }
+
+/* ---- 分析中的分拣动效：一粒光从格子飘进筛选栏里对应的那一行 */
+.flights { position: fixed; inset: 0; pointer-events: none; z-index: 60; }
+.mote { position: absolute; top: 0; left: 0; display: grid; place-items: center; width: 16px; height: 16px; will-change: transform, opacity; }
+.mote.keep { filter: drop-shadow(0 0 6px rgba(226, 178, 60, .55)); }
+.mote.review { color: var(--ash); }
+.banner-leave { font-size: 12px; }
+/* ---- 首页：正在后台分析的项目卡片上的进度；后台分析完的提示 */
+.pprog { display: block; height: 3px; margin-top: 6px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.pprog i { display: block; height: 100%; border-radius: 2px; background: var(--gleam); transition: width .5s var(--ease-out); }
+.pdone { display: flex; align-items: center; gap: 12px; margin: 0 0 14px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); font-size: 13px; }
+.pdone .btn { margin-left: auto; }

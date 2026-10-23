@@ -81,6 +81,13 @@
   "loadingModel": "正在加载 AI 模型…",
   "doneTitle": "分析完成",
   "doneBody": "保留 {{keep}} 张 · 待复查 {{review}} 张 · 淘汰 {{reject}} 张",
+  "canLeave": "可以离开这个项目，分析会在后台接着跑。",
+  "landing": "分析出结果的照片会陆续落到这里",
+  "busyTitle": "「{{name}}」还在分析",
+  "busyBody": "同一时间只分析一个项目。先停下「{{name}}」（分析过的不会丢，回到它时接着来），分析这个项目？",
+  "busyStop": "停下它，分析这个",
+  "bgDone": "「{{name}}」分析完成",
+  "openProject": "打开",
   "stage": {
    "decode": "解码原图",
    "quality": "检测清晰度与曝光",

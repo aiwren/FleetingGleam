@@ -287,6 +287,13 @@ private fun ProjectCard(p: Project, inBin: Boolean, index: Int, armed: Boolean, 
     ) {
         Box {
             Cover(p.cover.orEmpty().take(4))
+            // 可见的入口（重命名、移到回收站）：长按还在，但没人知道要长按
+            if (!inBin) CardMenuButton(Modifier.align(Alignment.TopEnd).padding(6.dp)) {
+                overlay.showMenu(anchor.value.let { androidx.compose.ui.geometry.Rect(it.left, it.top, it.right, it.top + it.width * 0.55f) }, listOf(
+                    com.fleetinggleam.android.ui.components.MenuItem(t("bin.rename"), action = onRename),
+                    com.fleetinggleam.android.ui.components.MenuItem(t("bin.toBin"), action = onTrash),
+                ), alignEnd = true)
+            }
         }
         Column(Modifier.padding(horizontal = 2.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
             Text(p.name, style = Type.rowTitle.copy(color = c.ink, fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = Ellipsis)
@@ -301,6 +308,21 @@ private fun ProjectCard(p: Project, inBin: Boolean, index: Int, armed: Boolean, 
         if (inBin) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             FgButton(t("bin.restore"), onRestore, small = true)
             FgButton(if (armed) t("bin.purgeConfirm") else t("bin.purge"), onPurge, small = true, on = armed)
+        }
+    }
+}
+
+/** 封面右上角的"⋯"：半透明深色圆底上三个白点，在任何照片上都看得见。 */
+@Composable
+private fun CardMenuButton(modifier: Modifier, onClick: () -> Unit) {
+    Box(
+        modifier.size(28.dp).clip(androidx.compose.foundation.shape.CircleShape).background(Color(0x59000000))
+            .clickable(interactionSource = rememberSource(), indication = null, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        androidx.compose.foundation.Canvas(Modifier.size(14.dp)) {
+            val r = 1.6.dp.toPx()
+            for (k in 0..2) drawCircle(Color.White, r, androidx.compose.ui.geometry.Offset(size.width * (0.2f + 0.3f * k), size.height / 2))
         }
     }
 }
@@ -342,6 +364,12 @@ private fun HeroCard(p: Project, onOpen: () -> Unit, onTrash: () -> Unit, onRena
             }
         }
         Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(120.dp).background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color.Transparent, Color(0xCC000000)))))
+        CardMenuButton(Modifier.align(Alignment.TopEnd).padding(10.dp)) {
+            overlay.showMenu(anchor.value.let { androidx.compose.ui.geometry.Rect(it.left, it.top, it.right, it.top + it.height * 0.6f) }, listOf(
+                com.fleetinggleam.android.ui.components.MenuItem(t("bin.rename"), action = onRename),
+                com.fleetinggleam.android.ui.components.MenuItem(t("bin.toBin"), action = onTrash),
+            ), alignEnd = true)
+        }
         Row(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.Bottom) {
             Column(Modifier.weight(1f)) {
                 Text(AnalysingLine(p) ?: t("android.home.recent"), style = Type.monoSmall.copy(color = Color.White.copy(alpha = if (Session.running.collectAsState().value?.id == p.id) 0.95f else 0.7f)))

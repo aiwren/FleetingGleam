@@ -95,6 +95,9 @@ import java.io.File
 // ---------------------------------------------------------------- 排版：两端一样的两种布局
 
 /** 照片墙上的一项：它的键（路径）和最终的宽高比（分析前从文件头读到，所以瓷砖从头到尾不变大小）。 */
+/** 照片格子的圆角（瀑布与网格共用）。 */
+val TILE_RADIUS = 6.dp
+
 data class WallItem(val key: String, val ratio: Float)
 
 /** 一行：哪些项、行高。 */
@@ -312,7 +315,8 @@ fun Tile(
         prev = state
     }
     val recede by animateFloatAsState(if (state == "reject" && dim) 1f else 0f, tween(Motion.SLOW, easing = Motion.easeOut), label = "recede")
-    val shape = RoundedCornerShape(10.dp)
+    // 格子圆角：作者 2026-10-23 嫌 10dp 在瀑布墙上偏大，收到 6dp（光晕、显影边框跟着）
+    val shape = RoundedCornerShape(TILE_RADIUS)
     val kept = photo != null && state == "keep"
     Box(
         Modifier
@@ -325,7 +329,7 @@ fun Tile(
             }
             // 保留的格子周围一圈琥珀色的光晕：画两圈渐淡的圆角矩形，不用 shadow（每格一个阴影层，滚动时渲染线程吃不消）
             .then(if (kept) Modifier.drawBehind {
-                val r = 12.dp.toPx()
+                val r = (TILE_RADIUS + 2.dp).toPx()
                 // 深色底上同样的透明度会糊成一圈棕边，淡一些、收窄一些
                 for ((k, a) in if (c.dark) listOf(4f to 0.05f, 2f to 0.10f) else listOf(5f to 0.08f, 2.5f to 0.14f)) {
                     val o = k.dp.toPx()
@@ -366,7 +370,7 @@ private fun Developing(path: String, stage: StageInfo?) {
     val sweep by inf.animateFloat(1.3f, -1.3f, infiniteRepeatable(tween(if (stage != null) 1600 else 2600, easing = LinearEasing)), label = "sweep")
     val breathe by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(1200, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "breathe")
     val pctv by animateFloatAsState((stage?.pct ?: 0) / 100f, tween(500, easing = Motion.easeOut), label = "pct")
-    Box(Modifier.fillMaxSize().then(if (stage != null) Modifier.border(1.dp + (3.dp * breathe), c.gleam.copy(alpha = 0.14f * breathe), RoundedCornerShape(10.dp)) else Modifier)) {
+    Box(Modifier.fillMaxSize().then(if (stage != null) Modifier.border(1.dp + (3.dp * breathe), c.gleam.copy(alpha = 0.14f * breathe), RoundedCornerShape(TILE_RADIUS)) else Modifier)) {
         stage?.thumb?.let { th ->
             val left = 1f - pctv
             AsyncImage(File(th), null, Modifier.fillMaxSize().graphicsLayer {

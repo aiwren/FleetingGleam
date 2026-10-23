@@ -28,6 +28,8 @@ type Props = {
   showScore: boolean;
   index: number;
   interactive: boolean;
+  /** 分析中：第一次判出来也播动效。 */
+  stamp?: boolean;
   /** Stable functions that take the photo's path, so a tile only re-renders when something about *it* changed. */
   onSelect: (path: string) => void;
   onOpen: (path: string) => void;
@@ -54,17 +56,18 @@ const Cross = () => <svg width="12" height="12" viewBox="0 0 12 12" fill="none" 
  * Marks are made of light rather than badges: a kept photo is *lit* (gold gleam, warm halo), a maybe is a hollow
  * gleam, a reject simply lets the light fall away. A glass dock under the cursor marks a photo in one click.
  */
-function Tile({ path, ratio, photo, stage, state, reveal, dim, box, manual, groupEnd, showScore, index, interactive, onSelect, onOpen, onDecide }: Props) {
+function Tile({ path, ratio, photo, stage, state, reveal, dim, box, manual, groupEnd, showScore, index, interactive, stamp = false, onSelect, onOpen, onDecide }: Props) {
   const { t } = useTranslation();
   const ref = useRef<HTMLDivElement>(null);
   const prev = useRef<State | "">(state);
   const [changed, setChanged] = useState<{ to: State; n: number } | null>(null);
 
   // Effects play when the user *changes* a photo's mark, not every time a view is re-drawn.
+  // `stamp`：从"还没判"到有判定也算（分析中第一次判出来：星星弹出来、淘汰收一下光圈）；分析完的墙上不算，免得整面墙一起动
   useEffect(() => {
-    if (prev.current && state && prev.current !== state) setChanged((c) => ({ to: state as State, n: (c?.n ?? 0) + 1 }));
+    if ((prev.current || stamp) && state && prev.current !== state) setChanged((c) => ({ to: state as State, n: (c?.n ?? 0) + 1 }));
     prev.current = state;
-  }, [state]);
+  }, [state, stamp]);
 
   // Only the first screenful animates in, once. Tiles mounted by scrolling appear at once: waiting for an entrance feels like waiting for the image.
   const firstTime = useRef(!entered.has(path) && index < 36).current;

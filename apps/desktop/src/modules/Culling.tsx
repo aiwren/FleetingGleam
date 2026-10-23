@@ -1,4 +1,5 @@
-import { isModalOpen } from "../components/Modal";
+import Modal, { isModalOpen } from "../components/Modal";
+import Flights, { FlightsHandle } from "../components/Flights";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -158,40 +159,73 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const raf = useRef(0);
   const token = useRef(0);
   const [tick, setTick] = useState(0);
+  /** 正在分析的项目（同一时间只有一个，作者 2026-10-23：PC 也要后台分析）：离开它照跑，回来接上；首页卡片显示它的进度。 */
+  const running = useRef<{ id: string; name: string; folders: string[]; files: ProbeFile[] } | null>(null);
+  const [runningId, setRunningId] = useState<string | null>(null);
+  /** 分析中这一屏正显示着它（离开项目时为假：事件照收，界面不动）。 */
+  const attached = useRef(false);
+  const activeId = useRef<string | null>(null);
+  activeId.current = project?.id ?? null;
+  const filesRef = useRef<ProbeFile[]>([]);
+  filesRef.current = files;
+  /** 上一次进的项目（离开时只取消它自己的读取 / 分析）。 */
+  const enteredId = useRef<string | null>(null);
+  /** 在后台分析完的项目：首页给一句"分析完成 · 打开"。 */
+  const [bgDone, setBgDone] = useState<{ id: string; name: string } | null>(null);
+  /** 要分析这个项目，可另一个还在分析：问一句。 */
+  const [conflict, setConflict] = useState<{ id: string; name: string } | null>(null);
+  const pendingStart = useRef<(() => void) | null>(null);
+  /** 分析中照片判出来时飘向页签的光点。 */
+  const flights = useRef<FlightsHandle>(null);
   const flush = useCallback(() => {
     if (!raf.current) raf.current = requestAnimationFrame(() => { raf.current = 0; setTick((n) => n + 1); });
   }, []);
 
+  /**
+   * `quiet` = 只是从缓存打开（没有进度事件）；否则是一次真正的分析：它属于 `proj`，离开那个项目也照跑，
+   * 跑完时如果页面还开着它就把结果交给页面，不然只更新项目封面、首页提一句"分析完成"。
+   */
   const runScan = useCallback(async (proj: Project, total: number, quiet: boolean, tok: number, force = false) => {
-    results.current.clear(); stages.current.clear(); live.current.clear(); lastStage.current = null;
-    startedAt.current = performance.now();
-    setProgress({ done: 0, total });
-    setPhase(quiet ? "loading" : "scanning");
+    if (quiet) setPhase("loading");
+    else {
+      results.current.clear(); stages.current.clear(); live.current.clear(); lastStage.current = null;
+      startedAt.current = performance.now();
+      setProgress({ done: 0, total });
+      running.current = { id: proj.id, name: proj.name, folders: proj.folders, files: filesRef.current };
+      setRunningId(proj.id);
+      attached.current = true;
+      setPhase("scanning");
+    }
+    // 事件只认正在跑的这次分析（离开项目也照收，回来时照片墙是全的）
+    const own = () => running.current?.id === proj.id;
+    // 结果交不交给页面：安静的读取看 token；分析看页面是不是还开着它
+    const mine = () => (quiet ? tok === token.current : attached.current && activeId.current === proj.id);
     const offs = quiet ? [] : await Promise.all([
-      listen<{ done: number; total: number }>("scan-progress", (e) => { if (tok === token.current) setProgress(e.payload); }),
+      listen<{ done: number; total: number }>("scan-progress", (e) => { if (own()) setProgress(e.payload); }),
       listen<ScanInfo>("scan-info", (e) => setScanInfo(e.payload)),
       listen<{ path: string; stage: string; pct: number; thumb?: string | null; width?: number | null; height?: number | null }>("scan-stage", (e) => {
-        if (tok !== token.current) return;
+        if (!own()) return;
         const p = e.payload, old = stages.current.get(p.path);
         stages.current.set(p.path, { stage: p.stage, pct: p.pct, thumb: p.thumb ?? old?.thumb, width: p.width ?? old?.width, height: p.height ?? old?.height });
         lastStage.current = { path: p.path, stage: p.stage };
         flush();
       }),
       listen<Photo>("scan-photo", (e) => {
-        if (tok !== token.current) return;
+        if (!own()) return;
         results.current.set(e.payload.path, e.payload);
         stages.current.delete(e.payload.path);
         flush();
       }),
-      // 边分析边判：只有判定变了的那些会发来
+      // 边分析边判：只有判定变了的那些会发来；页面开着时让它们飞进页签
       listen<{ path: string; decision: Decision }[]>("scan-decide", (e) => {
-        if (tok !== token.current) return;
+        if (!own()) return;
         for (const j of e.payload) live.current.set(j.path, j.decision);
         flush();
+        if (attached.current) requestAnimationFrame(() => flights.current?.judged(e.payload));
       }),
       // the photos that were already analysed arrive in batches
       listen<Photo[]>("scan-photos", (e) => {
-        if (tok !== token.current) return;
+        if (!own()) return;
         for (const p of e.payload) { results.current.set(p.path, p); stages.current.delete(p.path); }
         flush();
       }),
@@ -200,17 +234,28 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
       // 边分析边判用和分析完一样的参数
       const liveArgs = quiet ? null : { keep_ratio: proj.keepCap ?? 1, pick_mode: proj.pickMode ?? "diverse", one_per_group: proj.onePerGroup ?? false, overrides: proj.overrides ?? {} };
       const res = await invoke<Photo[]>("scan_project", { key: proj.id, dirs: proj.folders, compute: "auto", quality: currentTier(), style: proj.style, learn: getSettings().learn && proj.learn !== false, quiet, force, eyeMethod: eyeMethodNow(), live: liveArgs });
-      if (tok !== token.current) return;
+      if (!quiet) { running.current = null; setRunningId(null); }
+      const cover = [...res].sort((a, b) => b.score - a.score).slice(0, 4).map((p) => p.thumb);
+      if (!mine()) {
+        // 在后台分析完：封面与张数更新，首页提一句
+        if (!quiet) { updateProject(proj.id, { cover, count: res.length }); setBgDone({ id: proj.id, name: proj.name }); }
+        return;
+      }
       setPhotos(res);
       setPhase("done");
       setDirty(0);
-      updateProject(proj.id, { cover: [...res].sort((a, b) => b.score - a.score).slice(0, 4).map((p) => p.thumb) });
+      updateProject(proj.id, { cover });
       if (!quiet) { setCelebrate(true); setTimeout(() => setCelebrate(false), 3200); }
     } catch (e) {
+      if (!quiet) { running.current = null; setRunningId(null); }
       // a cancelled scan is not an error: the project simply goes back to "ready to analyse"
-      if (tok === token.current) { if (String(e) !== "cancelled") setError(String(e)); setPhase("ready"); }
+      if (mine()) { if (String(e) !== "cancelled") setError(String(e)); setPhase("ready"); }
     } finally {
       offs.forEach((f) => f());
+      // 问过"停下它、分析这个"的：那个停下了，这个开始
+      const next = pendingStart.current;
+      pendingStart.current = null;
+      next?.();
     }
   }, [flush]);
 
@@ -219,10 +264,23 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const folderKey = project ? `${project.id}|${project.folders.join("|")}` : "";
   useEffect(() => {
     const tok = ++token.current;
-    // whatever scan was running belonged to the project (or settings) just left; it stops at its next photo
-    invoke("scan_cancel").catch(() => { /* not in Tauri */ });
+    const run = running.current;
+    const left = enteredId.current;
+    enteredId.current = project?.id ?? null;
     undoStack.current = []; // the marks that could be undone belonged to the project just left
     setSelected(null); setQuery(""); setZoomed(false); setError(null); setMode("all"); setSceneFilter(null); setPersonFilter(null); setSceneView(false); setCelebrate(false); setDirty(0); setNasProg(null);
+    setBgDone((d) => (d && project && d.id === project.id ? null : d));
+    // 回到正在分析的那个项目（文件夹没变）：接上，照片墙和进度都还在，不重来
+    if (project && run && run.id === project.id && run.folders.join("|") === project.folders.join("|")) {
+      attached.current = true;
+      setFiles(run.files);
+      setPhase("scanning");
+      flush();
+      return;
+    }
+    // 离开的那个项目：只停它自己的读取 / 分析；正在分析的那个转到后台接着跑
+    attached.current = false;
+    if (left && left !== run?.id) invoke("scan_cancel", { key: left }).catch(() => { /* not in Tauri */ });
     if (!project || project.folders.length === 0) { setPhase("idle"); setPhotos([]); setFiles([]); return; }
     setPhase("probing");
     (async () => {
@@ -268,10 +326,21 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
 
   const startScan = async () => {
     if (!project) return;
+    // 同一时间只分析一个项目：另一个还在分析时先问一句
+    const run = running.current;
+    if (run && run.id !== project.id) { setConflict({ id: run.id, name: run.name }); return; }
     // The app picks the model (strategy.ts); what it needs, the eye model and people recognition included, is fetched under one question the first time.
     const tier = await resolveTier();
     if ((await ensurePacks(analysisPacks(tier))) === "cancelled") return;
     runScan(project, files.length, false, token.current);
+  };
+  /** 停下正在跑的那次分析（不管页面开着哪个项目）。 */
+  const stopScan = () => { invoke("scan_cancel", { key: running.current?.id }).catch(() => { /* not in Tauri */ }); };
+  /** 问过了：先停下另一个项目的分析（分析过的都在缓存里，回到它时接着来），再分析这个。 */
+  const stopOtherAndStart = () => {
+    setConflict(null);
+    pendingStart.current = () => { void startScan(); };
+    stopScan();
   };
   const reevaluate = () => { if (project) runScan(project, files.length, true, token.current); };
   const forceRescan = () => { if (project) runScan(project, files.length, false, token.current, true); };
@@ -493,11 +562,12 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   // Tiles have their final size from the start: real aspect ratios come from the file headers, not from analysis.
   const items: Item[] = useMemo(() => {
     if (phase === "scanning") {
-      return files.slice(0, MAX_TILES).map((f) => ({ path: f.path, ratio: f.width / f.height, photo: results.current.get(f.path) }));
+      // 分析中按眼下的判定筛（"全部"是整个文件夹）
+      return files.slice(0, MAX_TILES).filter((f) => mode === "all" || live.current.get(f.path)?.state === mode).map((f) => ({ path: f.path, ratio: f.width / f.height, photo: results.current.get(f.path) }));
     }
     return shown.map((p) => ({ path: p.path, ratio: p.width / p.height, photo: p }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, files, shown, progress.done]);
+  }, [phase, files, shown, progress.done, mode, tick]);
   const wallItems = useMemo(() => items.map((it) => ({ key: it.path, ratio: it.ratio })), [items]);
   const openViewer = useCallback((path: string) => {
     const r = document.getElementById(`t-${path}`)?.getBoundingClientRect();
@@ -511,7 +581,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   // The inspector is there while a photo is selected (and the person has not hidden it). Nothing selected, nothing to show: no empty panel.
   // When it appears the wall is laid out at its final width at once and glides there (see `wallDelta`), so the photos do not hop between rows.
   const showInspector = phase === "done" && !!sel && !inspectorHidden && !!project && layout !== "compare";
-  const panelShown = phase === "done" && panelOpen;
+  const panelShown = (phase === "done" || phase === "scanning") && panelOpen;
   const lastPanels = useRef({ inspector: showInspector, filter: panelShown });
   useLayoutEffect(() => {
     const was = lastPanels.current;
@@ -737,12 +807,13 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
                     <div className="banner-line">
                       <b>{t("cull.analyzing")}</b>
                       <span className="mono ash banner-count"><Ticker value={progress.done} /> / {progress.total}{eta ? ` · ${t("cull.eta", { s: eta })}` : ""}{liveCounts ? ` · ${t("cull.doneBody", liveCounts)}` : ""}</span>
-                      <button type="button" className="btn banner-stop" onClick={() => { invoke("scan_cancel").catch(() => { /* not in Tauri */ }); }}>{t("cull.stop")}</button>
+                      <button type="button" className="btn banner-stop" onClick={stopScan}>{t("cull.stop")}</button>
                     </div>
                     <span className="mono ash banner-now">
                       {last ? `${last.path.split("/").pop()} · ${t(`cull.stage.${last.stage}`, { defaultValue: last.stage })}` : t("cull.loadingModel")}
                     </span>
                     <div className="bar live"><motion.i animate={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%` }} transition={{ ease: EASE_OUT, duration: 0.5 }} /></div>
+                    <span className="ash banner-leave">{t("cull.canLeave")}</span>
                   </div>
                 ) : (
                   <div className="banner-text done">
@@ -755,12 +826,18 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
           )}
         </AnimatePresence>
 
+        {scanning && <Flights ref={flights} scrollRef={scrollRef} />}
+        <Modal open={!!conflict} onClose={() => setConflict(null)} title={t("cull.busyTitle", { name: conflict?.name ?? "" })}
+          footer={<><button className="btn" onClick={() => setConflict(null)}>{t("organize.cancel")}</button><button className="btn primary" onClick={stopOtherAndStart}>{t("cull.busyStop")}</button></>}>
+          <p>{t("cull.busyBody", { name: conflict?.name ?? "" })}</p>
+        </Modal>
         <div className="body-split">
-        {phase === "done" && panelOpen && (
-          <FilterPanel counts={facets.status} mode={mode} onMode={setMode} scenes={sceneItems} sceneFilter={sceneFilter} onScene={setSceneFilter} onBrowseScenes={openSceneView} width={filterW.width}
-            people={peopleItems} personFilter={personFilter} onPerson={setPersonFilter} />
+        {panelShown && (
+          <FilterPanel counts={scanning ? { all: files.length, keep: liveCounts?.keep ?? 0, review: liveCounts?.review ?? 0, reject: liveCounts?.reject ?? 0 } : facets.status}
+            mode={mode} onMode={setMode} scenes={scanning ? [] : sceneItems} sceneFilter={sceneFilter} onScene={setSceneFilter} onBrowseScenes={openSceneView} width={filterW.width}
+            people={scanning ? [] : peopleItems} personFilter={personFilter} onPerson={setPersonFilter} />
         )}
-        {phase === "done" && panelOpen && <Resizer panel={filterW} edge="right" label={t("cull.filters")} />}
+        {panelShown && <Resizer panel={filterW} edge="right" label={t("cull.filters")} />}
         <div className="scroll" ref={scrollRef}>
           {error && error !== "cull.nasOffline" && error !== "cull.nasDisabled" && <p className="error">{t(error, { defaultValue: error })}</p>}
           {(error === "cull.nasOffline" || error === "cull.nasDisabled") && <p className="error">{t(error, { name: nasOff })} <button className="btn sm" onClick={() => setReloadKey((k) => k + 1)}>{t("cull.nasRetry")}</button></p>}
@@ -772,6 +849,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
 
           {!project && store.projects.length > 0 && (
             <ProjectHome projects={store.projects} onOpen={(id) => setActive(id)} onNew={() => newProjectFromDialog()}
+              running={runningId ? { id: runningId, done: progress.done, total: progress.total } : null} bgDone={bgDone}
               search={index.available && allFolders.length > 0 ? { query, setQuery, hits, progress: index.progress, inputRef: searchRef } : undefined}
               onPick={(id, path) => { setPendingSelect(path); setQuery(""); setActive(id); }}
               onOpenStyles={onOpenStyles} />
@@ -806,6 +884,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
               onPick={(sc) => { setSceneFilter(sc); setSceneView(false); }} />
           )}
 
+          {scanning && mode !== "all" && items.length === 0 && <p className="ash pad">{t("cull.landing")}</p>}
           {phase === "done" && !sceneView && shown.length === 0 && (hits
             ? <div className="pad nosearch"><b>{t("search.none", { q: query.trim() })}</b><p className="ash">{t("search.noneHint")}</p></div>
             : <p className="ash pad">{t("cull.emptyView")}</p>)}
@@ -818,7 +897,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
               const state = !it.photo ? "" : d?.state ?? "";
               return (
                 <Tile key={it.path} path={it.path} ratio={it.ratio} photo={it.photo} stage={stages.current.get(it.path)}
-                  state={state} reveal={celebrate && phase === "done"} dim={state === "reject" && mode === "all"}
+                  state={state} reveal={celebrate && phase === "done"} dim={state === "reject" && mode === "all"} stamp={scanning}
                   manual={!!d?.manual} groupEnd={groupEnds.has(it.path)} showScore={sortBy === "score"} index={i}
                   interactive={phase === "done" && !!it.photo} box={box}
                   onSelect={tileSelect} onOpen={openViewer} onDecide={tileDecide} />

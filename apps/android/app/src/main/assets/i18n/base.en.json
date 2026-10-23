@@ -84,6 +84,13 @@
   "loadingModel": "Loading AI model…",
   "doneTitle": "Analysis complete",
   "doneBody": "{{keep}} kept · {{review}} to review · {{reject}} rejected",
+  "canLeave": "You can leave this project; the analysis carries on in the background.",
+  "landing": "Photos land here as they are analysed",
+  "busyTitle": "“{{name}}” is still being analysed",
+  "busyBody": "Only one project is analysed at a time. Stop “{{name}}” (what it analysed is kept; it resumes when you return) and analyse this one?",
+  "busyStop": "Stop it, analyse this one",
+  "bgDone": "“{{name}}” is done",
+  "openProject": "Open",
   "stage": {
    "decode": "Decoding original",
    "quality": "Checking sharpness & exposure",

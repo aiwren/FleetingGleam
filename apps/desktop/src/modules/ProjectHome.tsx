@@ -14,7 +14,11 @@ import { Project, TRASH_DAYS, createProject, emptyTrash, purgeProject, restorePr
 const icon = (d: string) => <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><path d={d} /></svg>;
 
 /** The module's landing page: every project as a card, plus a recycle bin for the ones you delete. */
-export default function ProjectHome({ projects, onOpen, onNew, search, onPick, onOpenStyles }: {
+export default function ProjectHome({ projects, onOpen, onNew, search, onPick, onOpenStyles, running, bgDone }: {
+  /** 正在后台分析的项目和它的进度：卡片上显示。 */
+  running?: { id: string; done: number; total: number } | null;
+  /** 在后台分析完的项目：顶上一句"分析完成 · 打开"。 */
+  bgDone?: { id: string; name: string } | null;
   projects: Project[];
   onOpen: (id: string) => void;
   onNew: () => void;
@@ -94,6 +98,12 @@ export default function ProjectHome({ projects, onOpen, onNew, search, onPick, o
       </motion.div>
 
       {searching && search && <SearchResults projects={live} hits={search.hits} query={search.query.trim()} onPick={onPick} />}
+      {bgDone && !searching && (
+        <div className="pdone">
+          <span>{t("cull.bgDone", { name: bgDone.name })}</span>
+          <button className="btn sm" onClick={() => onOpen(bgDone.id)}>{t("cull.openProject")}</button>
+        </div>
+      )}
       <div className="pgrid" style={searching ? { display: "none" } : undefined}>
         <AnimatePresence mode="popLayout" initial>
           {list.map((p, i) => {
@@ -114,7 +124,8 @@ export default function ProjectHome({ projects, onOpen, onNew, search, onPick, o
                       onBlur={(e) => { const v = e.target.value.trim(); if (v) updateProject(p.id, { name: v }); setRenaming(null); }}
                       onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") setRenaming(null); }} />
                   ) : <b onDoubleClick={(e) => { if (!inBin) { e.stopPropagation(); setRenaming(p.id); } }}>{p.name}</b>}
-                  <span className="mono ash">{inBin ? t("bin.daysLeft", { n: daysLeft(p), count: daysLeft(p) }) : `${t("home.photos", { count: p.count })} · ${t("home.folders", { count: p.folders.length })}`}</span>
+                  <span className="mono ash">{inBin ? t("bin.daysLeft", { n: daysLeft(p), count: daysLeft(p) }) : running?.id === p.id ? `${t("cull.analyzing")} · ${running.done} / ${running.total}` : `${t("home.photos", { count: p.count })} · ${t("home.folders", { count: p.folders.length })}`}</span>
+                  {running?.id === p.id && <span className="pprog"><i style={{ width: `${running.total ? (running.done / running.total) * 100 : 0}%` }} /></span>}
                 </div>
                 {!inBin ? (
                   <div className="pcard-tools" onClick={(e) => e.stopPropagation()}>
