@@ -1,7 +1,7 @@
 import { ReactNode, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
-import { EASE_OUT, SPRING } from "../motion";
+import { DUR, EASE_OUT } from "../motion";
 
 /* How many dialogs are open: the keyboard shortcuts of the pages underneath stay quiet while one is. */
 let openDialogs = 0;
@@ -25,9 +25,10 @@ export default function Modal({ open, onClose, title, children, footer, locked =
   return createPortal(
     <AnimatePresence>
       {open && (
-        <motion.div className="modal-back" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.22, ease: EASE_OUT }} onMouseDown={() => !locked && onClose()}>
-          <motion.div className={`modal ${wide ? "wide" : ""}`} role="dialog" aria-modal aria-label={title} initial={{ opacity: 0, y: 16, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 8, scale: 0.98 }}
-            transition={SPRING.soft} onMouseDown={(e) => e.stopPropagation()}>
+        <motion.div className="modal-back" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: DUR.base, ease: EASE_OUT }} onMouseDown={() => !locked && onClose()}>
+          {/* 对话框 320 ms expo-out，不用弹簧（M10.2） */}
+          <motion.div className={`modal ${wide ? "wide" : ""}`} role="dialog" aria-modal aria-label={title} initial={{ opacity: 0, y: 12, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 6, scale: 0.98 }}
+            transition={{ duration: DUR.base, ease: EASE_OUT }} onMouseDown={(e) => e.stopPropagation()}>
             <h3>{title}</h3>
             <div className="modal-body">{children}</div>
             <div className="modal-foot">{footer}</div>

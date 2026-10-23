@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import RowMenu from "../components/RowMenu";
 import { useTranslation } from "react-i18next";
-import { AnimatePresence, motion } from "motion/react";
+import { motion } from "motion/react";
 import { pickFolder, baseName } from "../projectActions";
 import { StyleInfo, createStyle, deleteStyle, learnFromFolder, refreshStyles, renameStyle, resetStyle, setDefaultStyle, useStyles } from "../styles";
 import LearnMeter from "../components/LearnMeter";
@@ -8,7 +9,7 @@ import { useProjects } from "../projects";
 import Modal from "../components/Modal";
 import SearchBox from "../components/SearchBox";
 import Segmented from "../components/Segmented";
-import { SPRING, EASE_OUT } from "../motion";
+import { SPRING } from "../motion";
 
 type Sort = "name" | "recent" | "usage";
 
@@ -17,36 +18,6 @@ function createdAt(id: string): number | null {
   if (id === "default" || !id.startsWith("s")) return null;
   const n = Number(id.slice(1));
   return Number.isFinite(n) ? n : null;
-}
-
-/** A small "..." menu for the actions that are secondary or destructive, so the row itself only ever shows the one
- * action worth a full button (learning from a folder). Same open/close/Escape wiring as ViewMenu. */
-function RowMenu({ label, children }: { label: string; children: React.ReactNode }) {
-  const [open, setOpen] = useState(false);
-  const root = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const away = (e: PointerEvent) => { if (!root.current?.contains(e.target as Node)) setOpen(false); };
-    const key = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
-    window.addEventListener("pointerdown", away);
-    window.addEventListener("keydown", key);
-    return () => { window.removeEventListener("pointerdown", away); window.removeEventListener("keydown", key); };
-  }, [open]);
-  return (
-    <div className="style-menu" ref={root}>
-      <button className={`btn sm icon ${open ? "on" : ""}`} aria-label={label} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden><circle cx="3.2" cy="8" r="1.3" /><circle cx="8" cy="8" r="1.3" /><circle cx="12.8" cy="8" r="1.3" /></svg>
-      </button>
-      <AnimatePresence>
-        {open && (
-          <motion.div className="vmpanel style-menu-panel" role="menu" initial={{ opacity: 0, y: -6, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -4, scale: 0.98 }} transition={{ duration: 0.18, ease: EASE_OUT }}
-            onClick={() => setOpen(false)}>
-            <div className="vmlist">{children}</div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
 }
 
 /** Rename in place: a plain visible field (more discoverable in a management list than a double-click reveal), but it
@@ -199,7 +170,7 @@ export default function Styles({ active, from, onBack }: { active: boolean; from
                   const created = createdAt(s.id);
                   const hasData = s.info.labels + s.info.refs > 0;
                   return (
-                    <motion.div key={s.id} className="style-card" layout initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ ...SPRING.soft, delay: i * 0.04 }}>
+                    <motion.div key={s.id} className="style-card" layout initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ ...SPRING.soft, delay: Math.min(i, 8) * 0.024 }}>
                       <div className="style-head">
                         <span className="style-avatar" aria-hidden>{displayName(s).slice(0, 1).toUpperCase()}</span>
                         <NameField value={s.name} placeholder={t("styles.defaultName")} onCommit={(name) => renameStyle(s.id, name)} />

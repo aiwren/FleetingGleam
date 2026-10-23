@@ -4,14 +4,13 @@ import { AnimatePresence, motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 import { SPRING } from "../motion";
 import Modal from "../components/Modal";
+import RowMenu from "../components/RowMenu";
 import Select from "../components/Select";
 import SearchBox from "../components/SearchBox";
 import { Hit } from "../search";
 import { baseName, pickFolder } from "../projectActions";
 import { useStyles } from "../styles";
 import { Project, TRASH_DAYS, createProject, emptyTrash, purgeProject, restoreProject, trashProject, updateProject } from "../projects";
-
-const icon = (d: string) => <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><path d={d} /></svg>;
 
 /** The module's landing page: every project as a card, plus a recycle bin for the ones you delete. */
 export default function ProjectHome({ projects, onOpen, onNew, search, onPick, onOpenStyles, running, bgDone }: {
@@ -71,10 +70,11 @@ export default function ProjectHome({ projects, onOpen, onNew, search, onPick, o
 
   return (
     <div className="phome">
-      <motion.div className="phome-head" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={SPRING.soft}>
+      {/* 标题下没有常驻的副标题（设计审查 M2.1）；工具区：搜索、分段、"新建项目"主按钮，次要动作收进 ⋯（M2.2 / M2.6） */}
+      <motion.div className="phome-head" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}>
         <div>
           <h1>{t(view === "projects" ? "home.title" : "bin.tab")}</h1>
-          <p className="ash">{view === "projects" ? t("home.subtitle") : t("bin.hint", { days: TRASH_DAYS })}</p>
+          {view === "bin" && <p className="ash">{t("bin.hint", { days: TRASH_DAYS })}</p>}
         </div>
         <div className="phome-tools">
           {search && view === "projects" && (
@@ -93,7 +93,13 @@ export default function ProjectHome({ projects, onOpen, onNew, search, onPick, o
               {armed === "all" ? t("bin.emptyConfirm") : t("bin.emptyAll")}
             </button>
           )}
-          {view === "projects" && onOpenStyles && <button className="btn" onClick={onOpenStyles}>{t("nav.styles")}</button>}
+          {view === "projects" && <button className="btn primary" onClick={onNew}>{t("home.new")}</button>}
+          {view === "projects" && (
+            <RowMenu label={t("more.open")}>
+              <button role="menuitem" onClick={openDetailed}><i aria-hidden />{t("home.newDetailed")}</button>
+              {onOpenStyles && <button role="menuitem" onClick={onOpenStyles}><i aria-hidden />{t("nav.styles")}</button>}
+            </RowMenu>
+          )}
         </div>
       </motion.div>
 
@@ -112,8 +118,8 @@ export default function ProjectHome({ projects, onOpen, onNew, search, onPick, o
             return (
               <motion.div key={p.id} className={`pcard ${inBin ? "inbin" : ""}`} role="button" tabIndex={0} layout="position"
                 initial={{ opacity: 0, y: 16, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, scale: 0.94 }}
-                transition={{ ...SPRING.soft, delay: 0.04 + i * 0.045 }}
-                whileHover={inBin ? undefined : { y: -3, transition: SPRING.tap }} whileTap={inBin ? undefined : { scale: 0.985, transition: SPRING.tap }}
+                transition={{ ...SPRING.soft, delay: 0.04 + Math.min(i, 8) * 0.024 }}
+                whileHover={inBin ? undefined : { y: -2, transition: SPRING.tap }} whileTap={inBin ? undefined : { scale: 0.985, transition: SPRING.tap }}
                 onClick={() => !inBin && renaming !== p.id && onOpen(p.id)} onKeyDown={(e) => { if (e.key === "Enter" && !inBin && renaming !== p.id) onOpen(p.id); }}>
                 <div className={`pcover n${cover.length}`}>
                   {cover.length ? cover.map((c) => <img key={c} src={convertFileSrc(c)} alt="" draggable={false} />) : <span className="ash">{t("home.empty")}</span>}
@@ -128,8 +134,11 @@ export default function ProjectHome({ projects, onOpen, onNew, search, onPick, o
                   {running?.id === p.id && <span className="pprog"><i style={{ width: `${running.total ? (running.done / running.total) * 100 : 0}%` }} /></span>}
                 </div>
                 {!inBin ? (
-                  <div className="pcard-tools" onClick={(e) => e.stopPropagation()}>
-                    <button title={t("bin.toBin")} aria-label={t("bin.toBin")} onClick={() => setAsk(p)}>{icon("M2.5 4h9M5.5 4V2.6h3V4M3.8 4l.5 7.4h5.4L10.2 4M5.8 6.2v3.2M8.2 6.2v3.2")}</button>
+                  <div className="pcard-tools">
+                    <RowMenu label={t("more.open")} plain onPhoto>
+                      <button role="menuitem" onClick={() => setRenaming(p.id)}><i aria-hidden />{t("bin.rename")}</button>
+                      <button role="menuitem" onClick={() => setAsk(p)}><i aria-hidden />{t("bin.toBin")}</button>
+                    </RowMenu>
                   </div>
                 ) : (
                   <div className="pbin-actions" onClick={(e) => e.stopPropagation()}>
@@ -142,29 +151,19 @@ export default function ProjectHome({ projects, onOpen, onNew, search, onPick, o
               </motion.div>
             );
           })}
-          {view === "projects" && (
-            <motion.div key="new" className="pcard pnew" layout="position" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-              transition={{ ...SPRING.soft, delay: 0.04 + list.length * 0.045 }} whileHover={{ y: -3, transition: SPRING.tap }} whileTap={{ scale: 0.985, transition: SPRING.tap }}>
-              <button className="pnew-quick" onClick={onNew}>
-                <span className="pplus"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M9 3v12M3 9h12" /></svg></span>
-                <b>{t("home.new")}</b>
-              </button>
-              <button className="pnew-detail" onClick={openDetailed}>{t("home.newDetailed")}</button>
-            </motion.div>
-          )}
         </AnimatePresence>
       </div>
       {view === "bin" && bin.length === 0 && <p className="ash pad">{t("bin.empty")}</p>}
 
       <AnimatePresence>
-        <Modal open={!!ask} onClose={() => setAsk(null)} title={t("bin.confirmTitle")}
+        <Modal key="ask" open={!!ask} onClose={() => setAsk(null)} title={t("bin.confirmTitle")}
           footer={<>
             <button className="btn" onClick={() => setAsk(null)}>{t("organize.cancel")}</button>
             <button className="btn danger" autoFocus onClick={() => { if (ask) moveToBin(ask); setAsk(null); }}>{t("bin.toBin")}</button>
           </>}>
           <p>{t("bin.confirmBody", { name: ask?.name ?? "", days: TRASH_DAYS })}</p>
         </Modal>
-        <Modal open={!!detailed} onClose={() => setDetailed(null)} title={t("home.new")}
+        <Modal key="detailed" open={!!detailed} onClose={() => setDetailed(null)} title={t("home.new")}
           footer={<>
             <button className="btn" onClick={() => setDetailed(null)}>{t("organize.cancel")}</button>
             <button className="btn primary" onClick={confirmDetailed}>{t("home.new")}</button>

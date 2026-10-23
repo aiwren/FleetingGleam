@@ -19,7 +19,7 @@ export default function SearchBox({ value, onChange, inputRef, placeholder, prog
   const expanded = open || focused || wide;
   const r = 7, c = 2 * Math.PI * r;
   return (
-    <motion.label className={`sbox ${open ? "open" : ""}`} animate={{ width: expanded ? (wide ? 320 : 250) : 34 }} transition={SPRING.glide}
+    <motion.label className={`sbox ${open ? "open" : ""}`} animate={{ width: expanded ? 250 : 34 }} transition={SPRING.glide}
       data-tip={progress !== null ? t("search.indexing", { pct: Math.round(progress * 100) }) : undefined}>
       <span className="sbox-ico" aria-hidden>
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"><circle cx="7" cy="7" r="4.6" /><path d="M10.6 10.6L14 14" /></svg>

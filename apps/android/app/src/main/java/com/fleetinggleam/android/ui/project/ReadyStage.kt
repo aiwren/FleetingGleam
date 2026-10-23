@@ -75,25 +75,22 @@ fun ReadyStage(project: Project, count: Int, bytes: Long, etaSeconds: Int?, file
     var n by remember { mutableIntStateOf(0) }
     LaunchedEffect(count) { delay(350); n = count }
     Column(Modifier.fillMaxSize()) {
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(top = 12.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        // 封面卡单独入场；下面的分组一次淡入，不再逐个升起（设计审查 A4.6）；分组之间 24dp（A4.7）
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(top = 12.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
             CoverCollage(files.take(3), thumbs, n, listOfNotNull(fmtBytes(bytes), etaSeconds?.let { t("cull.readyEta", "time" to duration(it)) }).joinToString(" · "))
-            // 上次分析到一半（离开了、停下了）：分析过的都留着，这次只分析剩下的
-            if (done > 0) Text(t("android.ready.resume", "done" to done), style = Type.rowDesc.copy(color = c.ash), modifier = Modifier.padding(horizontal = 4.dp))
-            SettingGroup("") {
-                Box(Modifier.riseIn(1, scaleFrom = 1f)) { NameRow(name) { name = it } }
-            }
-            Box(Modifier.riseIn(2, scaleFrom = 1f)) {
+            Column(Modifier.riseIn(1, rise = 0f, scaleFrom = 1f), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                // 上次分析到一半（离开了、停下了）：分析过的都留着，这次只分析剩下的
+                if (done > 0) Text(t("android.ready.resume", "done" to done), style = Type.rowDesc.copy(color = c.ash), modifier = Modifier.padding(horizontal = 4.dp))
+                SettingGroup("") { NameRow(name) { name = it } }
                 SettingGroup(t("pset.folders")) {
                     project.folders.forEachIndexed { i, f ->
                         SettingRow(baseName(f), shortPath(f), first = i == 0, icon = Icons.FOLDER, control = if (project.folders.size > 1) {
                             { Box(Modifier.size(32.dp).clip(CircleShape).clickable { onRemoveFolder(f) }, contentAlignment = Alignment.Center) { FgIcon(Icons.CLOSE, size = 14.dp, color = c.ash) } }
                         } else null)
                     }
-                    SettingRow(t("cull.addFolder"), icon = Icons.PLUS, onClick = onAddFolder, control = { FgIcon(Icons.CHEVRON, size = 14.dp, stroke = 1.6f, color = c.ash) })
+                    SettingRow(t("cull.addFolder"), icon = Icons.PLUS, iconBox = 18f, onClick = onAddFolder, control = { FgIcon(Icons.CHEVRON, size = 14.dp, stroke = 1.6f, color = c.ash) })
                 }
-            }
-            Box(Modifier.riseIn(3, scaleFrom = 1f)) { SettingGroup(t("pset.prefs")) { ProjectPrefs(project) } }
-            Box(Modifier.riseIn(4, scaleFrom = 1f)) {
+                SettingGroup(t("pset.prefs")) { ProjectPrefs(project) }
                 SettingGroup(t("pset.note")) {
                     Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp)) {
                         if (note.isEmpty()) Text(t("pset.notePh"), style = Type.body.copy(color = c.ash))
@@ -102,9 +99,9 @@ fun ReadyStage(project: Project, count: Int, bytes: Long, etaSeconds: Int?, file
                 }
             }
         }
-        Column(Modifier.fillMaxWidth().background(c.panel).padding(horizontal = 16.dp, vertical = 12.dp).navigationBarsPadding()) {
-            Text(t("android.ready.note"), style = Type.small.copy(color = c.ash), textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
-            FgButton(t("cull.start"), onStart, primary = true, modifier = Modifier.padding(top = 10.dp).fillMaxWidth())
+        // 底部只有按钮：解释句删掉了，预计时间在封面卡上（设计审查 A4.5）
+        Box(Modifier.fillMaxWidth().background(c.panel).padding(horizontal = 16.dp, vertical = 12.dp).navigationBarsPadding()) {
+            FgButton(t("cull.start"), onStart, primary = true, modifier = Modifier.fillMaxWidth())
         }
     }
 }
@@ -119,12 +116,15 @@ private fun NameRow(name: String, onChange: (String) -> Unit) {
     val focus = LocalFocusManager.current
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(t("pset.name"), style = Type.rowTitle.copy(color = c.ink))
-        BasicTextField(
-            name, onChange, singleLine = true, textStyle = Type.rowTitle.copy(color = c.ink, textAlign = TextAlign.End), cursorBrush = SolidColor(c.ink),
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { focus.clearFocus() }),
-            modifier = Modifier.weight(1f).padding(start = 16.dp),
-        )
-        FgIcon(Icons.EDIT, size = 14.dp, stroke = 1.5f, color = c.ash, modifier = Modifier.padding(start = 8.dp))
+        // 右对齐的墨色值就表示可改（iOS 的做法），不放铅笔图标（设计审查 A4.2）；空着时灰色占位
+        Box(Modifier.weight(1f).padding(start = 16.dp)) {
+            if (name.isEmpty()) Text(t("home.namePlaceholder"), style = Type.rowTitle.copy(color = c.ash, textAlign = TextAlign.End), modifier = Modifier.fillMaxWidth())
+            BasicTextField(
+                name, onChange, singleLine = true, textStyle = Type.rowTitle.copy(color = c.ink, textAlign = TextAlign.End), cursorBrush = SolidColor(c.ink),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { focus.clearFocus() }),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
     }
 }
 
@@ -132,7 +132,7 @@ private fun NameRow(name: String, onChange: (String) -> Unit) {
 @Composable
 private fun CoverCollage(files: List<ProbeFile>, thumbs: Map<String, String>, count: Int, meta: String) {
     val c = LocalFg.current
-    Box(Modifier.riseIn(0, scaleFrom = 0.98f).fillMaxWidth().aspectRatio(16f / 10f).clip(RoundedCornerShape(20.dp)).background(c.surface)) {
+    Box(Modifier.riseIn(0, scaleFrom = 0.98f).fillMaxWidth().aspectRatio(16f / 10f).clip(RoundedCornerShape(16.dp)).background(c.surface)) {
         val src = { f: ProbeFile -> File(thumbs[f.path] ?: f.path) }
         if (files.isNotEmpty()) Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
             AsyncImage(src(files[0]), null, Modifier.weight(1.6f).fillMaxSize(), contentScale = ContentScale.Crop)
@@ -140,10 +140,10 @@ private fun CoverCollage(files: List<ProbeFile>, thumbs: Map<String, String>, co
                 files.drop(1).take(2).forEach { AsyncImage(src(it), null, Modifier.weight(1f).fillMaxWidth(), contentScale = ContentScale.Crop) }
             }
         }
-        Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(130.dp).background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xCC000000)))))
+        Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(96.dp).background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xA6000000)))))
         Column(Modifier.align(Alignment.BottomStart).padding(16.dp)) {
             Row(verticalAlignment = Alignment.Bottom) {
-                Ticker(count, Type.largeTitle.copy(color = Color.White))
+                Ticker(count, Type.bigNumber.copy(color = Color.White))
                 Text(t("cull.readyUnit"), style = Type.body.copy(color = Color.White.copy(alpha = 0.85f)), modifier = Modifier.padding(start = 8.dp, bottom = 5.dp))
             }
             Text(meta, style = Type.monoSmall.copy(color = Color.White.copy(alpha = 0.75f)), maxLines = 1, overflow = Ellipsis)

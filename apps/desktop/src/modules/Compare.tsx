@@ -37,7 +37,7 @@ function Cell({ p, index, st, manual, view, dragging, metrics, set, count, perso
     <div className="cmp2-cell">
       <div className="cmp2-stack" style={{ ["--r" as string]: p.width / p.height }}>
       <motion.div className={`cmp2-fit ${st}`}
-        initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ ...SPRING.soft, delay: index * 0.05 }}
+        initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ ...SPRING.soft, delay: index * 0.03 }}
         onWheel={(e) => zoomAt(e, Math.exp(-e.deltaY * 0.0022))}
         onPointerDown={(e) => pan(e, "down")} onPointerMove={(e) => pan(e, "move")} onPointerUp={() => endPan()} onPointerEnter={() => onHover(p.path)} onPointerLeave={() => onHover(null)}
         onDoubleClick={(e) => resetOrZoom(e)}>
@@ -48,7 +48,8 @@ function Cell({ p, index, st, manual, view, dragging, metrics, set, count, perso
 
         <div className="cmp2-tags">
           <PhotoTags photo={p} />
-          {p.group_best && count > 1 && <span className="cmp2-tag best"><Star filled size={11} />{t("cmp.best")}</span>}
+          {/* "推荐"只用文字：四角星只表示保留（R2） */}
+          {p.group_best && count > 1 && <span className="cmp2-tag best">{t("cmp.best")}</span>}
           {st === "keep" && <span className="cmp2-tag kept"><Star filled size={11} />{t("cmp.kept")}</span>}
           {st === "reject" && <span className="cmp2-tag out">{t("cmp.rejected")}</span>}
         </div>
@@ -62,7 +63,7 @@ function Cell({ p, index, st, manual, view, dragging, metrics, set, count, perso
         <div className="cmp2-foot" onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
           <div className="cmp2-info">
             <div className="cmp2-head">
-              <span className="cmp2-key mono">{index + 1}</span><span className="cmp2-name mono">{p.name}</span>
+              <span className="cmp2-key mono">{index + 1}</span>
               {(() => {
                 // Only when the picture has two or more recognised people: with one there is nothing to tell apart.
                 const ids = [...new Set(p.people.filter((id) => id >= 0))];
@@ -109,7 +110,7 @@ function Cell({ p, index, st, manual, view, dragging, metrics, set, count, perso
  * pan all of them together, so the same detail (an eye, a hand) can be checked in every frame. The numbers sit on each photo.
  * Left / right step through groups of similar shots, the keys 1-4 choose a photo, P / X decide.
  */
-export default function Compare({ photos, all, scope: scopeProp, personFilter, onPerson, selected, decisions, onSelect, onDecide, onOpen, enabled = true }: {
+export default function Compare({ photos, all, scope: scopeProp, personFilter, onPerson, selected, decisions, onSelect, onDecide, onOpen, enabled = true, showHint = true }: {
   photos: Photo[]; all: Photo[];
   /** What counts as "the same shot": a burst of look-alikes, or (when a scene is picked in the filter) the whole scene. */
   scope: "group" | "scene";
@@ -117,6 +118,8 @@ export default function Compare({ photos, all, scope: scopeProp, personFilter, o
   onSelect: (path: string) => void; onDecide: (path: string, s: State | null) => void; onOpen: (path: string) => void;
   /** false while another page is in front or a viewer / dialog is open: the keys belong to them then */
   enabled?: boolean;
+  /** 操作提示只在前几次显示（M6.5）。 */
+  showHint?: boolean;
 }) {
   const { t } = useTranslation();
   const cur = photos.find((p) => p.path === selected) ?? photos[0];
@@ -344,7 +347,7 @@ export default function Compare({ photos, all, scope: scopeProp, personFilter, o
             ))}
           </div>
         )}
-        <span className="ash cmp2-hint">{t("cmp.hint")}</span>
+        {showHint && <span className="ash cmp2-hint">{t("cmp.hint")}</span>}
       </div>
     </div>
   );

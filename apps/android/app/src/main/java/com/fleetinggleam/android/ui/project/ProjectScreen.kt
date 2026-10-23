@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import com.kyant.backdrop.backdrops.layerBackdrop
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -99,71 +101,99 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
     val start: () -> Unit = { scope.launch { Pickers.notificationPermission(ctx); Session.startScan() } }
     val scanning = phase == Phase.Scanning
 
+    val actions = rememberCullActions(cull, data)
+    val scanData = rememberScanData(cull)
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val topPad = with(density) { cull.chromeHeight.toDp() }
+    val glassOn = com.fleetinggleam.android.ui.components.LocalGlassOn.current
+    // 这一页自己的 backdrop：内容录进去，顶栏、页签、底栏这些玻璃件从上面折射它（作者 2026-10-23：全局液态玻璃）
+    val backdrop = com.kyant.backdrop.backdrops.rememberLayerBackdrop()
+    var organize by remember { mutableStateOf(false) }
+
     Box(Modifier.fillMaxSize()) {
-    Column(Modifier.fillMaxSize().statusBarsPadding()) {
-        // ---- 顶栏（iOS 导航栏）：‹ 项目 · 名字（点一下改名）· 搜索 · ⋯（项目设置、重新评估、风格）。"整理"在底部玻璃条上。
-        var organize by remember { mutableStateOf(false) }
-        com.fleetinggleam.android.ui.components.NavBar(project.name, t("home.title"), { Projects.setActive(null) }, onTitle = { renaming = true }) {
-            if (phase == Phase.Done && project.search != false) IconBtn(Icons.SEARCH, t("search.label"), { cull.searchOpen = !cull.searchOpen; if (!cull.searchOpen) cull.query = "" }, on = cull.searchOpen, plain = true)
-            val canReeval = phase == Phase.Done && settings.learn && project.learn != false && dirty > 0
-            com.fleetinggleam.android.ui.components.MenuButton(t("pset.settings"), buildList {
-                add(Triple(t("organize.button"), phase == Phase.Done) { organize = true })
-                add(Triple(t("cull.reeval"), canReeval) { Session.reevaluate() })
-                add(Triple(t("pset.settings"), !scanning) { settingsOpen = true })
-                add(Triple(t("styles.title"), true, onOpenStyles))
-                add(Triple(t("bin.rename"), true) { renaming = true })
-            }, dot = canReeval)
-        }
-        OrganizeDialogs(project, organize) { organize = false }
-        Box(Modifier.fillMaxWidth().height(1.dp).background(c.line))
-
-        // ---- 横幅（和准备页同一套语言，都在页边距里的圆角卡）：分析中是一张暗色封面卡，正在看的那张照片糊在底下、白字压上去；
-        //      暂停和分析完的一行总结是白卡
-        AnimatedVisibility(celebrate || paused != Pause.None, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
-            Box(Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp)) {
-                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(c.panel).padding(16.dp)) {
-                    if (paused != Pause.None) {
-                        Text(t(if (paused == Pause.Hot) "android.paused.hot" else "android.paused.battery"), style = Type.body.copy(color = c.ink))
-                    } else {
-                        val counts = decisions.values.groupingBy { it.state }.eachCount()
-                        Text(t("cull.doneTitle"), style = Type.bodyStrong.copy(color = c.ink))
-                        Text(t("cull.doneBody", "keep" to (counts["keep"] ?: 0), "review" to (counts["review"] ?: 0), "reject" to (counts["reject"] ?: 0)), style = Type.monoSmall.copy(color = c.ash), modifier = Modifier.padding(top = 2.dp))
-                    }
-                }
+    // ---- 内容层：顶部从玻璃顶栏下面开始（各阶段自己按 topPad 留出）
+    Box(Modifier.fillMaxSize().then(if (glassOn) Modifier.layerBackdrop(backdrop) else Modifier)) {
+        Column(Modifier.fillMaxSize()) {
+            val msgs = buildList {
+                if (error != null && error != "cull.nasOffline" && error != "cull.nasDisabled") add(t(error!!).let { if (it == error) error!! else it })
+                if (status.saveError != null) add(t("cull.saveFailed", "error" to status.saveError))
             }
-        }
-
-        Box(Modifier.weight(1f).fillMaxWidth()) {
-            Column(Modifier.fillMaxSize()) {
-                val msgs = buildList {
-                    if (error != null && error != "cull.nasOffline" && error != "cull.nasDisabled") add(t(error!!).let { if (it == error) error!! else it })
-                    if (status.saveError != null) add(t("cull.saveFailed", "error" to status.saveError))
+            val plainTop = phase != Phase.Scanning && phase != Phase.Done
+            if (plainTop) androidx.compose.foundation.layout.Spacer(Modifier.height(topPad))
+            msgs.forEach { Text(it, style = Type.small.copy(color = c.ink), modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) }
+            if (error == "cull.nasOffline" || error == "cull.nasDisabled") Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(t(error!!, "name" to nasOff), style = Type.small.copy(color = c.ink), modifier = Modifier.weight(1f))
+                FgButton(t("cull.nasRetry"), { Session.reload() }, small = true)
+            }
+            // 读取中：居中一行灰字（设计审查 A5 附注）
+            if (phase == Phase.Probing || phase == Phase.Loading) {
+                val text = when {
+                    nasProg != null -> nasProg!!.let { p -> if (p.bytesTotal > 0) t("cull.fetchingNas", "share" to p.share, "done" to p.done, "total" to p.total, "size" to fmtBytes(p.bytesTotal)) else t("android.mirrorSync", "share" to p.share, "done" to p.done, "total" to p.total) }
+                    phase == Phase.Loading && mediaProg != null && mediaProg!!.done < mediaProg!!.total -> t("cull.preparingMedia", "done" to mediaProg!!.done, "total" to mediaProg!!.total)
+                    phase == Phase.Loading && peopleProg != null && peopleProg!!.done < peopleProg!!.total -> t("cull.recognising", "done" to peopleProg!!.done, "total" to peopleProg!!.total)
+                    phase == Phase.Probing && probeProg != null && probeProg!!.total > 0 -> t("cull.probing") + "  ${probeProg!!.done} / ${probeProg!!.total}"
+                    else -> t(if (phase == Phase.Probing) "cull.probing" else "cull.loading")
                 }
-                msgs.forEach { Text(it, style = Type.small.copy(color = c.ink), modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) }
-                if (error == "cull.nasOffline" || error == "cull.nasDisabled") Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(t(error!!, "name" to nasOff), style = Type.small.copy(color = c.ink), modifier = Modifier.weight(1f))
-                    FgButton(t("cull.nasRetry"), { Session.reload() }, small = true)
-                }
-                if (phase == Phase.Probing || phase == Phase.Loading) {
-                    val text = when {
-                        nasProg != null -> nasProg!!.let { p -> if (p.bytesTotal > 0) t("cull.fetchingNas", "share" to p.share, "done" to p.done, "total" to p.total, "size" to fmtBytes(p.bytesTotal)) else t("android.mirrorSync", "share" to p.share, "done" to p.done, "total" to p.total) }
-                        phase == Phase.Loading && mediaProg != null && mediaProg!!.done < mediaProg!!.total -> t("cull.preparingMedia", "done" to mediaProg!!.done, "total" to mediaProg!!.total)
-                        phase == Phase.Loading && peopleProg != null && peopleProg!!.done < peopleProg!!.total -> t("cull.recognising", "done" to peopleProg!!.done, "total" to peopleProg!!.total)
-                        phase == Phase.Probing && probeProg != null && probeProg!!.total > 0 -> t("cull.probing") + "  ${probeProg!!.done} / ${probeProg!!.total}"
-                        else -> t(if (phase == Phase.Probing) "cull.probing" else "cull.loading")
-                    }
-                    Text(text, style = Type.small.copy(color = c.ash), modifier = Modifier.padding(16.dp))
-                }
+                Text(text, style = Type.small.copy(color = c.ash), modifier = Modifier.fillMaxWidth().padding(24.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            }
+            // 分析完 / 暂停的一句总结：页边距里的白卡（分析完的那张 3 秒后自己收起）
+            val doneTop = phase == Phase.Done && (celebrate || paused != Pause.None)
+            Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (phase) {
                     Phase.Ready -> ReadyStage(project, uncached, bytes, eta, files.filter { !it.cached }, previews, onStart = start, onAddFolder = addFolder, onRemoveFolder = { Session.removeFolder(it) }, done = files.size - uncached)
                     // 分析中就是选片界面：页签 + 照片墙，照片一出结果就落进对应的页签（Scanning.kt）
-                    Phase.Scanning -> ScanningStage(cull, progress, { Session.stopScan() }, bottomPad = 92.dp)
-                    Phase.Done -> Culling(project, cull, data, onOpenStyles)
+                    Phase.Scanning -> ScanningStage(cull, scanData, progress, { Session.stopScan() }, topPad = topPad, bottomPad = 92.dp)
+                    Phase.Done -> CullingContent(project, cull, data, actions, topPad = topPad)
                     else -> {}
+                }
+                androidx.compose.animation.AnimatedVisibility(visible = doneTop, modifier = Modifier.align(Alignment.TopCenter).padding(top = topPad), enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+                    Box(Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp)) {
+                        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.panel).padding(16.dp)) {
+                            if (paused != Pause.None) {
+                                Text(t(if (paused == Pause.Hot) "android.paused.hot" else "android.paused.battery"), style = Type.body.copy(color = c.ink))
+                            } else {
+                                val counts = decisions.values.groupingBy { it.state }.eachCount()
+                                Text(t("cull.doneTitle"), style = Type.bodyStrong.copy(color = c.ink))
+                                Text(t("cull.doneBody", "keep" to (counts["keep"] ?: 0), "review" to (counts["review"] ?: 0), "reject" to (counts["reject"] ?: 0)), style = Type.monoSmall.copy(color = c.ash), modifier = Modifier.padding(top = 2.dp))
+                            }
+                        }
+                    }
                 }
             }
         }
     }
+
+    // ---- 浮层（玻璃，在 backdrop 之外）：顶栏 + 页签 + 窄胶囊；分析完时的底栏与提示
+    androidx.compose.runtime.CompositionLocalProvider(com.fleetinggleam.android.ui.components.LocalBackdrop provides backdrop) {
+        com.fleetinggleam.android.ui.components.GlassBar(Modifier.align(Alignment.TopCenter).onGloballyPositioned { cull.chromeHeight = it.size.height }) {
+            Column(Modifier.fillMaxWidth().statusBarsPadding()) {
+                // 顶栏（iOS 导航栏）：‹ 项目 · 名字（点一下改名）· 搜索 · ⋯；场景页时是 ‹ 名字 · 场景
+                val scene = phase == Phase.Done && cull.sceneView
+                com.fleetinggleam.android.ui.components.NavBar(
+                    if (scene) t("cull.scenes") else project.name, if (scene) project.name else t("home.title"),
+                    { if (scene) cull.sceneView = false else Projects.setActive(null) }, onTitle = if (scene) null else ({ renaming = true }),
+                ) {
+                    if (phase == Phase.Done && !scene && project.search != false) IconBtn(Icons.SEARCH, t("search.label"), { cull.searchOpen = !cull.searchOpen; if (!cull.searchOpen) cull.query = "" }, on = cull.searchOpen, plain = true)
+                    val canReeval = phase == Phase.Done && settings.learn && project.learn != false && dirty > 0
+                    com.fleetinggleam.android.ui.components.MenuButton(t("pset.settings"), buildList {
+                        add(Triple(t("organize.button"), phase == Phase.Done) { organize = true })
+                        add(Triple(t("cull.reeval"), canReeval) { Session.reevaluate() })
+                        add(Triple(t("pset.settings"), !scanning) { settingsOpen = true })
+                        add(Triple(t("styles.title"), true, onOpenStyles))
+                        add(Triple(t("bin.rename"), true) { renaming = true })
+                    }, dot = canReeval)
+                }
+                if (phase == Phase.Done && cull.searchOpen && !scene) Box(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp)) { SearchField(cull) }
+                if (phase == Phase.Scanning) StatusStrip(cull, scanData)
+                if (phase == Phase.Done && !scene) StatusStrip(cull, data)
+                AnimatedVisibility(phase == Phase.Scanning && cull.scanCardGone, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+                    ScanPill(progress) { scope.launch { cull.scanBackToTop?.invoke() } }
+                }
+            }
+        }
+        if (phase == Phase.Done) CullingChrome(project, cull, data, actions)
+    }
+    OrganizeDialogs(project, organize) { organize = false }
 
     // 大图盖在整页上面（连工具栏一起）
     if (phase == Phase.Done && cull.viewer && cull.selected != null) Viewer(cull, data, decisions) { path, st, order -> decideIn(cull, data, path, st, order) }

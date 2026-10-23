@@ -17,14 +17,15 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * 入场：从下方一点点升起、淡入，按序号错开（上限 16 个，DESIGN.md 第 10 节）。只在第一次出现时播，回到这里不重播。
- * 和桌面端 `initial={{ opacity: 0, y: 16, scale: .97 }} transition={{ ...SPRING.soft, delay: .04 + i * .045 }}` 一样。
+ * 入场：从下方一点点升起、淡入，按序号错开（每项 30 ms、最多 8 项，之后的一起出现——设计审查 R6）。只在第一次出现时播，回到这里不重播。
+ * 和桌面端 `initial={{ opacity: 0, y: 16, scale: .97 }} transition={{ ...SPRING.soft, delay: .04 + min(i, 8) * .024 }}` 一样。
+ * 弹层、菜单、对话框里面的内容不要用它：弹层本身已经在动。
  */
 fun Modifier.riseIn(index: Int, rise: Float = 16f, scaleFrom: Float = 0.97f): Modifier = composed {
     val px = with(LocalDensity.current) { rise.dp.toPx() }
     val a = remember { Animatable(0f) }
     LaunchedEffect(Unit) {
-        delay(40L + minOf(index, 16) * 45L)
+        delay(com.fleetinggleam.android.ui.theme.Motion.stagger(index))
         a.animateTo(1f, spring(dampingRatio = 0.997f, stiffness = 170f))
     }
     graphicsLayer {

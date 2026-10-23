@@ -20,7 +20,7 @@ export function TipBody({ open, children }: { open: boolean; children: ReactNode
   return (
     <AnimatePresence initial={false}>
       {open && (
-        <motion.div className="tipbody" initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.28, ease: EASE_OUT }}>
+        <motion.div className="tipbody" initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.32, ease: EASE_OUT }}>
           <div className="tipin">{children}</div>
         </motion.div>
       )}

@@ -79,6 +79,11 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.fleetinggleam.android.core.PrefsInfo
@@ -201,8 +206,8 @@ fun FgButton(
     val solid = primary || on
     val bg = if (solid) c.ink else c.surface
     val fg = if (solid) c.onInk else c.ink
-    // 移动端：不描边、实心浅灰底；小号是 30dp 的胶囊（行内操作），常规 44dp、圆角 12（对话框底部、整行的主按钮）
-    val shape = if (small) CircleShape else RoundedCornerShape(12.dp)
+    // 移动端：不描边、实心浅灰底；小号是 30dp 的胶囊（行内操作），常规 46dp、圆角 10（控件统一圆角；对话框底部、整行的主按钮）
+    val shape = if (small) CircleShape else RoundedCornerShape(10.dp)
     val s by animateFloatAsState(if (pressed && enabled) 0.96f else 1f, Motion.tap(), label = "pressScale")
     Row(
         modifier
@@ -210,7 +215,7 @@ fun FgButton(
             .clip(shape)
             .background(bg)
             .clickable(interactionSource = src, indication = null, enabled = enabled, role = Role.Button, onClick = onClick)
-            .heightIn(min = if (small) 30.dp else 44.dp)
+            .heightIn(min = if (small) 30.dp else 46.dp)
             .padding(horizontal = if (small) 12.dp else 18.dp, vertical = if (small) 5.dp else 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
@@ -220,21 +225,86 @@ fun FgButton(
     }
 }
 
-/** 只有图标的按钮（工具栏）。`on` 时实心墨色。 */
+/**
+ * 只有图标的按钮。`on` 时实心墨色；`plain` 没有底色（顶栏、行内的图标钮都用它——行内再也不放 40dp 的灰圆盘）；`tint` 换图标颜色（行内用灰）。
+ * `size` 是触控区：顶栏 36 / 40，行内 32。
+ */
 @Composable
-fun IconBtn(d: String, label: String, onClick: () -> Unit, modifier: Modifier = Modifier, on: Boolean = false, enabled: Boolean = true, box: Float = 16f, plain: Boolean = false) {
+fun IconBtn(d: String, label: String, onClick: () -> Unit, modifier: Modifier = Modifier, on: Boolean = false, enabled: Boolean = true, box: Float = 16f, plain: Boolean = false, size: Dp = 40.dp, tint: Color? = null) {
     val c = LocalFg.current
+    val src = remember { MutableInteractionSource() }
+    val pressed by src.collectIsPressedAsState()
     Box(
         modifier
-            .size(40.dp)
+            .size(size)
             .graphicsLayer { alpha = if (enabled) 1f else 0.4f }
             .clip(CircleShape)
-            .background(if (on) c.ink else if (plain) Color.Transparent else c.surface)
-            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .background(if (on) c.ink else if (plain) (if (pressed) c.surface else Color.Transparent) else c.surface)
+            .clickable(interactionSource = src, indication = null, enabled = enabled, role = Role.Button, onClick = onClick)
             .semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
     ) {
-        FgIcon(d, size = 20.dp, box = box, stroke = 1.5f, color = if (on) c.onInk else c.ink)
+        FgIcon(d, size = size / 2, box = box, stroke = 1.5f, color = if (on) c.onInk else tint ?: c.ink)
+    }
+}
+
+/** 列表行左边的图标盒子：全应用一种——28dp、圆角 8、surface2 底、墨色 16dp 线条图标（设计审查 A3.4 / A13.2）。 */
+@Composable
+fun IconBox(d: String, box: Float = 16f, size: Dp = 28.dp) {
+    val c = LocalFg.current
+    Box(Modifier.size(size).clip(RoundedCornerShape(8.dp)).background(c.surface2), contentAlignment = Alignment.Center) {
+        FgIcon(d, size = 16.dp, box = box, stroke = 1.5f, color = c.ink)
+    }
+}
+
+/** 单选圆点：外圈 20dp、1.5dp 线；选中时外圈墨色、内点 10dp（设计审查 A6.11，筛选弹层 / 模型档位 / 整理共用）。 */
+@Composable
+fun FgRadio(on: Boolean, modifier: Modifier = Modifier) {
+    val c = LocalFg.current
+    val ring by androidx.compose.animation.animateColorAsState(if (on) c.ink else c.line, Motion.fast(), label = "radioRing")
+    Box(modifier.size(20.dp).clip(CircleShape).border(1.5.dp, ring, CircleShape), contentAlignment = Alignment.Center) {
+        val dot by animateFloatAsState(if (on) 1f else 0f, Motion.glide(), label = "radioDot")
+        Box(Modifier.size(10.dp).graphicsLayer { scaleX = dot; scaleY = dot }.clip(CircleShape).background(c.ink))
+    }
+}
+
+/**
+ * 自家的滑块（设计审查 A4.4）：轨道 3dp 圆头，已走段墨色、未走段 surface2；滑块 14dp 墨色圆加 2dp canvas 边，和桌面端一样。
+ * `steps` 是格数（0.05 一格 → 18 格）；拖动时按格吸附。
+ */
+@Composable
+fun FgSlider(value: Float, onChange: (Float) -> Unit, modifier: Modifier = Modifier, range: ClosedFloatingPointRange<Float> = 0f..1f, step: Float = 0f, enabled: Boolean = true) {
+    val c = LocalFg.current
+    val density = LocalDensity.current
+    val span = range.endInclusive - range.start
+    val frac = ((value - range.start) / span).coerceIn(0f, 1f)
+    BoxWithConstraints(modifier.height(28.dp).graphicsLayer { alpha = if (enabled) 1f else 0.4f }) {
+        val wPx = with(density) { maxWidth.toPx() }
+        val knob = with(density) { 14.dp.toPx() }
+        fun at(x: Float): Float {
+            val f = ((x - knob / 2) / (wPx - knob)).coerceIn(0f, 1f)
+            val raw = range.start + f * span
+            return if (step > 0f) (Math.round(raw / step) * step).coerceIn(range.start, range.endInclusive) else raw
+        }
+        Box(
+            Modifier.fillMaxSize().pointerInput(enabled, wPx) {
+                if (!enabled) return@pointerInput
+                detectHorizontalDragGestures(onDragStart = { onChange(at(it.x)) }) { ch, _ -> ch.consume(); onChange(at(ch.position.x)) }
+            }.pointerInput(enabled, wPx) {
+                if (!enabled) return@pointerInput
+                detectTapGestures { onChange(at(it.x)) }
+            },
+        ) {
+            Canvas(Modifier.fillMaxSize()) {
+                val y = size.height / 2
+                val r = 1.5.dp.toPx()
+                val x = knob / 2 + (size.width - knob) * frac
+                drawRoundRect(c.surface2, topLeft = Offset(knob / 2, y - r), size = androidx.compose.ui.geometry.Size(size.width - knob, 2 * r), cornerRadius = androidx.compose.ui.geometry.CornerRadius(r))
+                drawRoundRect(c.ink, topLeft = Offset(knob / 2, y - r), size = androidx.compose.ui.geometry.Size((x - knob / 2).coerceAtLeast(0f), 2 * r), cornerRadius = androidx.compose.ui.geometry.CornerRadius(r))
+                drawCircle(c.canvas, radius = knob / 2, center = Offset(x, y))
+                drawCircle(c.ink, radius = knob / 2 - 2.dp.toPx(), center = Offset(x, y))
+            }
+        }
     }
 }
 
@@ -319,20 +389,20 @@ fun Stepper(value: Int, onChange: (Int) -> Unit, label: String, min: Int = 1, ma
 fun SettingGroup(title: String, content: @Composable () -> Unit) {
     val c = LocalFg.current
     Column(Modifier.fillMaxWidth()) {
-        if (title.isNotEmpty()) Text(title, style = Type.overline.copy(color = c.ash), modifier = Modifier.padding(start = 16.dp, bottom = 6.dp))
+        if (title.isNotEmpty()) Text(title, style = Type.overline.copy(color = c.ash), modifier = Modifier.padding(start = 16.dp, bottom = 8.dp))
         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.panel)) { content() }
     }
 }
 
-/** 一项设置：标题加一句平实的话；技术细节放到"?"后面。行与行之间一条细线。 */
+/** 一项设置：标题加一句平实的话；技术细节放到"?"后面。行与行之间一条细线。行高最少 52dp（和 NavRow 一样）。 */
 @Composable
-fun SettingRow(label: String, desc: String? = null, info: String? = null, first: Boolean = false, below: (@Composable () -> Unit)? = null, onClick: (() -> Unit)? = null, icon: String? = null, control: (@Composable RowScope.() -> Unit)? = null) {
+fun SettingRow(label: String, desc: String? = null, info: String? = null, first: Boolean = false, below: (@Composable () -> Unit)? = null, onClick: (() -> Unit)? = null, icon: String? = null, iconBox: Float = 16f, control: (@Composable RowScope.() -> Unit)? = null) {
     val c = LocalFg.current
     Column(Modifier.fillMaxWidth()) {
         // 行与行之间一条从文字起头处开始的细线（iOS 分组列表的样子）
         if (!first) Box(Modifier.padding(start = if (icon != null) 56.dp else 16.dp).fillMaxWidth().height(0.5.dp).background(c.line))
-        Row(Modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier).heightIn(min = 50.dp).padding(horizontal = 16.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (icon != null) Box(Modifier.size(28.dp).clip(RoundedCornerShape(8.dp)).background(c.ink), contentAlignment = Alignment.Center) { FgIcon(icon, size = 16.dp, stroke = 1.5f, color = c.onInk) }
+        Row(Modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier).heightIn(min = 52.dp).padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (icon != null) IconBox(icon, box = iconBox)
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(label, style = Type.rowTitle.copy(color = c.ink))
@@ -346,16 +416,14 @@ fun SettingRow(label: String, desc: String? = null, info: String? = null, first:
     }
 }
 
-/** "?"：点开是一段说明（手机上没有悬停）。 */
+/** "?"：点开是一个 260dp 宽的玻璃气泡（标题 + 一段说明，或几行名字 · 值），点外面关，没有按钮（设计审查 A10.6）。 */
 @Composable
-fun InfoPop(title: String, text: String) {
+fun InfoPop(title: String, text: String, rows: List<Pair<String, String>> = emptyList()) {
     val c = LocalFg.current
-    var open by remember { mutableStateOf(false) }
-    Box(Modifier.padding(start = 4.dp).size(22.dp).clip(CircleShape).clickable { open = true }.semantics { contentDescription = title }, contentAlignment = Alignment.Center) {
+    val overlay = LocalOverlay.current
+    val anchor = rememberAnchor()
+    Box(Modifier.padding(start = 4.dp).size(22.dp).anchor(anchor).clip(CircleShape).clickable { overlay.showTip(anchor.value, title, text, rows) }.semantics { contentDescription = title }, contentAlignment = Alignment.Center) {
         FgIcon(Icons.INFO, size = 14.dp, color = c.ash, stroke = 1.3f)
-    }
-    FgDialog(open, onDismiss = { open = false }, title = title, footer = { FgButton(t("more.close"), { open = false }, primary = true, small = true) }) {
-        Text(text, style = Type.body.copy(color = c.ash))
     }
 }
 
@@ -404,7 +472,7 @@ fun LiveBar(fraction: Float, modifier: Modifier = Modifier, glint: Boolean = tru
 fun Ticker(value: Int, style: TextStyle = Type.title) {
     Row {
         value.toString().forEachIndexed { i, ch ->
-            AnimatedContent(ch, transitionSpec = { (slideInVertically { it } + fadeIn()) togetherWith (slideOutVertically { -it } + fadeOut()) }, label = "digit$i") { d ->
+            AnimatedContent(ch, transitionSpec = { (slideInVertically(Motion.base()) { it } + fadeIn(Motion.base())) togetherWith (slideOutVertically(Motion.base()) { -it } + fadeOut(Motion.fast())) }, label = "digit$i") { d ->
                 Text(d.toString(), style = style.copy(fontFamily = com.fleetinggleam.android.ui.theme.GeistMono))
             }
         }
@@ -444,27 +512,11 @@ fun FgField(
     }
 }
 
-// ---------------------------------------------------------------- 对话框：标题、正文、底部按钮（桌面端的 Modal）
+// ---------------------------------------------------------------- 对话框：标题、正文、底部按钮（桌面端的 Modal）——画在覆盖层里的玻璃（Glass.kt）
 
 @Composable
 fun FgDialog(open: Boolean, onDismiss: () -> Unit, title: String, locked: Boolean = false, footer: (@Composable RowScope.() -> Unit)? = null, content: @Composable () -> Unit) {
-    if (!open) return
-    val c = LocalFg.current
-    Dialog(onDismissRequest = { if (!locked) onDismiss() }, properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = !locked, dismissOnClickOutside = !locked)) {
-        Column(
-            Modifier.padding(20.dp).widthIn(max = 520.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(c.panel),
-        ) {
-            Text(title, style = Type.heading.copy(color = c.ink), modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 10.dp))
-            Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
-                content()
-                Spacer(Modifier.height(16.dp))
-            }
-            if (footer != null) {
-                Box(Modifier.fillMaxWidth().height(1.dp).background(c.line))
-                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically, content = footer)
-            }
-        }
-    }
+    GlassDialog(open, onDismiss, title, locked, footer, content)
 }
 
 // ---------------------------------------------------------------- 浮在底部的一句话（带"撤销"之类的按钮）
@@ -490,7 +542,7 @@ fun ToastHost(bottom: Dp) {
                 Modifier.padding(horizontal = 20.dp).clip(RoundedCornerShape(14.dp)).background(c.ink).padding(start = 16.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(msg.text, style = Type.small.copy(color = c.onInk), modifier = Modifier.padding(vertical = 8.dp).weight(1f, fill = false), maxLines = 2, overflow = Ellipsis)
+                Text(msg.text, style = Type.body.copy(color = c.onInk), modifier = Modifier.padding(vertical = 8.dp).weight(1f, fill = false), maxLines = 2, overflow = Ellipsis)
                 if (msg.action != null) Text(msg.action, style = Type.label.copy(color = c.onInk, fontWeight = FontWeight.SemiBold, textDecoration = TextDecoration.Underline), modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { msg.onAction?.invoke(); Toasts.clear(msg.id) }.padding(horizontal = 12.dp, vertical = 8.dp))
                 else Spacer(Modifier.width(10.dp))
             }
@@ -564,7 +616,7 @@ fun NavRow(icon: String, title: String, value: String? = null, first: Boolean = 
     Column(Modifier.fillMaxWidth()) {
         if (!first) Box(Modifier.padding(start = 56.dp).fillMaxWidth().height(0.5.dp).background(c.line))
         Row(Modifier.fillMaxWidth().clickable(onClick = onClick).heightIn(min = 52.dp).padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(28.dp).clip(RoundedCornerShape(8.dp)).background(c.ink), contentAlignment = Alignment.Center) { FgIcon(icon, size = 16.dp, box = box, stroke = 1.5f, color = c.onInk) }
+            IconBox(icon, box = box)
             Text(title, style = Type.rowTitle.copy(color = c.ink), modifier = Modifier.weight(1f).padding(start = 12.dp), maxLines = 1, overflow = Ellipsis)
             if (value != null) Text(value, style = Type.small.copy(color = c.ash), maxLines = 1, overflow = Ellipsis, modifier = Modifier.padding(start = 8.dp).widthIn(max = 180.dp))
             FgIcon(Icons.CHEVRON, size = 14.dp, stroke = 1.6f, color = c.ash, modifier = Modifier.padding(start = 6.dp))
@@ -572,11 +624,19 @@ fun NavRow(icon: String, title: String, value: String? = null, first: Boolean = 
     }
 }
 
-/** 推进页的顶栏：左边 ‹ 和上一页的名字，中间这一页的标题，右边可放按钮。48dp 高。 */
+/**
+ * 推进页的顶栏：左边 ‹ 和上一页的名字，中间这一页的标题，右边可放按钮。48dp 高。
+ * `inset`：放在带页边距的列表里时，把顶栏向两侧撑出这么多（取代以前三处各写一遍的 `layout` 负边距）。
+ */
 @Composable
-fun NavBar(title: String, back: String?, onBack: (() -> Unit)?, modifier: Modifier = Modifier, onTitle: (() -> Unit)? = null, trailing: (@Composable RowScope.() -> Unit)? = null) {
+fun NavBar(title: String, back: String?, onBack: (() -> Unit)?, modifier: Modifier = Modifier, onTitle: (() -> Unit)? = null, inset: Dp = 0.dp, trailing: (@Composable RowScope.() -> Unit)? = null) {
     val c = LocalFg.current
-    Box(modifier.fillMaxWidth().height(48.dp).padding(horizontal = 6.dp)) {
+    val outset = if (inset > 0.dp) Modifier.layout { m, cs ->
+        val extra = inset.roundToPx() * 2
+        val pl = m.measure(cs.copy(minWidth = 0, maxWidth = cs.maxWidth + extra))
+        layout(cs.maxWidth, pl.height) { pl.placeRelative(-inset.roundToPx(), 0) }
+    } else Modifier
+    Box(modifier.then(outset).fillMaxWidth().height(48.dp).padding(horizontal = 6.dp)) {
         if (onBack != null) Row(
             Modifier.align(Alignment.CenterStart).clip(CircleShape).clickable(onClick = onBack).padding(start = 6.dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -592,14 +652,47 @@ fun NavBar(title: String, back: String?, onBack: (() -> Unit)?, modifier: Modifi
 
 /** ⋯ 按钮带一个玻璃菜单；`items` 是 (文字, 是否可点, 动作)。`dot`：有新东西（比如偏好变了可以重新评估）。`glass`：按钮本身也是玻璃（浮在内容上的顶栏里用）。 */
 @Composable
-fun MenuButton(label: String, items: List<Triple<String, Boolean, () -> Unit>>, dot: Boolean = false, glass: Boolean = false) {
+fun MenuButton(label: String, items: List<Triple<String, Boolean, () -> Unit>>, dot: Boolean = false, glass: Boolean = false, size: Dp = 40.dp) {
     val c = LocalFg.current
     val overlay = LocalOverlay.current
     val anchor = rememberAnchor()
     val show = { overlay.showMenu(anchor.value, items.map { (t, e, a) -> MenuItem(t, e, a) }, alignEnd = true) }
-    if (glass) GlassIconBtn(Icons.MORE, label, show, Modifier.anchor(anchor), dot = dot)
+    if (glass) GlassIconBtn(Icons.MORE, label, show, Modifier.anchor(anchor), dot = dot, size = size)
     else Box(Modifier.anchor(anchor)) {
-        IconBtn(Icons.MORE, label, show, plain = true)
-        if (dot) Box(Modifier.align(Alignment.TopEnd).padding(top = 9.dp, end = 9.dp).size(7.dp).clip(CircleShape).background(c.ink))
+        IconBtn(Icons.MORE, label, show, plain = true, size = size)
+        if (dot) Box(Modifier.align(Alignment.TopEnd).padding(top = 7.dp, end = 7.dp).size(6.dp).clip(CircleShape).background(c.ink))
+    }
+}
+
+// ---------------------------------------------------------------- 底部弹层：统一的顶角与把手（设计审查 A3.5 / A15.1）
+
+/** 弹层的形状：顶角 16。 */
+val SheetShape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
+
+/** 弹层顶上的把手：36 × 5dp、line 色、上下各 8dp。 */
+@Composable
+fun SheetHandle() {
+    val c = LocalFg.current
+    Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(width = 36.dp, height = 5.dp).clip(CircleShape).background(c.line))
+    }
+}
+
+/** 带"?"的设置行，"?"里除了一段话还可以放几行"名字 · 值"（设置 → 分析用）。 */
+@Composable
+fun SettingRowInfo(label: String, desc: String?, info: String, rows: List<Pair<String, String>>, first: Boolean = false, control: (@Composable RowScope.() -> Unit)? = null) {
+    val c = LocalFg.current
+    Column(Modifier.fillMaxWidth()) {
+        if (!first) Box(Modifier.padding(start = 16.dp).fillMaxWidth().height(0.5.dp).background(c.line))
+        Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(label, style = Type.rowTitle.copy(color = c.ink))
+                    InfoPop(label, info, rows)
+                }
+                if (desc != null) Text(desc, style = Type.rowDesc.copy(color = c.ash), modifier = Modifier.padding(top = 2.dp))
+            }
+            if (control != null) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), content = control)
+        }
     }
 }

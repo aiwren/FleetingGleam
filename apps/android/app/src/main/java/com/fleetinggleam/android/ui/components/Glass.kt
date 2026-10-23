@@ -39,6 +39,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.height
@@ -59,6 +60,15 @@ import com.kyant.backdrop.highlight.HighlightStyle
 import com.kyant.backdrop.shadow.InnerShadow
 import androidx.compose.ui.graphics.drawOutline
 import com.kyant.backdrop.shadow.Shadow
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.positionChanged
 
 /**
  * 液态玻璃（作者 2026-10-21 要求：像 iOS 那样）。玻璃后面的内容先录进一层（`layerBackdrop`），玻璃件再把它画出来：
@@ -137,7 +147,7 @@ fun Modifier.glass(backdrop: Backdrop, shape: CornerBasedShape, style: GlassStyl
 fun rememberPress(src: MutableInteractionSource): () -> Float {
     val pressed by src.collectIsPressedAsState()
     val a = remember { Animatable(0f) }
-    LaunchedEffect(pressed) { a.animateTo(if (pressed) 1f else 0f, spring(dampingRatio = if (pressed) 0.8f else 0.45f, stiffness = 380f)) }
+    LaunchedEffect(pressed) { a.animateTo(if (pressed) 1f else 0f, spring(dampingRatio = if (pressed) 0.8f else 0.65f, stiffness = 380f)) }
     return { a.value }
 }
 
@@ -163,10 +173,16 @@ data class MenuItem(val text: String, val enabled: Boolean = true, val action: (
 
 class OverlayState {
     var content by androidx.compose.runtime.mutableStateOf<(@Composable () -> Unit)?>(null)
+    /** 对话框和底部弹层（都画在应用自己的覆盖层里，所以能折射整页——作者 2026-10-23：全局液态玻璃）；按打开顺序叠放，菜单在它们之上。 */
+    val layers = androidx.compose.runtime.mutableStateListOf<Layer>()
     fun dismiss() { content = null }
     /** 从 `anchor`（根坐标）下方弹出一个玻璃菜单；放不下就弹在上方。`dark` 强制深色玻璃（暗房间里用）。 */
     fun showMenu(anchor: androidx.compose.ui.geometry.Rect, items: List<MenuItem>, alignEnd: Boolean = true, dark: Boolean? = null) {
         content = { GlassMenu(anchor, items, alignEnd, dark) { content = null } }
+    }
+    /** "?"的说明气泡：标题、一段话、可选的几行"名字 · 值"。点外面关，没有按钮。 */
+    fun showTip(anchor: androidx.compose.ui.geometry.Rect, title: String, text: String, rows: List<Pair<String, String>> = emptyList(), dark: Boolean? = null) {
+        content = { GlassTip(anchor, title, text, rows, dark) { content = null } }
     }
 }
 
@@ -179,15 +195,13 @@ fun rememberAnchor(): androidx.compose.runtime.MutableState<androidx.compose.ui.
 fun Modifier.anchor(state: androidx.compose.runtime.MutableState<androidx.compose.ui.geometry.Rect>): Modifier =
     onGloballyPositioned { state.value = it.boundsInRoot() }
 
+/** 浮在锚点旁的一块玻璃（菜单和说明气泡共用）：从锚点那一角长出来，放不下就换到上方；点外面关。 */
 @Composable
-private fun GlassMenu(anchor: androidx.compose.ui.geometry.Rect, items: List<MenuItem>, alignEnd: Boolean, dark: Boolean?, onDismiss: () -> Unit) {
-    val c = LocalFg.current
+private fun Floating(anchor: androidx.compose.ui.geometry.Rect, alignEnd: Boolean, dark: Boolean?, maxWidthFrac: Float, onDismiss: () -> Unit, content: @Composable () -> Unit) {
     val style = glassStyle(strong = true, dark = dark)
-    val ink = if (dark == true) com.fleetinggleam.android.ui.theme.Dark.ink else c.ink
-    val ash = if (dark == true) com.fleetinggleam.android.ui.theme.Dark.ash else c.ash
-    val line = if (dark == true) com.fleetinggleam.android.ui.theme.Dark.line else c.line
     val a = remember { Animatable(0f) }
-    LaunchedEffect(Unit) { a.animateTo(1f, spring(dampingRatio = 0.78f, stiffness = 520f)) }
+    // 不弹跳（设计审查 R7）：用 tap 弹簧
+    LaunchedEffect(Unit) { a.animateTo(1f, com.fleetinggleam.android.ui.theme.Motion.tap()) }
     androidx.activity.compose.BackHandler(onBack = onDismiss)
     Box(
         Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { onDismiss() } },
@@ -195,27 +209,55 @@ private fun GlassMenu(anchor: androidx.compose.ui.geometry.Rect, items: List<Men
         Box(
             Modifier
                 .layout { m, cs ->
-                    val pl = m.measure(cs.copy(minWidth = 0, minHeight = 0, maxWidth = (cs.maxWidth * 0.7f).toInt()))
+                    val pl = m.measure(cs.copy(minWidth = 0, minHeight = 0, maxWidth = (cs.maxWidth * maxWidthFrac).toInt()))
                     val gap = 6.dp.roundToPx(); val edge = 10.dp.roundToPx()
-                    val x = (if (alignEnd) anchor.right - pl.width else anchor.left).toInt().coerceIn(edge, cs.maxWidth - pl.width - edge)
+                    val x = (if (alignEnd) anchor.right - pl.width else anchor.left).toInt().coerceIn(edge, maxOf(edge, cs.maxWidth - pl.width - edge))
                     val below = anchor.bottom.toInt() + gap
                     val y = if (below + pl.height <= cs.maxHeight - edge) below else (anchor.top.toInt() - gap - pl.height).coerceAtLeast(edge)
                     layout(cs.maxWidth, cs.maxHeight) { pl.placeRelative(x, y) }
                 }
                 .graphicsLayer {
-                    // 从锚点那一角长出来
                     transformOrigin = androidx.compose.ui.graphics.TransformOrigin(if (alignEnd) 1f else 0f, 0f)
-                    val s = 0.88f + 0.12f * a.value; scaleX = s; scaleY = s; alpha = a.value.coerceIn(0f, 1f)
+                    val s = 0.92f + 0.08f * a.value; scaleX = s; scaleY = s; alpha = a.value.coerceIn(0f, 1f)
                 }
-                .glass(LocalBackdrop.current, RoundedCornerShape(16.dp), style, on = LocalGlassOn.current),
-        ) {
-            Column(Modifier.widthIn(min = 168.dp)) {
-                items.forEachIndexed { i, it ->
-                    if (i > 0) Box(Modifier.fillMaxWidth().height(0.5.dp).background(line))
-                    Text(
-                        it.text, style = Type.rowTitle.copy(color = if (it.enabled) ink else ash), maxLines = 1,
-                        modifier = Modifier.fillMaxWidth().clickable(enabled = it.enabled) { onDismiss(); it.action() }.padding(horizontal = 16.dp, vertical = 12.dp),
-                    )
+                .glass(LocalBackdrop.current, RoundedCornerShape(14.dp), style, on = LocalGlassOn.current),
+        ) { content() }
+    }
+}
+
+@Composable
+private fun GlassMenu(anchor: androidx.compose.ui.geometry.Rect, items: List<MenuItem>, alignEnd: Boolean, dark: Boolean?, onDismiss: () -> Unit) {
+    val c = LocalFg.current
+    val ink = if (dark == true) com.fleetinggleam.android.ui.theme.Dark.ink else c.ink
+    val ash = if (dark == true) com.fleetinggleam.android.ui.theme.Dark.ash else c.ash
+    val line = if (dark == true) com.fleetinggleam.android.ui.theme.Dark.line else c.line
+    Floating(anchor, alignEnd, dark, 0.7f, onDismiss) {
+        Column(Modifier.widthIn(min = 168.dp)) {
+            items.forEachIndexed { i, it ->
+                if (i > 0) Box(Modifier.fillMaxWidth().height(0.5.dp).background(line))
+                Text(
+                    it.text, style = Type.rowTitle.copy(color = if (it.enabled) ink else ash), maxLines = 1,
+                    modifier = Modifier.fillMaxWidth().clickable(enabled = it.enabled) { onDismiss(); it.action() }.padding(horizontal = 16.dp, vertical = 12.dp),
+                )
+            }
+        }
+    }
+}
+
+/** "?"的说明气泡：标题 14 半粗、正文 12 灰，几行"名字 · 值"用等宽。宽 260dp。 */
+@Composable
+private fun GlassTip(anchor: androidx.compose.ui.geometry.Rect, title: String, text: String, rows: List<Pair<String, String>>, dark: Boolean?, onDismiss: () -> Unit) {
+    val c = LocalFg.current
+    val ink = if (dark == true) com.fleetinggleam.android.ui.theme.Dark.ink else c.ink
+    val ash = if (dark == true) com.fleetinggleam.android.ui.theme.Dark.ash else c.ash
+    Floating(anchor, alignEnd = false, dark = dark, maxWidthFrac = 0.85f, onDismiss = onDismiss) {
+        Column(Modifier.width(260.dp).padding(14.dp), verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp)) {
+            Text(title, style = Type.bodyStrong.copy(color = ink))
+            if (text.isNotEmpty()) Text(text, style = Type.small.copy(color = ash))
+            rows.forEach { (k, v) ->
+                Row(Modifier.fillMaxWidth()) {
+                    Text(k, style = Type.small.copy(color = ash), modifier = Modifier.weight(1f))
+                    Text(v, style = Type.mono.copy(color = ink))
                 }
             }
         }
@@ -226,30 +268,30 @@ private fun GlassMenu(anchor: androidx.compose.ui.geometry.Rect, items: List<Men
 
 /** 圆形的玻璃图标按钮。 */
 @Composable
-fun GlassIconBtn(icon: String, label: String, onClick: () -> Unit, modifier: Modifier = Modifier, on: Boolean = false, enabled: Boolean = true, box: Float = 16f, dot: Boolean = false) {
+fun GlassIconBtn(icon: String, label: String, onClick: () -> Unit, modifier: Modifier = Modifier, on: Boolean = false, enabled: Boolean = true, box: Float = 16f, dot: Boolean = false, size: Dp = 40.dp) {
     val c = LocalFg.current
     val src = remember { MutableInteractionSource() }
     val press = rememberPress(src)
     Box(modifier) {
-        GlassBox(Modifier.size(40.dp).graphicsLayer { alpha = if (enabled) 1f else 0.45f }, shape = androidx.compose.foundation.shape.CircleShape, press = press) {
+        GlassBox(Modifier.size(size).graphicsLayer { alpha = if (enabled) 1f else 0.45f }, shape = androidx.compose.foundation.shape.CircleShape, press = press) {
             Box(
                 Modifier.fillMaxSize().clip(androidx.compose.foundation.shape.CircleShape).background(if (on) c.ink else Color.Transparent)
                     .clickable(interactionSource = src, indication = null, enabled = enabled, onClick = onClick)
                     .semantics { contentDescription = label },
                 contentAlignment = Alignment.Center,
-            ) { FgIcon(icon, size = 19.dp, box = box, stroke = 1.5f, color = if (on) c.onInk else c.ink) }
+            ) { FgIcon(icon, size = 18.dp, box = box, stroke = 1.5f, color = if (on) c.onInk else c.ink) }
         }
-        if (dot) Box(Modifier.align(Alignment.TopEnd).padding(top = 4.dp, end = 4.dp).size(8.dp).clip(androidx.compose.foundation.shape.CircleShape).background(c.ink))
+        if (dot) Box(Modifier.align(Alignment.TopEnd).padding(top = 4.dp, end = 4.dp).size(6.dp).clip(androidx.compose.foundation.shape.CircleShape).background(c.ink))
     }
 }
 
 /**
- * 浮在内容上的顶栏：左边一粒"‹ 上一页"的玻璃胶囊，中间标题，右边几粒玻璃圆钮。放在内容的 Box 里、内容自己留出顶部的高度。
+ * 浮在内容上的顶栏：左边一粒"‹ 上一页"的玻璃胶囊，中间标题，右边几粒玻璃圆钮。放在内容的 Box 里、内容自己留出顶部的高度。48dp 高（和 NavBar 一样）。
  */
 @Composable
 fun GlassNavBar(title: String, back: String?, onBack: (() -> Unit)?, modifier: Modifier = Modifier, onTitle: (() -> Unit)? = null, trailing: (@Composable RowScope.() -> Unit)? = null) {
     val c = LocalFg.current
-    Box(modifier.fillMaxWidth().height(52.dp).padding(horizontal = 10.dp)) {
+    Box(modifier.fillMaxWidth().height(48.dp).padding(horizontal = 10.dp)) {
         if (onBack != null) {
             val src = remember { MutableInteractionSource() }
             val press = rememberPress(src)
@@ -268,5 +310,123 @@ fun GlassNavBar(title: String, back: String?, onBack: (() -> Unit)?, modifier: M
             modifier = Modifier.align(Alignment.Center).padding(horizontal = 104.dp).clip(RoundedCornerShape(8.dp)).then(if (onTitle != null) Modifier.clickable(onClick = onTitle) else Modifier).padding(horizontal = 6.dp, vertical = 4.dp),
         )
         if (trailing != null) Row(Modifier.align(Alignment.CenterEnd), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), content = trailing)
+    }
+}
+
+
+// ---------------------------------------------------------------- 覆盖层里的对话框与底部弹层（全局液态玻璃）
+//
+// Compose 的 Dialog / ModalBottomSheet 是另一个窗口，拿不到背后的内容、画不出折射；所以它们改成画在 AppShell 根部的覆盖层里：
+// 一层遮罩 + 一块玻璃。`FgDialog` / `GlassSheet` 在 `open` 为真时把自己登记进 `OverlayState.layers`，关掉就撤下。
+
+class Layer(val id: Long) {
+    var body by androidx.compose.runtime.mutableStateOf<(@Composable () -> Unit)>({})
+}
+
+/** 登记一层：`open` 为真时在覆盖层里画 `body`（内容随重组更新），为假时撤下。 */
+@Composable
+fun rememberLayer(open: Boolean, body: @Composable () -> Unit) {
+    val overlay = LocalOverlay.current
+    val layer = remember { Layer(System.nanoTime()) }
+    val latest = androidx.compose.runtime.rememberUpdatedState(body)
+    androidx.compose.runtime.SideEffect { layer.body = { latest.value() } }
+    androidx.compose.runtime.DisposableEffect(open) {
+        if (open && overlay.layers.none { it.id == layer.id }) overlay.layers.add(layer)
+        onDispose { overlay.layers.remove(layer) }
+    }
+}
+
+/** 遮罩：黑 35%，吃掉所有触摸，点一下关（`locked` 时不关）。 */
+@Composable
+private fun Scrim(visible: Float, locked: Boolean, onDismiss: () -> Unit) {
+    Box(
+        Modifier.fillMaxSize().graphicsLayer { alpha = visible }.background(Color.Black.copy(alpha = 0.35f))
+            .pointerInput(locked) {
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    down.consume()
+                    var up = true
+                    do {
+                        val ev = awaitPointerEvent()
+                        ev.changes.forEach { if (it.positionChanged()) up = false; it.consume() }
+                    } while (ev.changes.any { it.pressed })
+                    if (up && !locked) onDismiss()
+                }
+            },
+    )
+}
+
+/**
+ * 玻璃对话框：居中、最宽 520dp、圆角 16；标题 16 半粗、正文、底部一行按钮。背后的页面被折射进来。
+ */
+@Composable
+fun GlassDialog(open: Boolean, onDismiss: () -> Unit, title: String, locked: Boolean = false, footer: (@Composable RowScope.() -> Unit)? = null, content: @Composable () -> Unit) {
+    rememberLayer(open) {
+        val c = LocalFg.current
+        val a = remember { Animatable(0f) }
+        LaunchedEffect(Unit) { a.animateTo(1f, com.fleetinggleam.android.ui.theme.Motion.base()) }
+        androidx.activity.compose.BackHandler(enabled = !locked, onBack = onDismiss)
+        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize().imePadding(), contentAlignment = Alignment.Center) {
+            Scrim(a.value, locked, onDismiss)
+            Box(
+                Modifier.padding(20.dp).widthIn(max = 520.dp).fillMaxWidth().heightIn(max = maxHeight - 40.dp)
+                    .graphicsLayer { val s = 0.96f + 0.04f * a.value; scaleX = s; scaleY = s; alpha = a.value; translationY = (1f - a.value) * 12.dp.toPx() }
+                    .glass(LocalBackdrop.current, RoundedCornerShape(16.dp), glassStyle(strong = true), on = LocalGlassOn.current),
+            ) {
+                Column(Modifier.fillMaxWidth()) {
+                    Text(title, style = Type.title.copy(fontSize = androidx.compose.ui.unit.TextUnit(16f, androidx.compose.ui.unit.TextUnitType.Sp), lineHeight = androidx.compose.ui.unit.TextUnit(21f, androidx.compose.ui.unit.TextUnitType.Sp), color = c.ink), modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 10.dp))
+                    Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
+                        content()
+                        androidx.compose.foundation.layout.Spacer(Modifier.height(16.dp))
+                    }
+                    if (footer != null) {
+                        Box(Modifier.fillMaxWidth().height(0.5.dp).background(c.line))
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically, content = footer)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 玻璃底部弹层：从底部升起，顶角 16，带把手；最高 90% 屏幕，内容自己滚动。`dark` 强制深色玻璃（大图里用）。
+ */
+@Composable
+fun GlassSheet(open: Boolean, onDismiss: () -> Unit, dark: Boolean? = null, content: @Composable () -> Unit) {
+    rememberLayer(open) {
+        val fg = if (dark == true) com.fleetinggleam.android.ui.theme.Dark else LocalFg.current
+        val a = remember { Animatable(0f) }
+        LaunchedEffect(Unit) { a.animateTo(1f, com.fleetinggleam.android.ui.theme.Motion.base()) }
+        androidx.activity.compose.BackHandler(onBack = onDismiss)
+        androidx.compose.runtime.CompositionLocalProvider(LocalFg provides fg) {
+            androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize().imePadding(), contentAlignment = Alignment.BottomCenter) {
+                Scrim(a.value, false, onDismiss)
+                Box(
+                    Modifier.fillMaxWidth().heightIn(max = maxHeight * 0.9f)
+                        .graphicsLayer { translationY = (1f - a.value) * 80.dp.toPx(); alpha = a.value }
+                        .glass(LocalBackdrop.current, RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp), glassStyle(strong = true, dark = dark), on = LocalGlassOn.current),
+                ) {
+                    Column(Modifier.fillMaxWidth()) {
+                        Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+                            Box(Modifier.size(width = 36.dp, height = 5.dp).clip(androidx.compose.foundation.shape.CircleShape).background(fg.line))
+                        }
+                        Box(Modifier.weight(1f, fill = false)) { content() }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 浮在内容上的玻璃横条（状态页签、首页右上的按钮组用）：整宽、方角、底边一线，强玻璃，没有投影。内容从它下面滚过去。
+ */
+@Composable
+fun GlassBar(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    val c = LocalFg.current
+    Box(modifier.fillMaxWidth().glass(LocalBackdrop.current, RoundedCornerShape(0.dp), glassStyle(strong = true).copy(shadow = false), on = LocalGlassOn.current)) {
+        content()
+        Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(0.5.dp).background(c.line))
     }
 }

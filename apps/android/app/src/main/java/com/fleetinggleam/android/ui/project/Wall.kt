@@ -219,7 +219,7 @@ fun FocusImage(path: String, modifier: Modifier = Modifier, quick: Boolean = fal
     LaunchedEffect(loaded) {
         if (loaded && p.value < 1f) {
             seen.add(path)
-            p.animateTo(1f, tween(if (quick) Motion.FAST else 950, easing = Motion.easeOut))
+            p.animateTo(1f, if (quick) Motion.fast() else Motion.develop())
         }
     }
     if (missing) { Box(modifier.background(c.surface2)); return }
@@ -266,9 +266,9 @@ fun PhotoTags(p: Photo, modifier: Modifier = Modifier) {
     if (tags.isEmpty()) return
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         tags.forEach { (id, text) ->
-            Row(Modifier.clip(RoundedCornerShape(5.dp)).background(Color(0xC7101014)).border(1.dp, Color(0x29FFFFFF), RoundedCornerShape(5.dp)).padding(horizontal = 6.dp, vertical = 1.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.clip(RoundedCornerShape(4.dp)).background(Color(0xA3000000)).padding(horizontal = 6.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (id == "motion") Box(Modifier.size(5.dp).clip(CircleShape).background(Color.White).padding(end = 3.dp))
-                Text(text ?: t("tag.$id"), style = Type.monoSmall.copy(color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 10.sp), modifier = Modifier.padding(start = if (id == "motion") 4.dp else 0.dp))
+                Text(text ?: t("tag.$id"), style = Type.caption.copy(color = Color.White), modifier = Modifier.padding(start = if (id == "motion") 4.dp else 0.dp))
             }
         }
     }
@@ -327,18 +327,10 @@ fun Tile(
                 scaleX = s; scaleY = s
                 alpha = 1f - 0.38f * recede
             }
-            // 保留的格子周围一圈琥珀色的光晕：画两圈渐淡的圆角矩形，不用 shadow（每格一个阴影层，滚动时渲染线程吃不消）
-            .then(if (kept) Modifier.drawBehind {
-                val r = (TILE_RADIUS + 2.dp).toPx()
-                // 深色底上同样的透明度会糊成一圈棕边，淡一些、收窄一些
-                for ((k, a) in if (c.dark) listOf(4f to 0.05f, 2f to 0.10f) else listOf(5f to 0.08f, 2.5f to 0.14f)) {
-                    val o = k.dp.toPx()
-                    drawRoundRect(c.gleam.copy(alpha = a), topLeft = Offset(-o, -o), size = Size(size.width + 2 * o, size.height + 2 * o), cornerRadius = CornerRadius(r + o))
-                }
-            } else Modifier)
+            // 一个状态一种信号（设计审查 R3）：保留 = 星 + 1dp 琥珀描边，没有外圈光晕；待复查 = 空心星，不描边
             .clip(shape)
             .background(c.surface)
-            .then(if (kept) Modifier.border(1.dp, c.gleam.copy(alpha = 0.55f), shape) else if (photo != null && state == "review") Modifier.border(1.dp, Color.White.copy(alpha = 0.2f), shape) else Modifier)
+            .then(if (kept) Modifier.border(1.dp, c.gleam.copy(alpha = 0.55f), shape) else Modifier)
             .combinedClickable(interactionSource = src, indication = null, enabled = interactive, onClick = { onSelect(path) }, onDoubleClick = { onSelect(path); onOpen(path) }, onLongClick = { onSelect(path); onOpen(path) }),
     ) {
         if (photo != null) {
@@ -347,11 +339,11 @@ fun Tile(
             Developing(path, stage)
         }
         if (photo != null) {
-            PhotoTags(photo, Modifier.align(Alignment.TopStart).padding(8.dp))
-            // 选中时小格子的分数会被坞挡住：只在格子够宽时显示
-            if (showScore && !selected || selected && w >= 210.dp) Text(
+            // 格子上的覆盖层最多两个（R10）：格式标签只在 ≥ 160dp 的格子上；分数只在按评分排序时
+            if (w >= 160.dp) PhotoTags(photo, Modifier.align(Alignment.TopStart).padding(8.dp))
+            if (showScore) Text(
                 "${pct(photo.score)}", style = Type.monoSmall.copy(color = Color.White),
-                modifier = Modifier.align(Alignment.BottomStart).padding(8.dp).clip(RoundedCornerShape(5.dp)).background(Color(0xA30E0E12)).border(1.dp, Color(0x2EFFFFFF), RoundedCornerShape(5.dp)).padding(horizontal = 6.dp, vertical = 1.dp),
+                modifier = Modifier.align(Alignment.BottomStart).padding(8.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xA3000000)).padding(horizontal = 6.dp, vertical = 2.dp),
             )
             Marks(state, changedTo, changeN, reveal, index, selected)
             if (selected && interactive) {
@@ -363,14 +355,14 @@ fun Tile(
 }
 
 /** 分析中：缩略图随阶段从模糊到清楚，环形进度、阶段名、文件名，一道扫过的光；没开始的那些只有扫光和名字。 */
+/**
+ * 分析中的格子（设计审查 A5.6 / R9）：没开始的只有底色，静止、没有字；进行中的是模糊渐清的缩略图加一个 32dp 的进度环，
+ * 没有扫光、没有呼吸边、没有阶段名和文件名（那些在进度卡上）。同一时刻只有正在处理的格子在动。
+ */
 @Composable
 private fun Developing(path: String, stage: StageInfo?) {
-    val c = LocalFg.current
-    val inf = rememberInfiniteTransition(label = "dev")
-    val sweep by inf.animateFloat(1.3f, -1.3f, infiniteRepeatable(tween(if (stage != null) 1600 else 2600, easing = LinearEasing)), label = "sweep")
-    val breathe by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(1200, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "breathe")
-    val pctv by animateFloatAsState((stage?.pct ?: 0) / 100f, tween(500, easing = Motion.easeOut), label = "pct")
-    Box(Modifier.fillMaxSize().then(if (stage != null) Modifier.border(1.dp + (3.dp * breathe), c.gleam.copy(alpha = 0.14f * breathe), RoundedCornerShape(TILE_RADIUS)) else Modifier)) {
+    val pctv by animateFloatAsState((stage?.pct ?: 0) / 100f, Motion.base(), label = "pct")
+    Box(Modifier.fillMaxSize()) {
         stage?.thumb?.let { th ->
             val left = 1f - pctv
             AsyncImage(File(th), null, Modifier.fillMaxSize().graphicsLayer {
@@ -378,23 +370,13 @@ private fun Developing(path: String, stage: StageInfo?) {
                 if (b > 0.5f) renderEffect = RenderEffect.createBlurEffect(b, b, Shader.TileMode.CLAMP).asComposeRenderEffect()
             }, contentScale = ContentScale.Crop, colorFilter = ColorFilter.colorMatrix(ColorMatrix().apply { val k = 1f + left * 0.3f; setToScale(k, k, k, 1f) }))
         }
-        Canvas(Modifier.fillMaxSize()) {
-            val x = size.width * sweep
-            drawRect(Brush.linearGradient(listOf(Color.Transparent, c.ink.copy(alpha = if (stage != null) 0.09f else 0.04f), Color.Transparent), start = Offset(x - size.width * 0.4f, 0f), end = Offset(x + size.width * 0.4f, size.height * 0.2f)))
-        }
-        val onPhoto = stage != null
         if (stage != null) {
-            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color(0x59000000)), startY = 0f)))
-            Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Canvas(Modifier.size(44.dp)) {
-                    val sw = 3.dp.toPx()
-                    drawCircle(Color.White.copy(alpha = 0.28f), radius = size.minDimension / 2 - sw, style = Stroke(sw))
-                    drawArc(Color.White, -90f, 360f * pctv, false, topLeft = Offset(sw, sw), size = Size(size.width - 2 * sw, size.height - 2 * sw), style = Stroke(sw, cap = StrokeCap.Round))
-                }
-                Text(t("cull.stage.${stage.stage}").takeIf { !it.startsWith("cull.") } ?: stage.stage, style = Type.monoSmall.copy(color = Color.White.copy(alpha = 0.9f)))
+            Canvas(Modifier.align(Alignment.Center).size(32.dp)) {
+                val sw = 2.5.dp.toPx()
+                drawCircle(Color.White.copy(alpha = 0.28f), radius = size.minDimension / 2 - sw, style = Stroke(sw))
+                drawArc(Color.White, -90f, 360f * pctv, false, topLeft = Offset(sw, sw), size = Size(size.width - 2 * sw, size.height - 2 * sw), style = Stroke(sw, cap = StrokeCap.Round))
             }
         }
-        Text(path.substringAfterLast('/'), style = Type.monoSmall.copy(color = if (onPhoto) Color.White.copy(alpha = 0.85f) else c.ash, fontSize = 10.5.sp), maxLines = 1, modifier = Modifier.align(Alignment.BottomStart).padding(8.dp))
     }
 }
 
@@ -404,17 +386,18 @@ private fun androidx.compose.foundation.layout.BoxScope.Marks(state: String, cha
     val play = { s: String -> (changedTo == s && changeN > 0) || reveal }
     val delayMs = if (reveal && changedTo == null) 300 + minOf(index, 40) * 55 else 0
     if (state == "keep") {
+        // 星的出现：缩放 0.6 → 1、淡入，tap 弹簧，不转、不弹跳（设计审查 R7）
         val pop = remember(changeN, reveal) { Animatable(if (play("keep")) 0f else 1f) }
-        LaunchedEffect(changeN, reveal) { if (pop.value < 1f) { kotlinx.coroutines.delay(delayMs.toLong() + 50); pop.animateTo(1f, spring(dampingRatio = 0.39f, stiffness = 380f)) } }
+        LaunchedEffect(changeN, reveal) { if (pop.value < 1f) { kotlinx.coroutines.delay(delayMs.toLong() + 50); pop.animateTo(1f, Motion.tap()) } }
         Box(Modifier.align(Alignment.TopEnd).padding(9.dp).graphicsLayer {
             val v = pop.value
-            scaleX = 0.1f + 0.9f * v; scaleY = scaleX; rotationZ = -110f * (1f - v); alpha = v.coerceIn(0f, 1f)
+            scaleX = 0.6f + 0.4f * v; scaleY = scaleX; alpha = v.coerceIn(0f, 1f)
         }) { Star(true, 20.dp) }
         if (play("keep")) Flare(changeN, reveal, delayMs)
     }
     if (state == "review") {
         val d = remember(changeN) { Animatable(if (changedTo == "review") 0f else 1f) }
-        LaunchedEffect(changeN) { if (d.value < 1f) d.animateTo(1f, tween(700, easing = Motion.easeOut)) }
+        LaunchedEffect(changeN) { if (d.value < 1f) d.animateTo(1f, Motion.slow()) }
         Box(Modifier.align(Alignment.TopEnd).padding(9.dp)) { Star(false, 20.dp, color = Color.White.copy(alpha = 0.95f), draw = d.value) }
     }
     if (state == "reject" && changedTo == "reject" && changeN > 0) Iris(changeN)
@@ -424,7 +407,7 @@ private fun androidx.compose.foundation.layout.BoxScope.Marks(state: String, cha
 @Composable
 private fun Flare(n: Int, reveal: Boolean, delayMs: Int) {
     val a = remember(n, reveal) { Animatable(0f) }
-    LaunchedEffect(n, reveal) { kotlinx.coroutines.delay(delayMs.toLong()); a.animateTo(1f, tween(950, easing = Motion.easeOut)) }
+    LaunchedEffect(n, reveal) { kotlinx.coroutines.delay(delayMs.toLong()); a.animateTo(1f, Motion.slow()) }
     Canvas(Modifier.fillMaxSize()) {
         val v = a.value
         if (v <= 0f || v >= 1f) return@Canvas
@@ -442,7 +425,7 @@ private fun Flare(n: Int, reveal: Boolean, delayMs: Int) {
 @Composable
 private fun Iris(n: Int) {
     val a = remember(n) { Animatable(0f) }
-    LaunchedEffect(n) { a.animateTo(1f, tween(750, easing = Motion.easeOut)) }
+    LaunchedEffect(n) { a.animateTo(1f, Motion.slow()) }
     Canvas(Modifier.fillMaxSize()) {
         val v = a.value
         if (v >= 1f) return@Canvas

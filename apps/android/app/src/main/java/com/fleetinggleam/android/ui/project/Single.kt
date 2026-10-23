@@ -50,6 +50,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
@@ -95,7 +96,8 @@ fun SinglePager(shown: List<Photo>, decisions: Map<String, Decision>, cull: Cull
     Column(Modifier.fillMaxSize().padding(bottom = bottomPad)) {
         Box(Modifier.weight(1f).fillMaxWidth()) {
             // 照片的颜色在它身后晕开
-            AsyncImage(File(photo.thumb), null, Modifier.align(Alignment.Center).fillMaxSize(0.6f).blur(48.dp).graphicsLayer { alpha = 0.5f; scaleX = 1.5f; scaleY = 1.5f }, contentScale = ContentScale.Crop)
+            // 和大图的"房间"同一套参数：模糊 56、透明 0.4、放大 1.4（设计审查 A7.3）
+            AsyncImage(File(photo.thumb), null, Modifier.align(Alignment.Center).fillMaxSize(0.6f).blur(56.dp).graphicsLayer { alpha = 0.4f; scaleX = 1.4f; scaleY = 1.4f }, contentScale = ContentScale.Crop)
             HorizontalPager(pager, Modifier.fillMaxSize(), key = { shown[it].path }, beyondViewportPageCount = 1) { page ->
                 val p = shown[page]
                 val f = ((pager.currentPage - page) + pager.currentPageOffsetFraction).coerceIn(-1f, 1f)
@@ -107,17 +109,20 @@ fun SinglePager(shown: List<Photo>, decisions: Map<String, Decision>, cull: Cull
                     if (page < shown.size - 1) scope.launch { pager.animateScrollToPage(page + 1) }
                 }, onOpen = { onOpen(p.path) }, cull = cull,
                     modifier = Modifier.graphicsLayer {
-                        // 书页那样转开：转过一点角度、缩向远处，里面的照片往反方向漂一点（视差）
+                        // 翻页：转一点点角度、缩一点、不太淡（效果小于内容——设计审查 A7.1）
                         cameraDistance = 14f * density
-                        rotationY = 22f * f
-                        val s = 1f - 0.12f * abs(f)
+                        rotationY = 10f * f
+                        val s = 1f - 0.06f * abs(f)
                         scaleX = s; scaleY = s
-                        alpha = 1f - 0.5f * abs(f)
+                        alpha = 1f - 0.3f * abs(f)
                     })
             }
-            Text("${pager.currentPage + 1} / ${shown.size}", style = Type.monoSmall.copy(color = c.ash), modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 2.dp))
         }
-        Filmstrip(shown, decisions, pager.currentPage) { path -> cull.select(path) }
+        // 页码放在小图条右端，不单独占一行（A7.6）
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Filmstrip(shown, decisions, pager.currentPage, Modifier.weight(1f)) { path -> cull.select(path) }
+            Text("${pager.currentPage + 1} / ${shown.size}", style = Type.monoSmall.copy(color = c.ash), modifier = Modifier.padding(end = 16.dp))
+        }
         CompactVerdict(photo, decisions[photo.path], onDecide = { st -> onDecide(photo.path, st) })
     }
 }
@@ -157,9 +162,10 @@ private fun SwipeDecide(p: Photo, d: Decision?, onDecide: (String) -> Unit, onOp
                     scaleX = s; scaleY = s
                     rotationZ = if (k > 0) 2.5f * k else 0f
                 }
-                .shadow(if (kept) 18.dp else 10.dp, RoundedCornerShape(12.dp), ambientColor = if (kept) c.gleam else Color.Black, spotColor = if (kept) c.gleam else Color.Black)
-                .clip(RoundedCornerShape(12.dp))
-                .border(if (kept) 1.dp else 0.dp, if (kept) c.gleam.copy(alpha = 0.6f) else Color.Transparent, RoundedCornerShape(12.dp))
+                // 保留 = 1dp 琥珀边；阴影一律中性 10dp（R3 / A7.2）
+                .shadow(10.dp, RoundedCornerShape(10.dp), ambientColor = Color.Black, spotColor = Color.Black)
+                .clip(RoundedCornerShape(10.dp))
+                .border(if (kept) 1.dp else 0.dp, if (kept) c.gleam.copy(alpha = 0.6f) else Color.Transparent, RoundedCornerShape(10.dp))
                 .clickable { onOpen() }
                 .pointerInput(p.path) {
                     detectVerticalDragGestures(
@@ -187,8 +193,12 @@ private fun SwipeDecide(p: Photo, d: Decision?, onDecide: (String) -> Unit, onOp
 }
 
 /** 下面的小图条（桌面端 Single 的 filmstrip）：当前的有一个指示，保留的带金点。 */
+/**
+ * 小图条（和大图里的同一规格——设计审查 A7.5）：56 × 56、圆角 6；其余透明度 0.6、不缩放；当前项 2dp 描边（页面里墨色、大图里白色）；
+ * 保留 = 右上 7dp 琥珀点，淘汰 = 透明度 0.4。
+ */
 @Composable
-fun Filmstrip(shown: List<Photo>, decisions: Map<String, Decision>, index: Int, onPick: (String) -> Unit) {
+fun Filmstrip(shown: List<Photo>, decisions: Map<String, Decision>, index: Int, modifier: Modifier = Modifier, ring: Color? = null, onPick: (String) -> Unit) {
     val c = LocalFg.current
     val density = LocalDensity.current
     val state = rememberLazyListState(initialFirstVisibleItemIndex = maxOf(0, index - 3))
@@ -196,50 +206,33 @@ fun Filmstrip(shown: List<Photo>, decisions: Map<String, Decision>, index: Int, 
         val vw = state.layoutInfo.viewportSize.width
         state.animateScrollToItem(index, -(vw / 2 - with(density) { 28.dp.toPx() }).toInt())
     }
-    LazyRow(state = state, contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().height(64.dp).padding(vertical = 4.dp)) {
+    LazyRow(state = state, contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = modifier.height(64.dp).padding(vertical = 4.dp)) {
         itemsIndexed(shown, key = { _, p -> p.path }) { i, p ->
             val cur = i == index
             val st = decisions[p.path]?.state
             Box(
-                Modifier.size(56.dp).graphicsLayer { val s = if (cur) 1f else 0.9f; scaleX = s; scaleY = s }
-                    .clip(RoundedCornerShape(9.dp)).border(if (cur) 2.dp else 0.dp, if (cur) c.ink else Color.Transparent, RoundedCornerShape(9.dp))
+                Modifier.size(56.dp).graphicsLayer { alpha = if (cur) 1f else if (st == "reject") 0.4f else 0.6f }
+                    .clip(RoundedCornerShape(6.dp)).border(if (cur) 2.dp else 0.dp, if (cur) (ring ?: c.ink) else Color.Transparent, RoundedCornerShape(6.dp))
                     .clickable { onPick(p.path) },
             ) {
-                AsyncImage(File(p.thumb), null, Modifier.fillMaxSize().graphicsLayer { alpha = if (st == "reject") 0.5f else 1f }, contentScale = ContentScale.Crop)
-                if (st == "keep") Box(Modifier.align(Alignment.TopEnd).padding(3.dp)) { Star(true, 11.dp, glow = false) }
+                AsyncImage(File(p.thumb), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                if (st == "keep") Box(Modifier.align(Alignment.TopEnd).padding(4.dp).size(7.dp).clip(CircleShape).background(c.gleam))
             }
         }
     }
 }
 
 /** 单张下面的判定：星、分数、三个按钮、一行理由。 */
+/** 单张下面的判定（设计审查 A7.4 / R2）：一行分数（数字，不画星）+ 理由；下面三个判定钮（和检查器同一个 `DecideTrio`）。 */
 @Composable
 private fun CompactVerdict(photo: Photo, d: Decision?, onDecide: (String?) -> Unit) {
     val c = LocalFg.current
-    val state = d?.state ?: "review"
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            val n = stars(photo.score)
-            (0 until 5).forEach { i -> Star(i < n, 15.dp, color = if (i < n) c.gleam else c.ash, glow = false) }
-            Text("${pct(photo.score)}", style = Type.monoSmall.copy(color = c.ash), modifier = Modifier.padding(start = 6.dp))
+            Text("${pct(photo.score)}", style = Type.mono.copy(fontSize = 16.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium, color = c.ink))
             Text(d?.reasons?.joinToString(if (I18n.isZh) "；" else "; ") { reasonText(it) } ?: "", style = Type.rowDesc.copy(color = c.ash), maxLines = 1,
                 overflow = com.fleetinggleam.android.ui.theme.Ellipsis, modifier = Modifier.weight(1f).padding(start = 10.dp))
         }
-        Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("keep", "review", "reject").forEach { st ->
-                val on = state == st
-                Row(
-                    Modifier.weight(1f).height(40.dp).clip(RoundedCornerShape(12.dp))
-                        .background(if (on) (if (st == "keep") c.gleam else c.ink) else c.surface)
-                        .border(1.dp, if (on) Color.Transparent else c.line, RoundedCornerShape(12.dp))
-                        .clickable { onDecide(if (on && d?.manual == true) null else st) },
-                    horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    val fg = if (on) (if (st == "keep") c.gleamInk else c.onInk) else c.ink
-                    StateIcon(st, fg, 13.dp)
-                    Text(t("state.$st"), style = Type.label.copy(color = fg, fontWeight = FontWeight.SemiBold), modifier = Modifier.padding(start = 6.dp), maxLines = 1)
-                }
-            }
-        }
+        DecideTrio(d, onDecide, Modifier.padding(top = 8.dp))
     }
 }

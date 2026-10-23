@@ -69,7 +69,7 @@ suspend fun ensureSearch(onReady: () -> Unit) {
 
 /** 搜索框：索引还在建时图标外有一圈细环慢慢填满，搜到几张写在右边。 */
 @Composable
-fun SearchField(cull: CullState, modifier: Modifier = Modifier, placeholder: String = t("search.placeholder"), autoFocus: Boolean = true) {
+fun SearchField(cull: CullState, modifier: Modifier = Modifier, placeholder: String = t("search.placeholder"), autoFocus: Boolean = true, plain: Boolean = false) {
     val c = LocalFg.current
     val index by Search.index.collectAsState()
     val scope = rememberCoroutineScope()
@@ -77,27 +77,27 @@ fun SearchField(cull: CullState, modifier: Modifier = Modifier, placeholder: Str
     val fm = LocalFocusManager.current
     LaunchedEffect(Unit) { if (autoFocus) runCatching { focus.requestFocus() } }
     Row(
-        modifier.fillMaxWidth().height(38.dp).clip(RoundedCornerShape(11.dp)).background(c.surface).padding(start = 8.dp, end = 4.dp),
+        modifier.fillMaxWidth().height(40.dp).clip(RoundedCornerShape(10.dp)).background(c.surface).padding(start = 8.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
-            FgIcon(Icons.SEARCH, size = 15.dp, color = c.ash)
-            index.progress?.let { p ->
+            FgIcon(Icons.SEARCH, size = 16.dp, color = c.ash)
+            if (!plain) index.progress?.let { p ->
                 Canvas(Modifier.size(24.dp)) {
                     drawArc(c.ink, -90f, 360f * maxOf(0.04f, p), false, style = Stroke(1.6.dp.toPx(), cap = StrokeCap.Round))
                 }
             }
         }
         Box(Modifier.weight(1f).padding(horizontal = 8.dp)) {
-            if (cull.query.isEmpty()) Text(index.progress?.let { t("search.indexing", "pct" to Math.round(it * 100)) } ?: placeholder, style = Type.body.copy(color = c.ash), maxLines = 1)
+            if (cull.query.isEmpty()) Text((if (plain) null else index.progress?.let { t("search.indexing", "pct" to Math.round(it * 100)) }) ?: placeholder, style = Type.body.copy(color = c.ash), maxLines = 1)
             BasicTextField(
                 cull.query, { cull.query = it }, singleLine = true, textStyle = Type.body.copy(color = c.ink), cursorBrush = SolidColor(c.ink),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search), keyboardActions = KeyboardActions(onSearch = { fm.clearFocus() }),
-                modifier = Modifier.fillMaxWidth().focusRequester(focus).onFocusChanged { if (it.isFocused) scope.launch { ensureSearch { cull.searchRev++ } } },
+                modifier = Modifier.fillMaxWidth().focusRequester(focus).onFocusChanged { if (it.isFocused && !plain) scope.launch { ensureSearch { cull.searchRev++ } } },
             )
         }
         if (cull.query.isNotEmpty()) {
-            cull.rawHits?.let { Text(t("search.results", "count" to it.size), style = Type.monoSmall.copy(color = c.ash)) }
+            if (!plain) cull.rawHits?.let { Text(t("search.results", "count" to it.size), style = Type.monoSmall.copy(color = c.ash)) }
             Box(Modifier.padding(start = 4.dp).size(32.dp).clip(CircleShape).clickable { cull.query = "" }, contentAlignment = Alignment.Center) {
                 FgIcon("M4 4l8 8M12 4l-8 8", size = 11.dp, stroke = 1.8f, color = c.ash)
             }

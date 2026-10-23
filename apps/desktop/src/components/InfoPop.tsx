@@ -63,7 +63,7 @@ export default function InfoPop({ title, children, width = 340 }: { title?: stri
             <motion.div ref={card} className={`pop ${pos.up ? "up" : ""}`} role="dialog" aria-label={title}
               style={{ left: pos.left, top: pos.top, width: pos.w, transformOrigin: `${pos.arrow}px ${pos.up ? "100%" : "0"}` }}
               initial={{ opacity: 0, y: pos.up ? 6 : -6, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, scale: 0.97 }}
-              transition={{ duration: 0.2, ease: EASE_OUT }}>
+              transition={{ duration: 0.16, ease: EASE_OUT }}>
               <i className="pop-arrow" style={{ left: pos.arrow }} />
               {title && <h4>{title}</h4>}
               <div className="pop-body">{children}</div>

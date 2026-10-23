@@ -2,8 +2,9 @@ import { PrefsInfo, bumpPrefsRevision, learnFromFolder, refreshStyles } from "..
 import LearnMeter from "../components/LearnMeter";
 import { fmtBytes } from "../format";
 import { pickLocalFolder, baseName } from "../projectActions";
-import { ensurePack, removePack, usePacks } from "../models";
-import { adopt, release } from "../strategy";
+import { ensurePack, ensurePacks, removePack, usePacks } from "../models";
+import { adopt, release, tierPacks } from "../strategy";
+import RowMenu from "../components/RowMenu";
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
@@ -21,16 +22,16 @@ import InfoPop from "../components/InfoPop";
 import Segmented from "../components/Segmented";
 import Select from "../components/Select";
 import { LANGS, Pref, setPref, storedPref } from "../i18n";
-import { SPRING } from "../motion";
 import { type Settings as AppSettings, Theme, bumpCacheRev, setSettings, useScanInfo, useSettings } from "../settings";
 
 
-function Group({ id, title, index, children }: { id: string; title: string; index: number; children: ReactNode }) {
+// 分组不再逐个入场，整页一次淡入（M9.8）
+function Group({ id, title, children }: { id: string; title: string; index?: number; children: ReactNode }) {
   return (
-    <motion.section id={id} className="sgroup" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ ...SPRING.soft, delay: 0.05 + index * 0.06 }}>
+    <section id={id} className="sgroup">
       <h2>{title}</h2>
       <div className="scard">{children}</div>
-    </motion.section>
+    </section>
   );
 }
 
@@ -325,7 +326,7 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
               </button>
             ))}
           </nav>
-          <div className="settings-body">
+          <motion.div className="settings-body" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}>
             <Group id="sec-general" title={t("settings.general")} index={0}>
               <Row label={t("settings.language")} desc={t("settings.languageDesc")}>
                 <Select className="langselect" value={pref} aria-label={t("settings.language")}
@@ -359,6 +360,25 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
                 )}>
                 <span className="mono ash">{s.tier ? t(s.tier === "ultra" ? "settings.qualityUltra" : s.tier === "high" ? "settings.qualityHigh" : "settings.qualityFast") : t("settings.auto")}</span>
               </Row>
+              {/* 模型档位四选一，和 Android 一样（M9.2）：没装的选了就下载；换了之后正在看的项目重新评估 */}
+              <div className="srow-wrap"><div className="srow"><div className="stext"><b>{t("settings.tierTitle")}</b></div></div></div>
+              {([null, "fast", "high", "ultra"] as const).map((tier) => {
+                const pack = tier === null ? null : packs.find((p) => p.id === (tier === "high" ? "high" : tier === "ultra" ? "ultra" : "standard"));
+                const installed = tier === null || !!pack?.installed;
+                const title = tier === null ? t("settings.tierAuto") : t(tier === "ultra" ? "settings.qualityUltra" : tier === "high" ? "settings.qualityHigh" : "settings.qualityFast");
+                const desc = tier === null ? t("settings.tierAutoDesc") : `${t(`settings.tierDesc.${tier}`)} · ${installed ? t("settings.tierInstalled") : t("settings.tierNeeds")}`;
+                const on = s.tier === tier;
+                return (
+                  <button key={String(tier)} className="srow srow-pick" role="radio" aria-checked={on} onClick={async () => {
+                    if (tier !== null && (await ensurePacks(tierPacks(tier))) === "cancelled") return;
+                    setSettings({ tier, tierRev: s.tierRev + 1 });
+                  }}>
+                    <div className="stext"><b>{title}</b><p className="ash">{desc}</p></div>
+                    <i className={`radio ${on ? "on" : ""}`} aria-hidden />
+                  </button>
+                );
+              })}
+              <p className="ash small srow-hint">{t("settings.tierHint")}</p>
             </Group>
 
             <Group id="sec-personal" title={t("settings.personal")} index={3}>
@@ -406,32 +426,32 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
                   <button className="btn" disabled={tasteBusy} onClick={importTaste}>{t("settings.importTasteBtn")}</button>
                 </span>
               </Row>
-              <Row label={t("settings.backupTitle")} desc={bkMsg ?? bkSummary()} info={<p className="ash">{t("settings.backupInfo")}</p>}>
-                <span className="sctl-pair">
-                  {backup?.configured && <button className="btn" disabled={bkBusy !== null} onClick={bkNow}>{bkBusy === "now" ? t("settings.backupRunning") : t("settings.backupNow")}</button>}
-                  {backup?.configured && <button className="btn" disabled={bkBusy !== null} onClick={bkRestore}>{bkBusy === "restore" ? t("settings.backupRestoring") : t("settings.backupRestore")}</button>}
-                  <button className="switch" role="switch" aria-checked={!!backup?.configured && backup.enabled} aria-label={t("settings.backupAuto")} title={t("settings.backupAuto")} disabled={!backup?.configured || bkBusy !== null} onClick={bkToggle} />
-                </span>
-              </Row>
-              <Row label={t("settings.backupKeep")} desc={t("settings.backupKeepHint")}>
-                <Stepper value={backup?.keep ?? 30} min={1} max={1000} disabled={!backup?.configured} label={t("settings.backupKeep")} onChange={bkKeep} />
-              </Row>
+              {/* 先添加备份方式；自动备份、保留份数在有目标之后才出现（M9.3）。状态点写在说明前，编辑 / 移除收进 ⋯（M9.6） */}
               <Row label={t("settings.backupTargets")} desc={t("settings.backupTargetsDesc")}>
                 <button className="btn" disabled={bkBusy !== null} onClick={bkAdd}>{t("settings.backupAddTarget")}</button>
               </Row>
               {(backup?.targets ?? []).map((tg) => (
-                <Row key={tg.id} label={tg.name} desc={`Cloudflare R2 · ${tg.bucket}`}>
-                  <span className="sctl-pair">
-                    <span className={`nas-state ${tg.last_error ? "" : "on"}`}><i />{tg.last_error ? t("settings.backupErrored") : tg.last_ok ? t("settings.backupLast", { when: bkWhen(tg.last_ok) }) : t("settings.backupReady")}</span>
-                    <button className="btn icon sm" disabled={bkBusy !== null} onClick={() => bkEdit(tg)} title={t("settings.backupEdit")} aria-label={t("settings.backupEdit")}>
-                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><path d="M11.3 2.7l2 2L5.5 12.5l-2.8.8.8-2.8zM10 4l2 2" /></svg>
-                    </button>
-                    <button className="btn icon sm" disabled={bkBusy !== null} onClick={() => setBkRemoving(tg)} title={t("settings.backupRemove")} aria-label={t("settings.backupRemove")}>
-                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 4.5h11M6 4.5V3a.5.5 0 01.5-.5h3A.5.5 0 0110 3v1.5M4 4.5l.6 8.1a1 1 0 001 .9h4.8a1 1 0 001-.9l.6-8.1M6.5 7v4M9.5 7v4" /></svg>
-                    </button>
-                  </span>
+                <Row key={tg.id} label={tg.name} desc={`${tg.last_error ? "○" : "●"} ${tg.last_error ? t("settings.backupErrored") : tg.last_ok ? t("settings.backupLast", { when: bkWhen(tg.last_ok) }) : t("settings.backupReady")} · Cloudflare R2 · ${tg.bucket}`}>
+                  <RowMenu label={t("more.open")}>
+                    <button role="menuitem" disabled={bkBusy !== null} onClick={() => bkEdit(tg)}><i aria-hidden />{t("settings.backupEdit")}</button>
+                    <button role="menuitem" disabled={bkBusy !== null} onClick={() => setBkRemoving(tg)}><i aria-hidden />{t("settings.backupRemove")}</button>
+                  </RowMenu>
                 </Row>
               ))}
+              {backup?.configured && (
+                <Row label={t("settings.backupTitle")} desc={bkMsg ?? bkSummary()} info={<p className="ash">{t("settings.backupInfo")}</p>}>
+                  <span className="sctl-pair">
+                    <button className="btn" disabled={bkBusy !== null} onClick={bkNow}>{bkBusy === "now" ? t("settings.backupRunning") : t("settings.backupNow")}</button>
+                    <button className="btn" disabled={bkBusy !== null} onClick={bkRestore}>{bkBusy === "restore" ? t("settings.backupRestoring") : t("settings.backupRestore")}</button>
+                    <button className="switch" role="switch" aria-checked={backup.enabled} aria-label={t("settings.backupAuto")} title={t("settings.backupAuto")} disabled={bkBusy !== null} onClick={bkToggle} />
+                  </span>
+                </Row>
+              )}
+              {backup?.configured && (
+                <Row label={t("settings.backupKeep")} desc={t("settings.backupKeepHint")}>
+                  <Stepper value={backup.keep} min={1} max={1000} label={t("settings.backupKeep")} onChange={bkKeep} />
+                </Row>
+              )}
             </Group>
 
             <Group id="sec-nas" title={t("settings.nas")} index={5}>
@@ -439,16 +459,13 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
                 <button className="btn" onClick={() => { setNasErr(null); setNasShares(null); setNasEditing(null); setNasForm(blankNas); setNasOpen(true); }}>{t("settings.nasAdd")}</button>
               </Row>
               {shares.map((sh) => (
-                <Row key={sh.id} label={sh.name} desc={`${sh.host} · ${sh.user || t("settings.nasGuest")}${nasMsg?.id === sh.id ? ` · ${nasMsg.text}` : ""}`}>
+                <Row key={sh.id} label={sh.name} desc={`${sh.enabled && sh.connected ? "●" : "○"} ${!sh.enabled ? t("settings.nasDisabled") : sh.connected ? t("settings.nasConnected") : nasBusy === sh.id ? t("settings.nasConnecting") : t("settings.nasOffline")} · ${sh.host} · ${sh.user || t("settings.nasGuest")}${nasMsg?.id === sh.id ? ` · ${nasMsg.text}` : ""}`}>
                   <span className="sctl-pair">
-                    <span className={`nas-state ${sh.enabled && sh.connected ? "on" : ""}`}><i />{!sh.enabled ? t("settings.nasDisabled") : sh.connected ? t("settings.nasConnected") : nasBusy === sh.id ? t("settings.nasConnecting") : t("settings.nasOffline")}</span>
                     <button className="switch" role="switch" aria-checked={sh.enabled} aria-label={t("settings.nasEnabled")} title={t("settings.nasEnabled")} disabled={nasBusy === sh.id} onClick={() => nasDo(sh, () => setShareEnabled(sh.id, !sh.enabled))} />
-                    <button className="btn icon sm" disabled={nasBusy === sh.id} onClick={() => nasEdit(sh)} title={t("settings.nasEdit")} aria-label={t("settings.nasEdit")}>
-                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><path d="M11.3 2.7l2 2L5.5 12.5l-2.8.8.8-2.8zM10 4l2 2" /></svg>
-                    </button>
-                    <button className="btn icon sm" disabled={nasBusy === sh.id} onClick={() => setNasRemoving(sh)} title={t("settings.nasRemove")} aria-label={t("settings.nasRemove")}>
-                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 4.5h11M6 4.5V3a.5.5 0 01.5-.5h3A.5.5 0 0110 3v1.5M4 4.5l.6 8.1a1 1 0 001 .9h4.8a1 1 0 001-.9l.6-8.1M6.5 7v4M9.5 7v4" /></svg>
-                    </button>
+                    <RowMenu label={t("more.open")}>
+                      <button role="menuitem" disabled={nasBusy === sh.id} onClick={() => nasEdit(sh)}><i aria-hidden />{t("settings.nasEdit")}</button>
+                      <button role="menuitem" disabled={nasBusy === sh.id} onClick={() => setNasRemoving(sh)}><i aria-hidden />{t("settings.nasRemove")}</button>
+                    </RowMenu>
                   </span>
                 </Row>
               ))}
@@ -484,7 +501,7 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
                 <span className="mono ash">{version ? `v${version}` : ""}</span>
               </Row>
             </Group>
-          </div>
+          </motion.div>
           </div>
         </div>
       </section>

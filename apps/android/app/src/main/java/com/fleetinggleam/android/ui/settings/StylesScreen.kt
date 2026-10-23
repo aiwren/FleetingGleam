@@ -34,7 +34,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onGloballyPositioned
+import com.kyant.backdrop.backdrops.layerBackdrop
 import com.fleetinggleam.android.core.I18n
 import com.fleetinggleam.android.core.Projects
 import com.fleetinggleam.android.core.StyleInfo
@@ -72,7 +77,8 @@ fun StylesScreen(from: String, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf<Pair<String, Float>?>(null) }
     var failed by remember { mutableStateOf<String?>(null) }
-    var query by remember { mutableStateOf("") }
+    val search = remember { com.fleetinggleam.android.ui.project.CullState() }
+    val query = search.query
     var sort by remember { mutableStateOf("name") }
     var confirming by remember { mutableStateOf<StyleInfo?>(null) }
     var creating by remember { mutableStateOf(false) }
@@ -105,18 +111,19 @@ fun StylesScreen(from: String, onBack: () -> Unit) {
         }
     }
 
-    LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 60.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    // 顶栏是浮在列表上的玻璃（全局液态玻璃）
+    val glassOn = com.fleetinggleam.android.ui.components.LocalGlassOn.current
+    val backdrop = com.kyant.backdrop.backdrops.rememberLayerBackdrop()
+    var barHeight by remember { mutableStateOf(0) }
+    val barPad = with(androidx.compose.ui.platform.LocalDensity.current) { barHeight.toDp() }
+    Box(Modifier.fillMaxSize()) {
+    LazyColumn(Modifier.fillMaxSize().then(if (glassOn) Modifier.layerBackdrop(backdrop) else Modifier), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = barPad + 8.dp, bottom = 60.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Column {
-                com.fleetinggleam.android.ui.components.NavBar(
-                    t("styles.title"), t(if (from == "settings") "settings.title" else "home.title"), onBack,
-                    Modifier.layout { m, cs -> val pl = m.measure(cs.copy(maxWidth = cs.maxWidth + 32.dp.roundToPx(), minWidth = 0)); layout(cs.maxWidth, pl.height) { pl.placeRelative(-16.dp.roundToPx(), 0) } },
-                ) {
-                    Box(Modifier.padding(end = 4.dp).size(32.dp).clip(CircleShape).background(c.ink).clickable { creating = true }, contentAlignment = Alignment.Center) { FgIcon(Icons.PLUS, size = 16.dp, box = 18f, stroke = 1.7f, color = c.onInk) }
-                }
                 Text(t("styles.pageDesc") + " · " + t("styles.count", "count" to styles.size), style = Type.rowDesc.copy(color = c.ash), modifier = Modifier.padding(top = 2.dp, bottom = 4.dp))
                 if (styles.size > 1) {
-                    FgField(query, { query = it }, placeholder = t("styles.search"), modifier = Modifier.padding(top = 10.dp))
+                    // 和首页同一个搜索框（A14.2）
+                    com.fleetinggleam.android.ui.project.SearchField(search, Modifier.padding(top = 10.dp), placeholder = t("styles.search"), autoFocus = false, plain = true)
                     Segmented(listOf("name" to t("styles.sortName"), "recent" to t("styles.sortRecent"), "usage" to t("styles.sortUsage")), sort, { sort = it }, block = true, modifier = Modifier.padding(top = 10.dp))
                 }
             }
@@ -135,7 +142,17 @@ fun StylesScreen(from: String, onBack: () -> Unit) {
             Column(Modifier.riseIn(i).animateItem().fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.panel).padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Box(Modifier.size(34.dp).clip(CircleShape).background(c.surface2), contentAlignment = Alignment.Center) { Text(display(s).take(1).uppercase(), style = Type.bodyStrong.copy(color = c.ink)) }
-                    FgField(name, { name = it }, placeholder = t("styles.defaultName"), modifier = Modifier.weight(1f), onDone = { name.trim().takeIf { it.isNotEmpty() && it != s.name }?.let { v -> scope.launch { Styles.rename(s.id, v) } } })
+                    // 名字直接写在卡上，没有边框（A14.3）；聚焦时底下一条线
+                    var focused by remember { mutableStateOf(false) }
+                    Box(Modifier.weight(1f).then(if (focused) Modifier.drawBehind { drawLine(c.line, androidx.compose.ui.geometry.Offset(0f, size.height), androidx.compose.ui.geometry.Offset(size.width, size.height), 1.dp.toPx()) } else Modifier)) {
+                        if (name.isEmpty()) Text(t("styles.defaultName"), style = Type.body.copy(fontSize = 16.sp, lineHeight = 21.sp, fontWeight = FontWeight.SemiBold, color = c.ash))
+                        androidx.compose.foundation.text.BasicTextField(
+                            name, { name = it }, singleLine = true, textStyle = Type.body.copy(fontSize = 16.sp, lineHeight = 21.sp, fontWeight = FontWeight.SemiBold, color = c.ink), cursorBrush = androidx.compose.ui.graphics.SolidColor(c.ink),
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Done),
+                            keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = { name.trim().takeIf { it.isNotEmpty() && it != s.name }?.let { v -> scope.launch { Styles.rename(s.id, v) } } }),
+                            modifier = Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused },
+                        )
+                    }
                     val overlay = com.fleetinggleam.android.ui.components.LocalOverlay.current
                     val anchor = com.fleetinggleam.android.ui.components.rememberAnchor()
                     Box(Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).then(Modifier.anchor(anchor)).clickable {
@@ -164,6 +181,17 @@ fun StylesScreen(from: String, onBack: () -> Unit) {
                 FgButton(busy?.takeIf { it.first == s.id }?.let { t("styles.learning", "pct" to Math.round(it.second * 100)) } ?: t("styles.learnFolder"), { learn(s.id) }, small = true, enabled = busy == null)
             }
         }
+    }
+    androidx.compose.runtime.CompositionLocalProvider(com.fleetinggleam.android.ui.components.LocalBackdrop provides backdrop) {
+        com.fleetinggleam.android.ui.components.GlassBar(Modifier.align(Alignment.TopCenter).onGloballyPositioned { barHeight = it.size.height }) {
+            Column(Modifier.statusBarsPadding()) {
+                com.fleetinggleam.android.ui.components.NavBar(t("styles.title"), t(if (from == "settings") "settings.title" else "home.title"), onBack) {
+                    // "＋"和首页一样 36dp 的玻璃圆钮（设计审查 A14.1）
+                    com.fleetinggleam.android.ui.components.GlassIconBtn(Icons.PLUS, t("styles.new"), { creating = true }, Modifier.padding(end = 4.dp), box = 18f, size = 36.dp)
+                }
+            }
+        }
+    }
     }
 
     if (creating) {

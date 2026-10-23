@@ -4,8 +4,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -26,7 +24,6 @@ import com.fleetinggleam.android.ui.components.FgSwitch
 import com.fleetinggleam.android.ui.components.Segmented
 import com.fleetinggleam.android.ui.components.Select
 import com.fleetinggleam.android.ui.components.SettingRow
-import com.fleetinggleam.android.ui.components.StylePicker
 import com.fleetinggleam.android.ui.theme.LocalFg
 import com.fleetinggleam.android.ui.theme.Type
 import kotlinx.coroutines.delay
@@ -48,10 +45,10 @@ fun ProjectPrefs(project: Project) {
         t("pset.keepShare"), t(if (project.keepCap == null) "android.pset.keepShareOff" else "android.pset.keepShareOn"), info = t(if (project.keepCap == null) "pset.keepShareDescAuto" else "pset.keepShareDesc"), first = true,
         below = if (project.keepCap == null) null else {
             {
+                // 自家的滑块（设计审查 A4.4）：3dp 轨道、14dp 墨色滑块
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Slider(cap, { cap = (Math.round(it / 0.05f) * 0.05f).coerceIn(0.05f, 0.95f) }, valueRange = 0.05f..0.95f, modifier = Modifier.weight(1f),
-                        colors = SliderDefaults.colors(thumbColor = c.ink, activeTrackColor = c.ink, inactiveTrackColor = c.surface2, activeTickColor = c.ink, inactiveTickColor = c.surface2))
-                    Text("${pct(cap)}%", style = Type.mono.copy(color = c.ink), modifier = Modifier.width(52.dp).padding(start = 10.dp))
+                    com.fleetinggleam.android.ui.components.FgSlider(cap, { cap = it }, Modifier.weight(1f), range = 0.05f..0.95f, step = 0.05f)
+                    Text("${pct(cap)}%", style = Type.mono.copy(color = c.ink), modifier = Modifier.width(48.dp).padding(start = 8.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
                 }
             }
         },
@@ -65,7 +62,8 @@ fun ProjectPrefs(project: Project) {
     SettingRow(t("pset.sort")) {
         Select(project.sort ?: "group", listOf("group", "order", "time", "score").map { it to t("cull.sort.$it") }, { v -> Projects.update(project.id) { it.copy(sort = v) } })
     }
-    if (styles.size > 1) SettingRow(t("nav.styles"), below = {
-        StylePicker(project.style ?: "", styles) { v -> Projects.update(project.id) { it.copy(style = v.ifEmpty { null }) } }
-    })
+    // 一个设置一个标题：行标题就是"选片风格"，右边直接是下拉（设计审查 A4.3）
+    if (styles.size > 1) SettingRow(t("styles.project"), t("styles.projectDesc")) {
+        Select(project.style ?: "", listOf("" to t("styles.followDefault")) + styles.map { it.id to it.name.ifBlank { t("styles.defaultName") } }, { v -> Projects.update(project.id) { it.copy(style = v.ifEmpty { null }) } })
+    }
 }

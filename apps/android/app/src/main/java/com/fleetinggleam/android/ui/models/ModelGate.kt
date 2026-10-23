@@ -12,6 +12,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import kotlinx.coroutines.launch
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.background
 import com.fleetinggleam.android.core.Models
 import com.fleetinggleam.android.core.fmtBytes
 import com.fleetinggleam.android.core.t
@@ -42,12 +44,14 @@ fun ModelGate() {
         when (gate.phase) {
             "ask" -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(t("models.body.${gate.id}", "size" to fmtBytes(gate.bytes)), style = Type.body.copy(color = c.ink))
-                gate.ids?.forEachIndexed { i, id ->
-                    Row(Modifier.fillMaxWidth()) {
+                // 列表行 36dp 高、行间细线（设计审查 A15.3）
+                Column { gate.ids?.forEachIndexed { i, id ->
+                    if (i > 0) androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().height(0.5.dp).background(c.line))
+                    Row(Modifier.fillMaxWidth().height(36.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                         Text(t("models.name.$id"), style = Type.body.copy(color = c.ink), modifier = Modifier.weight(1f))
                         Text(fmtBytes(gate.sizes?.getOrNull(i) ?: 0), style = Type.mono.copy(color = c.ash))
                     }
-                }
+                } }
             }
             "downloading" -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 LiveBar(pct / 100f, Modifier.padding(top = 6.dp))

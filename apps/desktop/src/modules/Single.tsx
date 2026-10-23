@@ -17,15 +17,16 @@ const EASE_IO = [0.65, 0, 0.35, 1] as const;
  * swings in from the other side and squares up to the viewer. Inside each frame the picture itself drifts the other way (parallax),
  * so the two photos are clearly two objects passing each other, whatever their proportions.
  */
+// 翻页（M6.1）：320 ms、转 8°、缩到 0.94，没有内层视差——效果小于内容
 const slide = {
-  enter: (d: number) => ({ x: `${108 * d}%`, scale: 0.88, rotateY: -22 * d, opacity: 1 }),
-  center: { x: "0%", scale: 1, rotateY: 0, opacity: 1, transition: { duration: 0.62, ease: EASE_IO } },
-  exit: (d: number) => ({ x: `${-108 * d}%`, scale: 0.86, rotateY: 22 * d, opacity: 0.35, transition: { duration: 0.62, ease: EASE_IO } }),
+  enter: (d: number) => ({ x: `${108 * d}%`, scale: 0.94, rotateY: -8 * d, opacity: 1 }),
+  center: { x: "0%", scale: 1, rotateY: 0, opacity: 1, transition: { duration: 0.32, ease: EASE_IO } },
+  exit: (d: number) => ({ x: `${-108 * d}%`, scale: 0.94, rotateY: 8 * d, opacity: 0.7, transition: { duration: 0.32, ease: EASE_IO } }),
 };
 const inner = {
-  enter: (d: number) => ({ x: `${-7 * d}%`, scale: 1.16 }),
-  center: { x: "0%", scale: 1, transition: { duration: 0.62, ease: EASE_IO } },
-  exit: (d: number) => ({ x: `${7 * d}%`, scale: 1.16, transition: { duration: 0.62, ease: EASE_IO } }),
+  enter: { x: "0%", scale: 1 },
+  center: { x: "0%", scale: 1 },
+  exit: { x: "0%", scale: 1 },
 };
 
 /**

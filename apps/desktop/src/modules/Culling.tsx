@@ -6,7 +6,6 @@ import { listen } from "@tauri-apps/api/event";
 import { AnimatePresence, motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 import InfoPop from "../components/InfoPop";
-import Reveal from "../components/Reveal";
 import Wall, { WallHandle } from "../components/Wall";
 import Single from "./Single";
 import ViewMenu from "../components/ViewMenu";
@@ -18,7 +17,6 @@ import { usePrefsRevision } from "../styles";
 import { ensurePack, ensurePacks, refreshPacks, usePacks } from "../models";
 import { analysisPacks, currentTier, estimateSeconds, eyeMethodNow, getMachine, predictTier, resolveTier } from "../strategy";
 import { Hit, searchPhotos, setPendingSelect, takePendingSelect, useSearchIndex } from "../search";
-import PhotoTags from "../components/PhotoTags";
 import PhotoVerdict from "../components/PhotoVerdict";
 import { FileSection } from "../components/FileFacts";
 import Accordion from "../components/Accordion";
@@ -568,7 +566,8 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     return shown.map((p) => ({ path: p.path, ratio: p.width / p.height, photo: p }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, files, shown, progress.done, mode, tick]);
-  const wallItems = useMemo(() => items.map((it) => ({ key: it.path, ratio: it.ratio })), [items]);
+  // 相似组的末尾多留 6px（M5.8：以前只加了类名没有样式）
+  const wallItems = useMemo(() => items.map((it) => ({ key: it.path, ratio: it.ratio, gapAfter: groupEnds.has(it.path) })), [items, groupEnds]);
   const openViewer = useCallback((path: string) => {
     const r = document.getElementById(`t-${path}`)?.getBoundingClientRect();
     setFrom(r ? { x: r.x, y: r.y, width: r.width, height: r.height } : null);
@@ -737,13 +736,31 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     const gb = b >= 1e9;
     return new Intl.NumberFormat(i18n.language, { style: "unit", unit: gb ? "gigabyte" : "megabyte", maximumFractionDigits: gb ? 1 : 0 }).format(gb ? b / 1e9 : Math.max(1, b / 1e6));
   };
-  const reasonText = (r: Reason) => t(r.k, { ...r.p, state: r.p?.stateKey ? t(String(r.p.stateKey)) : undefined });
+  // 文案缺参数时回退到不带数字的句子，不会露出 {{diff}}（M8.5）
+  const reasonText = (r: Reason) => {
+    if (r.k === "reason.nearBest" && (r.p?.diff === undefined || r.p?.diff === null)) return t("reason.nearBestNoDiff");
+    return t(r.k, { ...r.p, state: r.p?.stateKey ? t(String(r.p.stateKey)) : undefined });
+  };
 
   const scanning = phase === "scanning";
   const showWall = scanning || phase === "done";
   const elapsed = (performance.now() - startedAt.current) / 1000;
   const eta = progress.done >= 4 ? Math.max(1, Math.round((elapsed / progress.done) * (progress.total - progress.done))) : null;
-  const last = lastStage.current;
+  // 当前阶段那一行最多 600 ms 更新一次，不显示文件名（M4.2 / A5.2）；"可以离开"只在第一次分析时显示 6 秒
+  const [stageText, setStageText] = useState("");
+  const [showLeave, setShowLeave] = useState(false);
+  useEffect(() => {
+    if (!scanning) return;
+    const tick = () => { const l = lastStage.current; setStageText(l ? t(`cull.stage.${l.stage}`, { defaultValue: l.stage }) : t("cull.loadingModel")); };
+    tick();
+    const id = window.setInterval(tick, 600);
+    let seen = false;
+    try { seen = localStorage.getItem("fg.hint.leave") === "1"; } catch { /* ignore */ }
+    let hide = 0;
+    if (!seen) { setShowLeave(true); hide = window.setTimeout(() => { setShowLeave(false); try { localStorage.setItem("fg.hint.leave", "1"); } catch { /* ignore */ } }, 6000); }
+    return () => { window.clearInterval(id); window.clearTimeout(hide); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scanning]);
   const showBanner = scanning || celebrate;
   const decision = sel ? decisions.get(sel.path) : undefined;
   const pendingFiles = files.filter((f) => !f.cached);
@@ -763,9 +780,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
             {project
               ? <EditableTitle value={project.name} tip={t("cull.renameTip")} onCommit={(name) => updateProject(project.id, { name })} />
               : <b>{t("nav.cull")}</b>}
-            {!project && <span className="ash">{t("nav.cullSub")}</span>}
             {project && phase === "done" && <span className="mono ash">{t("cull.photoCount", { count: photos.length })}</span>}
-            {project && scanning && <span className="mono ash">{progress.done} / {progress.total}</span>}
           </div>
           <div className="toolbar-right" data-tauri-drag-region>
             <AnimatePresence>
@@ -777,7 +792,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
               <SearchBox value={query} onChange={setQuery} inputRef={searchRef} placeholder={t("search.placeholder")} progress={index.progress} count={hits ? hits.length : null} onActivate={ensureSearch} />
             )}
             {project && phase === "done" && (
-              <button className={`btn icon ${panelOpen ? "on" : ""}`} onClick={togglePanel} aria-pressed={panelOpen} aria-label={t("cull.filters")} title={t("cull.filters")}>
+              <button className={`btn icon plain ${panelOpen ? "on" : ""}`} onClick={togglePanel} aria-pressed={panelOpen} aria-label={t("cull.filters")} title={t("cull.filters")}>
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><rect x="1.7" y="2.7" width="12.6" height="10.6" rx="2" /><path d="M6 3v10" /></svg>
               </button>
             )}
@@ -786,13 +801,15 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
                 layouts={LAYOUTS.map((l) => ({ id: l.id, icon: l.icon, label: t(`cull.layout.${l.id}`) }))}
                 sorts={(["group", "order", "time", "score"] as SortBy[]).map((id) => ({ id, label: t(`cull.sort.${id}`) }))} />
             )}
+            {project && phase === "done" && <i className="tb-sep" aria-hidden />}
             {project && phase === "done" && <Organize project={project} photos={photos} decisions={decisions} onChanged={() => setReloadKey((k) => k + 1)} />}
+            {project && phase === "done" && <i className="tb-sep" aria-hidden />}
             {project && (
-              <button className="btn icon" onClick={() => setSettingsOpen(true)} disabled={scanning} aria-label={t("pset.settings")} title={t("pset.settings")}>
+              <button className="btn icon plain" onClick={() => setSettingsOpen(true)} disabled={scanning} aria-label={t("pset.settings")} title={t("pset.settings")}>
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><path d="M3 4.5h6.5M12.5 4.5H13M3 11.5h1M7 11.5h6" /><circle cx="11" cy="4.5" r="1.6" /><circle cx="5.5" cy="11.5" r="1.6" /></svg>
               </button>
             )}
-            {project && sel && layout !== "compare" && <button className={`btn icon ${showInspector ? "on" : ""}`} onClick={onToggleInspector} aria-label={t("cull.inspector")} title={t("cull.inspector")}>
+            {project && sel && layout !== "compare" && <button className={`btn icon plain ${showInspector ? "on" : ""}`} onClick={onToggleInspector} aria-label={t("cull.inspector")} title={t("cull.inspector")}>
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><rect x="1.7" y="2.7" width="12.6" height="10.6" rx="2" /><path d="M10 3v10" /></svg>
             </button>}
           </div>
@@ -800,20 +817,19 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
 
         <AnimatePresence>
           {showBanner && (
-            <motion.div className="banner" initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: DUR.base + 0.1, ease: EASE_OUT }}>
+            <motion.div className="banner" initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: DUR.base, ease: EASE_OUT }}>
               <div className="banner-inner">
                 {scanning ? (
+                  // 同一个数字只出现一次（M4.1）：进度只在这里；保留 / 待复查 / 淘汰的数在筛选栏。两行加一条进度（M4.2）
                   <div className="banner-text">
                     <div className="banner-line">
                       <b>{t("cull.analyzing")}</b>
-                      <span className="mono ash banner-count"><Ticker value={progress.done} /> / {progress.total}{eta ? ` · ${t("cull.eta", { s: eta })}` : ""}{liveCounts ? ` · ${t("cull.doneBody", liveCounts)}` : ""}</span>
+                      <span className="mono ash banner-count"><Ticker value={progress.done} /> / {progress.total}{eta ? ` · ${t("cull.eta", { s: eta })}` : ""}</span>
+                      {showLeave && <span className="ash banner-leave">{t("cull.canLeave")}</span>}
                       <button type="button" className="btn banner-stop" onClick={stopScan}>{t("cull.stop")}</button>
                     </div>
-                    <span className="mono ash banner-now">
-                      {last ? `${last.path.split("/").pop()} · ${t(`cull.stage.${last.stage}`, { defaultValue: last.stage })}` : t("cull.loadingModel")}
-                    </span>
-                    <div className="bar live"><motion.i animate={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%` }} transition={{ ease: EASE_OUT, duration: 0.5 }} /></div>
-                    <span className="ash banner-leave">{t("cull.canLeave")}</span>
+                    <span className="mono ash banner-now">{stageText}</span>
+                    <div className="bar live"><motion.i animate={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%` }} transition={{ ease: EASE_OUT, duration: DUR.base }} /></div>
                   </div>
                 ) : (
                   <div className="banner-text done">
@@ -857,9 +873,9 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
 
           {!project && store.projects.length === 0 && (
             <div className="empty">
-              <Reveal as="h1" text={t("brand.name")} delay={0.05} />
+              <motion.h1 initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: DUR.base, ease: EASE_OUT }}>{t("brand.name")}</motion.h1>
               {i18n.language !== "en" && <p className="latin mono">{t("brand.latin")}</p>}
-              <Reveal as="h2" text={t("brand.tagline")} delay={0.18} />
+              <motion.h2 initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: DUR.base, ease: EASE_OUT, delay: 0.06 }}>{t("brand.tagline")}</motion.h2>
               <motion.p initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ ...SPRING.soft, delay: 0.22 }}>{t("cull.emptyBody", { brand: t("brand.name") })}</motion.p>
               <ol>
                 {(t("cull.steps", { returnObjects: true }) as string[]).map((s, i) => (
@@ -908,7 +924,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
             <Single photos={shown} selected={selected} decisions={decisions} onSelect={select} onStep={move} onOpen={openViewer} />
           )}
           {phase === "done" && !sceneView && layout === "compare" && shown.length > 0 && (
-            <Compare photos={shown} all={compareAll} scope={sceneFilter !== null ? "scene" : "group"} personFilter={personFilter} onPerson={setPersonFilter} selected={selected} decisions={decisions} onSelect={select} onDecide={decide} onOpen={openViewer} enabled={active && !zoomed} />
+            <Compare photos={shown} all={compareAll} scope={sceneFilter !== null ? "scene" : "group"} personFilter={personFilter} onPerson={setPersonFilter} selected={selected} decisions={decisions} onSelect={select} onDecide={decide} onOpen={openViewer} enabled={active && !zoomed} showHint={hintUses < 4} />
           )}
         </div>
         </div>
@@ -925,13 +941,10 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
                 <AnimatePresence mode="wait" initial={false}>
                   {sel ? (
                     <motion.div key="body" className="inspector-body" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.2, ease: EASE_OUT }}>
-                      {layout !== "single" && <button className="preview" onClick={() => openViewer(sel.path)} title={t("inspector.zoomHint")}>
-                        <img src={thumbSrc(sel)} alt="" />
-                        <PhotoTags photo={sel} className="ontile" />
-                        <span className="preview-hint">{t("inspector.zoomLabel")}</span>
-                      </button>}
+                      {/* 没有预览缩略图：它就是墙上带焦点框的那一张（M8.1）；名字行右边一个"放大" */}
                       <PhotoVerdict photo={sel} decision={decision} onDecide={(st) => decide(sel.path, st)} reasonText={reasonText}
-                        scoreTip={<InfoPop title={t("inspector.overall")} width={280}><p className="ash">{t("inspector.scoreTip")}</p></InfoPop>} />
+                        scoreTip={<InfoPop title={t("inspector.overall")} width={280}><p className="ash">{t("inspector.scoreTip")}</p></InfoPop>}
+                        onZoom={() => openViewer(sel.path)} />
                       {groupMates.length > 1 && (
                         <div>
                           <h4>{t("inspector.mates")} <span className="mono">{groupMates.length}</span></h4>
@@ -946,13 +959,13 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
                         </div>
                       )}
                       <div className="accs">
-                        <Accordion icon="chart" title={t("inspector.details")} hint={`${sel.clip_score === null ? "—" : pct(sel.clip_score)} · ${sel.sys_score === null ? "—" : sel.sys_score.toFixed(2)}`}>
-                          {/* only what the verdict above does not already show */}
+                        <Accordion icon="chart" title={t("inspector.details")} hint={`${t("inspector.local")} ${sel.clip_score === null ? "—" : pct(sel.clip_score)} · ${t("inspector.system")} ${sel.sys_score === null ? "—" : sel.sys_score.toFixed(2)}`}>
+                          {/* 只放上面没有的（综合分已在判定里）；人脸也是一行名字 · 值（M8.4 / M8.6） */}
                           <dl className="kv">
-                            <div><dt>{t("inspector.overall")}</dt><dd className="mono">{pct(sel.score)}</dd></div>
                             <div><dt>{t("inspector.local")}</dt><dd className="mono">{sel.clip_score === null ? "—" : pct(sel.clip_score)}</dd></div>
                             <div><dt>{t("inspector.system")}</dt><dd className="mono">{sel.sys_score === null ? "—" : sel.sys_score.toFixed(2)}</dd></div>
                             <div><dt>{t("inspector.clip")}</dt><dd className="mono">{(sel.clipped_high * 100).toFixed(1)}% / {(sel.clipped_low * 100).toFixed(1)}%</dd></div>
+                            {sel.face_count > 0 && <div><dt>{t("inspector.faces")}</dt><dd className="mono">{t("inspector.faceValue", { count: sel.face_count, q: sel.face_min === null ? "—" : sel.face_min.toFixed(2) })}</dd></div>}
                           </dl>
                         </Accordion>
                         </div>
@@ -978,8 +991,8 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
       </AnimatePresence>
 
       <AnimatePresence>
-        {project && phase === "done" && hintUses < 4 && (
-          <motion.div className="hintcard" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }} transition={{ ...SPRING.soft, delay: 0.6 }}>
+        {project && phase === "done" && hintUses < 4 && !sceneView && (layout === "justified" || layout === "grid") && (
+          <motion.div className="hintcard" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: DUR.base, ease: EASE_OUT, delay: 0.6 }}>
             <span>{t("cull.hint")}</span>
             <button onClick={() => bumpHint(99)}>{t("cull.hintDismiss")}</button>
           </motion.div>

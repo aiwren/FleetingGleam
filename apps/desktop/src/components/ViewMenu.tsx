@@ -36,7 +36,7 @@ export default function ViewMenu<L extends string, S extends string>({ layout, l
       </button>
       <AnimatePresence>
         {open && (
-          <motion.div className="vmpanel" role="menu" initial={{ opacity: 0, y: -6, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -4, scale: 0.98 }} transition={{ duration: 0.18, ease: EASE_OUT }}>
+          <motion.div className="vmpanel" role="menu" initial={{ opacity: 0, y: -6, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -4, scale: 0.98 }} transition={{ duration: 0.16, ease: EASE_OUT }}>
             <h4>{t("cull.layoutAria")}</h4>
             <div className="vmgrid">
               {layouts.map((l) => (

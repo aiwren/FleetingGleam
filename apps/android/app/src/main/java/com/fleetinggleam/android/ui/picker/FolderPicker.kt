@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -20,9 +21,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -82,7 +81,6 @@ fun FolderPicker() {
     var busy by remember(req) { mutableStateOf(false) }
     var err by remember(req) { mutableStateOf<String?>(null) }
     var noPermission by remember(req) { mutableStateOf(false) }
-    val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     fun enter(s: Share, path: String) {
         source = s.id; busy = true; err = null
@@ -130,11 +128,11 @@ fun FolderPicker() {
     }
 
     val share = shares.firstOrNull { it.id == source }
-    ModalBottomSheet(onDismissRequest = { Nas.answer(null) }, sheetState = sheet, containerColor = c.canvas, dragHandle = null) {
+    com.fleetinggleam.android.ui.components.GlassSheet(true, { Nas.answer(null) }) {
         val explaining = source == "albums" && noPermission
-        Column(Modifier.navigationBarsPadding().padding(horizontal = 16.dp).padding(top = 8.dp, bottom = 12.dp)) {
-            // 顶栏：‹ 返回上一层 · 标题 · 取消
-            Box(Modifier.fillMaxWidth().height(44.dp)) {
+        Column(Modifier.navigationBarsPadding().padding(horizontal = 16.dp).padding(top = 0.dp, bottom = 12.dp)) {
+            // 顶栏：‹ 返回上一层 · 标题 · 取消（48dp，和页面顶栏一样）。弹层是玻璃，列表卡用 panel 底
+            Box(Modifier.fillMaxWidth().height(48.dp)) {
                 if (source != null) Row(Modifier.align(Alignment.CenterStart).clip(CircleShape).clickable { source = null; listing = null; err = null; noPermission = false }.padding(start = 2.dp, end = 10.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     FgIcon(Icons.BACK, size = 18.dp, box = 12f, stroke = 1.5f)
                 }
@@ -170,7 +168,7 @@ private fun Source(icon: String, title: String, desc: String, first: Boolean = f
     Column {
         if (!first) Box(Modifier.padding(start = 56.dp).fillMaxWidth().height(0.5.dp).background(c.line))
         Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(28.dp).clip(RoundedCornerShape(8.dp)).background(c.ink), contentAlignment = Alignment.Center) { FgIcon(icon, size = 16.dp, stroke = 1.5f, color = c.onInk) }
+            com.fleetinggleam.android.ui.components.IconBox(icon)
             Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                 Text(title, style = Type.rowTitle.copy(color = c.ink), maxLines = 1, overflow = Ellipsis)
                 Text(desc, style = Type.rowDesc.copy(color = c.ash), maxLines = 2, overflow = Ellipsis)
@@ -197,10 +195,10 @@ private fun PermissionExplainer(blocked: Boolean, onContinue: () -> Unit, onFold
                 Triple("M3 4.5A1.5 1.5 0 014.5 3h7A1.5 1.5 0 0113 4.5v7a1.5 1.5 0 01-1.5 1.5h-7A1.5 1.5 0 013 11.5zM5.5 10l2-2.5 1.5 1.8 1-1.2 1.5 1.9", "android.picker.promise2", false),
                 Triple("M2.5 8a5.5 5.5 0 1111 0 5.5 5.5 0 01-11 0zM8 5v3l2 1.5", "android.picker.promise3", false),
             ).forEach { (icon, key, first) ->
-                if (!first) Box(Modifier.padding(start = 52.dp).fillMaxWidth().height(0.5.dp).background(c.line))
-                Row(Modifier.padding(horizontal = 14.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(26.dp).clip(RoundedCornerShape(7.dp)).background(c.surface2), contentAlignment = Alignment.Center) { FgIcon(icon, size = 15.dp, stroke = 1.4f, color = c.ink) }
-                    Text(t(key), style = Type.rowDesc.copy(color = c.ink, fontSize = androidx.compose.ui.unit.TextUnit(13f, androidx.compose.ui.unit.TextUnitType.Sp)), modifier = Modifier.padding(start = 12.dp))
+                if (!first) Box(Modifier.padding(start = 56.dp).fillMaxWidth().height(0.5.dp).background(c.line))
+                Row(Modifier.padding(horizontal = 16.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
+                    com.fleetinggleam.android.ui.components.IconBox(icon)
+                    Text(t(key), style = Type.body.copy(color = c.ink), modifier = Modifier.padding(start = 12.dp))
                 }
             }
         }
@@ -209,21 +207,26 @@ private fun PermissionExplainer(blocked: Boolean, onContinue: () -> Unit, onFold
     }
 }
 
-/** 一叠斜着的照片（三张有渐变的小卡），右下角一粒金色的四角星——应用图标的意象。授权说明页和起始屏共用。 */
+/**
+ * 一叠斜着的照片（三张内置的示例照片，不再是发明出来的渐变色——设计审查 A1.1 / R12），右下角一粒金色的四角星——应用图标的意象。
+ * 授权说明页和起始屏共用。照片还没拷出来时是 surface2 的空卡。
+ */
 @Composable
 fun PhotoStack() {
     val c = LocalFg.current
+    val ctx = LocalContext.current
+    val dir by androidx.compose.runtime.produceState<java.io.File?>(null) { value = runCatching { com.fleetinggleam.android.core.Samples.folder(ctx) }.getOrNull() }
+    val names = listOf("sample-02.jpg", "sample-05.jpg", "sample-07.jpg")
     Box(Modifier.size(132.dp, 104.dp), contentAlignment = Alignment.Center) {
         listOf(Triple(-14f, 10.dp, 0.55f), Triple(8f, 4.dp, 0.75f), Triple(-2f, 0.dp, 1f)).forEachIndexed { i, (rot, dy, a) ->
             Box(
                 Modifier.offset(y = dy).size(96.dp, 72.dp).graphicsLayer { rotationZ = rot; alpha = a }
-                    .shadow(if (i == 2) 10.dp else 4.dp, RoundedCornerShape(10.dp), ambientColor = Color.Black.copy(alpha = 0.25f), spotColor = Color.Black.copy(alpha = 0.3f))
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(Brush.linearGradient(listOf(Color(0xFFBFD6EA), Color(0xFF7FA7CB), Color(0xFFE8C98A)))),
+                    .shadow(if (i == 2) 10.dp else 4.dp, RoundedCornerShape(6.dp), ambientColor = Color.Black.copy(alpha = 0.25f), spotColor = Color.Black.copy(alpha = 0.3f))
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(c.surface2),
             ) {
-                // 一点地平线和太阳，像张风景
-                Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(26.dp).background(Brush.verticalGradient(listOf(Color.Transparent, Color(0x667A9A4C), Color(0xCC5B7E3A)))))
-                Box(Modifier.align(Alignment.TopEnd).padding(top = 12.dp, end = 16.dp).size(14.dp).clip(CircleShape).background(Color(0xFFFFF1C8)))
+                val f = dir?.let { java.io.File(it, names[i]) }?.takeIf { it.exists() }
+                if (f != null) AsyncImage(f, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             }
         }
         Box(Modifier.align(Alignment.BottomEnd).padding(end = 6.dp, bottom = 2.dp)) { com.fleetinggleam.android.ui.project.Star(true, 30.dp, color = c.gleam) }
@@ -244,13 +247,11 @@ private fun Albums(albums: List<Media.Album>?, busy: Boolean, onMore: () -> Unit
             }
             LazyColumn(Modifier.heightIn(max = 480.dp).clip(RoundedCornerShape(14.dp)).background(c.panel)) {
                 itemsIndexed(albums, key = { _, a -> a.dir }) { i, a ->
-                    if (i > 0) Box(Modifier.padding(start = 72.dp).fillMaxWidth().height(0.5.dp).background(c.line))
+                    if (i > 0) Box(Modifier.padding(start = 68.dp).fillMaxWidth().height(0.5.dp).background(c.line))
+                    // 只留名字和张数：相册的路径对选相册没有帮助（设计审查 A3.3）
                     Row(Modifier.fillMaxWidth().clickable { onPick(a.dir) }.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        AsyncImage(a.cover, null, Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).background(c.surface), contentScale = ContentScale.Crop)
-                        Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                            Text(a.name, style = Type.rowTitle.copy(color = c.ink), maxLines = 1, overflow = Ellipsis)
-                            Text(a.dir.removePrefix("/storage/emulated/0/"), style = Type.monoSmall.copy(color = c.ash), maxLines = 1, overflow = Ellipsis)
-                        }
+                        AsyncImage(a.cover, null, Modifier.size(44.dp).clip(RoundedCornerShape(6.dp)).background(c.surface), contentScale = ContentScale.Crop)
+                        Text(a.name, style = Type.rowTitle.copy(color = c.ink), maxLines = 1, overflow = Ellipsis, modifier = Modifier.weight(1f).padding(horizontal = 12.dp))
                         Text(t("android.picker.albumCount", "count" to a.count), style = Type.mono.copy(color = c.ash))
                         FgIcon(Icons.CHEVRON, size = 14.dp, stroke = 1.6f, color = c.ash, modifier = Modifier.padding(start = 6.dp))
                     }

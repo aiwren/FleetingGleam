@@ -77,43 +77,66 @@ val GeistMono = FontFamily(
 )
 
 /**
- * 字号阶梯（移动端，docs/android-ux.md 第 3 节）。中文回落到系统黑体，同字号比 Geist 显大，所以整体比桌面端放大的版本收一档：
- * 正文 14、行标题 14、说明 12、数字 12；大标题只在根页（首页、设置）用。
+ * 字号阶梯（移动端，docs/design-review-2026-10-23.md 第 4.1 节）：七档，没有 .5 的字号。
+ * 28 大标题 · 20 标题 · 15 页签 / 导航 · 14 正文 · 12 说明 · 11 数字（等宽）· 10 角标。另有两档等宽数字：进度 28、分数 24。
+ * 中文回落到系统黑体，同字号比 Geist 显大，所以整体比桌面端收一档。
  */
 object Type {
     /** 根页的大标题（首页"项目"、设置）。 */
     val largeTitle = TextStyle(fontFamily = Geist, fontWeight = FontWeight.Bold, fontSize = 28.sp, lineHeight = 34.sp, letterSpacing = (-0.02).em)
-    /** 空状态的品牌名。 */
-    val display = TextStyle(fontFamily = Geist, fontWeight = FontWeight.Bold, fontSize = 30.sp, lineHeight = 36.sp, letterSpacing = (-0.03).em)
+    /** 空状态的标语：和大标题同一档。 */
+    val display = largeTitle
+    /** 页内标题、空状态标语、对话框标题。 */
     val title = TextStyle(fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 20.sp, lineHeight = 26.sp, letterSpacing = (-0.01).em)
-    /** 推进页顶栏的标题。 */
-    val navTitle = TextStyle(fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, lineHeight = 21.sp)
-    val heading = TextStyle(fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, lineHeight = 21.sp)
+    /** 推进页顶栏的标题、弹层标题。 */
+    val navTitle = TextStyle(fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, lineHeight = 20.sp)
+    val heading = navTitle
+    /** 状态页签（选中时换成 SemiBold）。 */
+    val tab = TextStyle(fontFamily = Geist, fontWeight = FontWeight.Normal, fontSize = 15.sp, lineHeight = 20.sp)
     val body = TextStyle(fontFamily = Geist, fontWeight = FontWeight.Normal, fontSize = 14.sp, lineHeight = 20.sp)
     val bodyStrong = body.copy(fontWeight = FontWeight.Medium)
-    val small = TextStyle(fontFamily = Geist, fontWeight = FontWeight.Normal, fontSize = 12.5.sp, lineHeight = 17.sp)
-    val label = TextStyle(fontFamily = Geist, fontWeight = FontWeight.Medium, fontSize = 13.5.sp, lineHeight = 18.sp)
-    /** 分组标题：灰、小一号；中文没有大小写，不加字距。 */
+    /** 说明：行说明、提示、分组标题。 */
+    val small = TextStyle(fontFamily = Geist, fontWeight = FontWeight.Normal, fontSize = 12.sp, lineHeight = 17.sp)
+    /** 按钮文字、文字入口：正文字号、中等字重。 */
+    val label = TextStyle(fontFamily = Geist, fontWeight = FontWeight.Medium, fontSize = 14.sp, lineHeight = 18.sp)
+    /** 分组标题：灰、说明字号、中等字重；中文没有大小写，不加字距、不大写。 */
     val overline = TextStyle(fontFamily = Geist, fontWeight = FontWeight.Medium, fontSize = 12.sp, lineHeight = 16.sp)
-    val rowTitle = TextStyle(fontFamily = Geist, fontWeight = FontWeight.Normal, fontSize = 14.5.sp, lineHeight = 19.sp)
-    val rowDesc = TextStyle(fontFamily = Geist, fontWeight = FontWeight.Normal, fontSize = 12.sp, lineHeight = 16.5.sp)
+    val rowTitle = body
+    val rowDesc = small
+    /** 照片上的角标、标签栏与底栏的文字。 */
+    val caption = TextStyle(fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 10.sp, lineHeight = 12.sp)
     val mono = TextStyle(fontFamily = GeistMono, fontWeight = FontWeight.Normal, fontSize = 12.sp, lineHeight = 16.sp)
     val monoSmall = mono.copy(fontSize = 11.sp, lineHeight = 14.sp)
+    /** 检查器里的综合分。 */
+    val score = mono.copy(fontSize = 24.sp, lineHeight = 28.sp, fontWeight = FontWeight.Medium)
+    /** 进度卡上的大数字。 */
+    val bigNumber = mono.copy(fontSize = 28.sp, lineHeight = 32.sp, fontWeight = FontWeight.Medium)
 }
 
-/** 动效语言（DESIGN.md 第 10 节，和桌面端 src/motion.ts 一样的数）：expo-out 缓动、四个时长、四种弹簧。 */
+/**
+ * 动效语言（DESIGN.md 第 10 节，和桌面端 src/motion.ts 一样的数）：expo-out 缓动、四个时长、四种弹簧。
+ * 时长只用这四档（设计审查 R8）：悬停与颜色 FAST；菜单、弹层、页签切换、进度条 BASE；翻页、改判的光效、光点 SLOW；对焦、背景交叉淡入 DEVELOP。
+ * 弹簧的阻尼比不低于 0.65（R7：不弹跳）。
+ */
 object Motion {
     val easeOut = CubicBezierEasing(0.16f, 1f, 0.3f, 1f)
     const val FAST = 160; const val BASE = 320; const val SLOW = 600; const val DEVELOP = 900
+    /** 四档时长的 tween，都用 expo-out。 */
+    fun <T> fast() = androidx.compose.animation.core.tween<T>(FAST, easing = easeOut)
+    fun <T> base() = androidx.compose.animation.core.tween<T>(BASE, easing = easeOut)
+    fun <T> slow() = androidx.compose.animation.core.tween<T>(SLOW, easing = easeOut)
+    fun <T> develop() = androidx.compose.animation.core.tween<T>(DEVELOP, easing = easeOut)
     // motion.js 的 stiffness / damping 换算成阻尼比：ζ = damping / (2·√stiffness)
-    /** 布局重排、选中框、胶囊。 */
+    /** 布局重排、选中框、下划线、胶囊、底栏宽度。 */
     fun <T> glide() = spring<T>(dampingRatio = 0.976f, stiffness = 420f)
     /** 有分量的入场。 */
     fun <T> soft() = spring<T>(dampingRatio = 0.997f, stiffness = 170f)
-    /** 照片 ↔ 大图。 */
+    /** 照片 ↔ 大图（进入和关闭都用它）。 */
     fun <T> view() = spring<T>(dampingRatio = 0.989f, stiffness = 230f)
-    /** 按下的反馈。 */
+    /** 按下的反馈、星的出现、玻璃鼓起。 */
     fun <T> tap() = spring<T>(dampingRatio = 0.653f, stiffness = Spring.StiffnessHigh)
+    /** 入场错开：每项 30 ms，最多 8 项，之后的一起出现（R6）。 */
+    fun stagger(index: Int): Long = 40L + minOf(index, 8) * 30L
 }
 
 @Composable

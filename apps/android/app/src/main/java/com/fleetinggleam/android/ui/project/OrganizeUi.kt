@@ -17,9 +17,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
@@ -101,10 +99,10 @@ fun OrganizeDialogs(project: Project, open: Boolean, onDismissMenu: () -> Unit) 
 
     // ---- 两件事
     if (dlg == Dlg.Menu) {
-        val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        ModalBottomSheet(onDismissRequest = { dlg = null; onDismissMenu() }, sheetState = sheet, containerColor = c.canvas) {
+        com.fleetinggleam.android.ui.components.GlassSheet(true, { dlg = null; onDismissMenu() }) {
             Column(Modifier.navigationBarsPadding().padding(horizontal = 16.dp).padding(bottom = 16.dp)) {
-                Text(t("organize.button"), style = Type.navTitle.copy(color = c.ink), modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                // 弹层标题一律左对齐（设计审查 A12.1）
+                Text(t("organize.button"), style = Type.navTitle.copy(color = c.ink), modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp))
                 Column(Modifier.clip(RoundedCornerShape(14.dp)).background(c.panel)) {
                 OrgItem(Icons.ALBUM, t("android.organize.toAlbum"), if (keep.isEmpty()) t("organize.none") else t("android.organize.toAlbumDesc", "count" to keep.size, "where" to "${t("brand.name")}/${project.name}"), keep.isNotEmpty(), first = true) {
                     open(Dlg.Export(Dest.Path(Organize.albumDir(project.name).absolutePath, "${t("brand.name")}/${project.name}")))
@@ -167,8 +165,8 @@ fun OrganizeDialogs(project: Project, open: Boolean, onDismissMenu: () -> Unit) 
                     Text(label, style = Type.monoSmall.copy(color = c.ash))
                 } else {
                     Text(t("organize.exportBody", "count" to keep.size), style = Type.body.copy(color = c.ink))
-                    Text(label, style = Type.mono.copy(color = c.ink), modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(c.surface).padding(horizontal = 10.dp, vertical = 6.dp))
-                    Text(t("organize.exportSafe"), style = Type.rowDesc.copy(color = c.ash))
+                    // 路径只是一行等宽灰字；"原图不会被改动"在整理菜单里已经说过一次（A12.2）
+                    Text(label, style = Type.mono.copy(color = c.ash))
                     if (phase == "running") LiveBar(if (progress.total > 0) progress.done.toFloat() / progress.total else 0f, Modifier.padding(top = 4.dp))
                 }
             }
@@ -224,7 +222,7 @@ private fun OrgItem(icon: String, title: String, desc: String, enabled: Boolean,
             Modifier.fillMaxWidth().graphicsLayer { alpha = if (enabled) 1f else 0.4f }.clickable(enabled = enabled, onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(Modifier.size(28.dp).clip(RoundedCornerShape(8.dp)).background(c.ink), contentAlignment = Alignment.Center) { FgIcon(icon, size = 16.dp, box = box, stroke = 1.5f, color = c.onInk) }
+            com.fleetinggleam.android.ui.components.IconBox(icon, box = box)
             Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                 Text(title, style = Type.rowTitle.copy(color = c.ink), maxLines = 1, overflow = Ellipsis)
                 Text(desc, style = Type.rowDesc.copy(color = c.ash), maxLines = 2, overflow = Ellipsis)
@@ -238,9 +236,7 @@ private fun OrgItem(icon: String, title: String, desc: String, enabled: Boolean,
 private fun Radio(text: String, on: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
     val c = LocalFg.current
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).graphicsLayer { alpha = if (enabled) 1f else 0.45f }.clickable(enabled = enabled, onClick = onClick).padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(18.dp).clip(CircleShape).border(1.5.dp, if (on) c.ink else c.line, CircleShape), contentAlignment = Alignment.Center) {
-            if (on) Box(Modifier.size(9.dp).clip(CircleShape).background(c.ink))
-        }
+        com.fleetinggleam.android.ui.components.FgRadio(on)
         Text(text, style = Type.rowTitle.copy(color = c.ink), modifier = Modifier.padding(start = 10.dp))
     }
 }

@@ -1,7 +1,9 @@
 import { AnimatePresence, motion } from "motion/react";
 import { ReactNode, RefObject, forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 
-export type WallItem = { key: string; ratio: number; };
+export type WallItem = { key: string; ratio: number; /** 相似组的末尾：后面多留一点间隙。 */ gapAfter?: boolean };
+/** 组末多留的间隙。 */
+const GROUP_GAP = 6;
 export type Box = { left: number; top: number; width: number; height: number };
 export type WallHandle = { reveal: (key: string) => void };
 
@@ -14,21 +16,23 @@ function justify(items: WallItem[], width: number, target: number): Box[] {
   const boxes: Box[] = new Array(items.length);
   let from = 0;
   let y = 0;
+  // 一行里的间隙：相邻两张 GAP，组末那张后面再加 GROUP_GAP（行尾不算）
+  const gaps = (a: number, b: number) => { let g = 0; for (let i = a; i < b - 1; i++) g += GAP + (items[i].gapAfter ? GROUP_GAP : 0); return g; };
   const close = (to: number, last: boolean) => {
     if (to <= from) return;
     let s = 0;
     for (let i = from; i < to; i++) s += items[i].ratio;
-    let h = (width - GAP * (to - from - 1)) / s;
+    let h = (width - gaps(from, to)) / s;
     if (last && h > target * 1.35) h = target; // a short last row keeps the natural height instead of stretching
     let x = 0;
-    for (let i = from; i < to; i++) { const w = items[i].ratio * h; boxes[i] = { left: x, top: y, width: w, height: h }; x += w + GAP; }
+    for (let i = from; i < to; i++) { const w = items[i].ratio * h; boxes[i] = { left: x, top: y, width: w, height: h }; x += w + GAP + (items[i].gapAfter && i < to - 1 ? GROUP_GAP : 0); }
     y += h + GAP;
     from = to;
   };
   let sum = 0;
   for (let i = 0; i < items.length; i++) {
     sum += items[i].ratio;
-    if ((width - GAP * (i - from)) / sum <= target) { close(i + 1, false); sum = 0; }
+    if ((width - gaps(from, i + 1)) / sum <= target) { close(i + 1, false); sum = 0; }
   }
   close(items.length, true);
   return boxes;

@@ -50,15 +50,15 @@ fun ProjectSettings(open: Boolean, project: Project, onClose: () -> Unit, onAddF
     LaunchedEffect(armed) { if (armed) { delay(3000); armed = false } }
     val commit = { name.trim().takeIf { it.isNotEmpty() && it != project.name }?.let { v -> Projects.update(project.id) { it.copy(name = v) } } }
     if (!open) return
-    val sheet = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    // 手机上是从底部推上来的一整页：左上 ✕ 关掉（作者 2026-10-22：对话框没有关闭按钮），右上"完成"
-    androidx.compose.material3.ModalBottomSheet(onDismissRequest = { commit(); onClose() }, sheetState = sheet, containerColor = c.canvas, dragHandle = null) {
-        Box(Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 8.dp)) {
+    // 手机上是从底部推上来的一整页玻璃：左上 ✕ 关掉（作者 2026-10-22：对话框没有关闭按钮），右上"完成"
+    com.fleetinggleam.android.ui.components.GlassSheet(true, { commit(); onClose() }) {
+      Column {
+        Box(Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 8.dp)) {
             IconBtn(Icons.CLOSE, t("viewer.close"), { commit(); onClose() }, Modifier.align(Alignment.CenterStart), plain = true)
             Text(t("pset.title"), style = Type.navTitle.copy(color = c.ink), modifier = Modifier.align(Alignment.Center))
             FgButton(t("organize.done"), { commit(); onClose() }, Modifier.align(Alignment.CenterEnd).padding(end = 4.dp), primary = true, small = true)
         }
-        Column(Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 16.dp).padding(top = 4.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        Column(Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 16.dp).padding(top = 4.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
             // 和准备页同一套 iOS 分组列表（作者 2026-10-22 嫌旧样式丑）
             FgField(name, { name = it }, label = t("pset.name"), onDone = { commit() })
             com.fleetinggleam.android.ui.components.SettingGroup(t("pset.folders")) {
@@ -67,7 +67,7 @@ fun ProjectSettings(open: Boolean, project: Project, onClose: () -> Unit, onAddF
                         Box(Modifier.size(32.dp).clip(RoundedCornerShape(16.dp)).clickable { onRemoveFolder(f) }, contentAlignment = Alignment.Center) { FgIcon(Icons.CLOSE, size = 14.dp, color = c.ash) }
                     })
                 }
-                com.fleetinggleam.android.ui.components.SettingRow(t("cull.addFolder"), t("cull.folderHint"), icon = Icons.PLUS, onClick = onAddFolder, control = { FgIcon(Icons.CHEVRON, size = 14.dp, stroke = 1.6f, color = c.ash) })
+                com.fleetinggleam.android.ui.components.SettingRow(t("cull.addFolder"), t("cull.folderHint"), icon = Icons.PLUS, iconBox = 18f, onClick = onAddFolder, control = { FgIcon(Icons.CHEVRON, size = 14.dp, stroke = 1.6f, color = c.ash) })
             }
             com.fleetinggleam.android.ui.components.SettingGroup(t("pset.prefs")) { ProjectPrefs(project) }
             com.fleetinggleam.android.ui.components.SettingGroup("") {
@@ -75,5 +75,6 @@ fun ProjectSettings(open: Boolean, project: Project, onClose: () -> Unit, onAddF
                 com.fleetinggleam.android.ui.components.SettingRow(t("pset.danger"), t("pset.dangerDesc")) { FgButton(if (armed) t("pset.confirmBin") else t("bin.toBin"), { if (armed) onTrash() else armed = true }, small = true, on = armed) }
             }
         }
+      }
     }
 }

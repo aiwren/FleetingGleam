@@ -1,4 +1,4 @@
-import { KeyboardEvent, PointerEvent, memo, useEffect, useRef, useState } from "react";
+import { KeyboardEvent, memo, useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { motion } from "motion/react";
 import { useTranslation } from "react-i18next";
@@ -77,16 +77,6 @@ function Tile({ path, ratio, photo, stage, state, reveal, dim, box, manual, grou
   const play = (s: State) => (changed?.to === s ? changed.n : 0) > 0 || reveal;
   const delay = reveal && !changed ? `${300 + Math.min(index, 40) * 55}ms` : "0ms";
 
-  // Pointer-follow glare: written straight to CSS variables, so hovering costs no React renders.
-  const onMove = (e: PointerEvent<HTMLDivElement>) => {
-    if (!interactive) return;
-    const el = ref.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    const x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
-    el.style.setProperty("--px", `${(x * 100).toFixed(1)}%`);
-    el.style.setProperty("--py", `${(y * 100).toFixed(1)}%`);
-  };
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => { if (interactive && (e.key === "Enter")) onSelect(path); };
   const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
@@ -98,10 +88,10 @@ function Tile({ path, ratio, photo, stage, state, reveal, dim, box, manual, grou
       initial={firstTime ? { opacity: 0, scale: 0.94 } : false}
       animate={{ opacity: dim ? 0.62 : 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.94 }}
-      whileHover={interactive ? { opacity: 1, scale: 1.012, transition: SPRING.tap } : undefined}
+      whileHover={interactive ? { opacity: 1 } : undefined}
       whileTap={interactive ? { scale: 0.985, transition: SPRING.tap } : undefined}
       transition={{ layout: SPRING.glide, opacity: { duration: DUR.slow, delay: stagger }, scale: { ...SPRING.soft, delay: stagger } }}
-      onPointerMove={onMove} onKeyDown={onKey}
+      onKeyDown={onKey}
       onClick={() => interactive && onSelect(path)}
       onDoubleClick={() => { if (interactive) { onSelect(path); onOpen(path); } }}
       aria-label={photo?.name ?? path.split("/").pop()}>
@@ -111,28 +101,23 @@ function Tile({ path, ratio, photo, stage, state, reveal, dim, box, manual, grou
           <img className="devimg" src={src} alt="" draggable={false} onLoad={() => markSeen(src)}
             style={{ filter: `blur(${Math.max(0, (100 - (stage?.pct ?? 0)) * 0.2).toFixed(1)}px) brightness(${(1 + (1 - (stage?.pct ?? 0) / 100) * 0.3).toFixed(2)})` }} />
         )}
-        {!photo && (
-          <>
-            {stage && (
-              <div className="pending-body">
-                <svg className="ring" viewBox="0 0 40 40">
-                  <circle cx="20" cy="20" r="16" className="ring-bg" />
-                  <circle cx="20" cy="20" r="16" className="ring-fg" strokeDasharray={100.53} strokeDashoffset={100.53 * (1 - stage.pct / 100)} transform="rotate(-90 20 20)" />
-                </svg>
-                <span className="mono pending-stage">{t(`cull.stage.${stage.stage}`, { defaultValue: stage.stage })}</span>
-              </div>
-            )}
-            <i className={`sweep ${stage ? "" : "idle"}`} />
-            <span className="mono pending-name">{path.split("/").pop()}</span>
-          </>
+        {/* 分析中的格子（M4.3 / R9）：没开始的只有底色；进行中的是模糊渐清的缩略图加一个进度环，没有扫光、呼吸边和文字 */}
+        {!photo && stage && (
+          <div className="pending-body">
+            <svg className="ring" viewBox="0 0 40 40">
+              <circle cx="20" cy="20" r="16" className="ring-bg" />
+              <circle cx="20" cy="20" r="16" className="ring-fg" strokeDasharray={100.53} strokeDashoffset={100.53 * (1 - stage.pct / 100)} transform="rotate(-90 20 20)" />
+            </svg>
+          </div>
         )}
 
         {/* keep: a lit gleam, an anamorphic streak and a bloom */}
         {photo && state === "keep" && (
           <>
+            {/* 星的出现：缩放 0.6 → 1、淡入，不转、不弹跳（R7） */}
             <motion.span key={`k${changed?.n ?? 0}${reveal}`} className="gmark keepmark" title={t("mark.keep")}
-              initial={play("keep") ? { scale: 0.1, rotate: -110, opacity: 0 } : false} animate={{ scale: 1, rotate: 0, opacity: 1 }}
-              transition={{ type: "spring", stiffness: 380, damping: 15, delay: reveal && !changed ? 0.35 + Math.min(index, 40) * 0.055 : 0 }}>
+              initial={play("keep") ? { scale: 0.6, opacity: 0 } : false} animate={{ scale: 1, opacity: 1 }}
+              transition={{ ...SPRING.tap, delay: reveal && !changed ? 0.35 + Math.min(index, 40) * 0.055 : 0 }}>
               <Star filled />
             </motion.span>
             {play("keep") && (
@@ -150,7 +135,8 @@ function Tile({ path, ratio, photo, stage, state, reveal, dim, box, manual, grou
         {/* reject: no icon at all. The light falls away: an aperture closes for a moment, then the photo recedes */}
         {photo && state === "reject" && changed?.to === "reject" && <i key={`i${changed.n}`} className="iris" aria-hidden />}
 
-        {photo && <PhotoTags photo={photo} className="ontile" />}
+        {/* 格子上的覆盖层最多两个（R10）：格式标签只在 ≥ 180px 宽的格子上 */}
+        {photo && box.width >= 180 && <PhotoTags photo={photo} className="ontile" />}
         {photo && <span className="chip mono" data-tip={t("inspector.scoreChip", { score: pct(photo.score) })}>{pct(photo.score)}</span>}
 
         {interactive && (
@@ -173,7 +159,6 @@ function Tile({ path, ratio, photo, stage, state, reveal, dim, box, manual, grou
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5L9 7M2.5 13.5L7 9" /></svg>
           </button>
         )}
-        {interactive && <i className="glare" />}
       </span>
 
     </motion.div>

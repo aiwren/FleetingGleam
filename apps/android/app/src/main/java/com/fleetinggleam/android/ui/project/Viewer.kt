@@ -47,9 +47,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -81,6 +79,9 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.ui.viewinterop.AndroidView
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
@@ -155,9 +156,10 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, re
     LaunchedEffect(cull.selected) { val i = indexOf(cull.selected); if (i >= 0 && i != pager.currentPage && !pager.isScrollInProgress) pager.animateScrollToPage(i) }
     LaunchedEffect(Unit) { enter.animateTo(1f, Motion.view()) }
 
+    // 进入和关闭用同一条弹簧（设计审查 A9.5）
     fun close() {
         scope.launch {
-            enter.animateTo(0f, spring(dampingRatio = 0.9f, stiffness = 320f))
+            enter.animateTo(0f, Motion.view())
             cull.viewer = false
         }
     }
@@ -208,7 +210,7 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, re
                             val v = drag.value
                             when {
                                 v > with(density) { 110.dp.toPx() } -> close()
-                                v < -with(density) { 80.dp.toPx() } -> { if (!readOnly) info = true; scope.launch { drag.animateTo(0f, Motion.glide()) } }
+                                v < -with(density) { 110.dp.toPx() } -> { if (!readOnly) info = true; scope.launch { drag.animateTo(0f, Motion.glide()) } }
                                 else -> scope.launch { drag.animateTo(0f, Motion.glide()) }
                             }
                         },
@@ -238,7 +240,7 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, re
                             translationY = (from.center.y - st.center.y) * (1f - e)
                         } else if (e < 1f) { alpha = e; val s = 0.92f + 0.08f * e; scaleX = s; scaleY = s }
                         translationY += dy
-                        if (dy > 0) { val s = 1f - 0.12f * (1f - fade); scaleX *= s; scaleY *= s }
+                        if (dy > 0) { val s = 1f - 0.1f * (1f - fade); scaleX *= s; scaleY *= s }
                     },
                 )
             }
@@ -247,18 +249,24 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, re
         // ---- 上面一条：关闭、名字、标签、实况、第几张。查看器总是暗的房间，所以玻璃件和文字一律用深色那套
         CompositionLocalProvider(LocalBackdrop provides backdrop, LocalFg provides com.fleetinggleam.android.ui.theme.Dark) {
             AnimatedVisibility(chrome && e > 0.6f, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.TopCenter)) {
-                Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                // 顶栏（设计审查 A9.1 / A9.3 / A9.4）：左 × ，中间文件名 + 页码，右边实况、旋转、检查器；全部 40dp 玻璃圆
+                Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
                     GlassRound(Icons.CLOSE, t("viewer.close")) { close() }
-                    GlassBox(Modifier.padding(start = 10.dp).weight(1f, fill = false), style = glassStyle(strong = true)) {
+                    GlassBox(Modifier.weight(1f, fill = false), style = glassStyle(strong = true)) {
                         Row(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text(photo.name, style = Type.monoSmall.copy(color = LocalFg.current.ink), maxLines = 1, overflow = Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                            Text("  ${pager.currentPage + 1} / ${shown.size}" + if (scale > 1.02f) " · ${Math.round(scale * 100)}%" else "", style = Type.monoSmall.copy(color = LocalFg.current.ash), maxLines = 1)
+                            Text("  ${pager.currentPage + 1} / ${shown.size}", style = Type.monoSmall.copy(color = LocalFg.current.ash), maxLines = 1)
                         }
+                    }
+                    Spacer(Modifier.weight(1f))
+                    if (!readOnly) {
+                        com.fleetinggleam.android.ui.components.GlassIconBtn(Icons.ROTATE, t("viewer.rotate"), { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); scope.launch { runCatching { Session.rotate(photo.path) } } })
+                        com.fleetinggleam.android.ui.components.GlassIconBtn(Icons.INSPECTOR, t("cull.inspector"), { info = true })
                     }
                     if (photo.motion) {
                         val overlay = com.fleetinggleam.android.ui.components.LocalOverlay.current
                         val anchor = com.fleetinggleam.android.ui.components.rememberAnchor()
-                        Box(Modifier.padding(start = 8.dp).then(Modifier.anchor(anchor))) {
+                        Box(Modifier.anchor(anchor)) {
                             GlassPill(t("tag.motion"), on = clip != null) {
                                 overlay.showMenu(anchor.value, listOf(
                                     com.fleetinggleam.android.ui.components.MenuItem(if (clip != null) t("viewer.stopMotion") else t("viewer.playMotion")) { if (clip != null) clip = null else scope.launch { playMotion(true) } },
@@ -274,18 +282,16 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, re
             // ---- 下面：小图条、保留 / 待复查 / 淘汰、详情
             AnimatedVisibility(chrome && e > 0.6f && fade > 0.7f, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.BottomCenter)) {
                 Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Strip(shown, decisions, pager.currentPage) { cull.select(it) }
+                    // 小图条和单张同一规格（A7.5）：当前项白色描边
+                    Filmstrip(shown, decisions, pager.currentPage, Modifier.fillMaxWidth(), ring = Color.White) { cull.select(it) }
                     val d = decisions[photo.path]
-                    // 只看（分析中点开的）：不放改判、转向和检查器
-                    if (!readOnly) GlassBox(Modifier.padding(top = 10.dp), shape = RoundedCornerShape(50)) {
+                    // 只看（分析中点开的）：不放改判。底部胶囊只剩三个判定项；"待复查"只放图标（A9.1）
+                    if (!readOnly) GlassBox(Modifier.padding(top = 6.dp), shape = RoundedCornerShape(50)) {
                         Row(Modifier.padding(6.dp), verticalAlignment = Alignment.CenterVertically) {
                             listOf("keep", "review", "reject").forEach { st ->
                                 val on = d?.state == st
-                                DecideBtn(st, on) { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onDecide(photo.path, if (on && d?.manual == true) null else st, shown) }
+                                DecideBtn(st, on, iconOnly = st == "review") { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onDecide(photo.path, if (on && d?.manual == true) null else st, shown) }
                             }
-                            Box(Modifier.padding(horizontal = 4.dp).width(1.dp).height(26.dp).background(LocalFg.current.line))
-                            DecideIcon(Icons.ROTATE, t("viewer.rotate")) { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); scope.launch { runCatching { Session.rotate(photo.path) } } }
-                            DecideIcon(Icons.INSPECTOR, t("cull.inspector")) { info = true }
                         }
                     }
                 }
@@ -293,11 +299,11 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, re
         }
     }
 
+    // 暗房间里拉上来的检查器也是暗的（设计审查 A9.2）
     if (info) {
-        val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = false)
         val mates = remember(photo, data) { Session.photos.value.filter { it.group == photo.group } }
-        ModalBottomSheet(onDismissRequest = { info = false }, sheetState = sheet, containerColor = LocalFg.current.canvas) {
-            Column(Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
+        com.fleetinggleam.android.ui.components.GlassSheet(true, { info = false }, dark = true) {
+            Column(Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
                 InspectorBody(photo, decisions[photo.path], mates, onDecide = { onDecide(photo.path, it, shown) }, onSelect = { cull.select(it) })
             }
         }
@@ -432,76 +438,49 @@ private fun ZoomPage(p: Photo, active: Boolean, clip: String?, clipRun: Int, qui
                 }
             }
         }
-        // 放大时右下角的小地图：整张照片和此刻看着的那一块
+        // 放大时右下角的小地图：整张照片和此刻看着的那一块；倍数写在地图上方（A9.4）
         if (zoom.value > 1.02f) {
             val nw = min(120f, 90f * p.ratio); val nh = nw / p.ratio
             val s = zoom.value; val o = pan.value
             val fx0 = ((-W / 2 - o.x) / (fit.width * s) + 0.5f).coerceIn(0f, 1f); val fx1 = ((W / 2 - o.x) / (fit.width * s) + 0.5f).coerceIn(0f, 1f)
             val fy0 = ((-H / 2 - o.y) / (fit.height * s) + 0.5f).coerceIn(0f, 1f); val fy1 = ((H / 2 - o.y) / (fit.height * s) + 0.5f).coerceIn(0f, 1f)
-            Box(Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(end = 14.dp, bottom = 150.dp).size(nw.dp, nh.dp).clip(RoundedCornerShape(6.dp)).border(1.dp, Color.White.copy(alpha = 0.5f), RoundedCornerShape(6.dp))) {
-                AsyncImage(File(p.thumb), null, Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
-                Box(Modifier.offset((fx0 * nw).dp, (fy0 * nh).dp).size(((fx1 - fx0) * nw).dp, ((fy1 - fy0) * nh).dp).border(1.5.dp, Color.White, RoundedCornerShape(2.dp)))
+            Column(Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(end = 14.dp, bottom = 150.dp), horizontalAlignment = Alignment.End) {
+                Text("${Math.round(s * 100)}%", style = Type.monoSmall.copy(color = Color.White.copy(alpha = 0.85f)), modifier = Modifier.padding(bottom = 4.dp))
+                Box(Modifier.size(nw.dp, nh.dp).clip(RoundedCornerShape(6.dp)).border(1.dp, Color.White.copy(alpha = 0.5f), RoundedCornerShape(6.dp))) {
+                    AsyncImage(File(p.thumb), null, Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
+                    Box(Modifier.offset((fx0 * nw).dp, (fy0 * nh).dp).size(((fx1 - fx0) * nw).dp, ((fy1 - fy0) * nh).dp).border(1.5.dp, Color.White, RoundedCornerShape(2.dp)))
+                }
             }
         }
     }
 }
 
-/** 下面的小图条：当前那张有边框，保留的带一个金点、淘汰的带一个 ×。 */
+/** 玻璃上的保留 / 待复查 / 淘汰（R13 的玻璃版）：选中的保留是琥珀色（只有"保留"用它），其余选中是墨色；44dp 高。`iconOnly` 只放图标。 */
 @Composable
-private fun Strip(shown: List<Photo>, decisions: Map<String, Decision>, index: Int, onPick: (String) -> Unit) {
-    val c = LocalFg.current
-    val state = rememberLazyListState(initialFirstVisibleItemIndex = maxOf(0, index - 3))
-    val density = LocalDensity.current
-    LaunchedEffect(index) {
-        val vw = state.layoutInfo.viewportSize.width
-        state.animateScrollToItem(index, -(vw / 2 - with(density) { 26.dp.toPx() }).toInt())
-    }
-    LazyRow(state = state, contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(5.dp), modifier = Modifier.fillMaxWidth().height(56.dp)) {
-        itemsIndexed(shown, key = { _, p -> p.path }) { i, p ->
-            val cur = i == index
-            val st = decisions[p.path]?.state
-            Box(
-                Modifier.size(if (cur) 56.dp else 44.dp, 56.dp).clip(RoundedCornerShape(8.dp))
-                    .border(if (cur) 2.dp else 0.dp, if (cur) Color.White else Color.Transparent, RoundedCornerShape(8.dp))
-                    .clickable { onPick(p.path) },
-            ) {
-                AsyncImage(File(p.thumb), null, Modifier.fillMaxSize().graphicsLayer { alpha = if (st == "reject") 0.55f else 1f }, contentScale = ContentScale.Crop)
-                if (st == "keep") Box(Modifier.align(Alignment.TopEnd).padding(4.dp).size(7.dp).clip(CircleShape).background(c.gleam))
-            }
-        }
-    }
-}
-
-/** 玻璃上的保留 / 待复查 / 淘汰：选中的保留是琥珀色（只有"保留"用它），其余选中是墨色。 */
-@Composable
-private fun DecideBtn(st: String, on: Boolean, onClick: () -> Unit) {
+private fun DecideBtn(st: String, on: Boolean, iconOnly: Boolean = false, onClick: () -> Unit) {
     val c = LocalFg.current
     val src = remember { MutableInteractionSource() }
     val press = rememberPress(src)
+    val bg by androidx.compose.animation.animateColorAsState(if (on) (if (st == "keep") c.gleam else c.ink) else Color.Transparent, Motion.fast(), label = "decideBg")
     Row(
-        Modifier.height(46.dp).graphicsLayer { val s = 1f + 0.07f * press(); scaleX = s; scaleY = s }.clip(RoundedCornerShape(50))
-            .background(if (on) (if (st == "keep") c.gleam else c.ink) else Color.Transparent)
-            .clickable(interactionSource = src, indication = null, onClick = onClick).padding(horizontal = 16.dp),
+        Modifier.height(44.dp).graphicsLayer { val s = 1f + 0.07f * press(); scaleX = s; scaleY = s }.clip(RoundedCornerShape(50))
+            .background(bg)
+            .clickable(interactionSource = src, indication = null, onClick = onClick).padding(horizontal = if (iconOnly) 15.dp else 16.dp)
+            .semantics { contentDescription = t("state.$st") },
         verticalAlignment = Alignment.CenterVertically,
     ) {
         val fg = if (on) (if (st == "keep") c.gleamInk else c.onInk) else c.ink
         StateIcon(st, fg, 14.dp)
-        Text(t("state.$st"), style = Type.label.copy(color = fg, fontWeight = FontWeight.SemiBold), modifier = Modifier.padding(start = 6.dp), maxLines = 1)
+        if (!iconOnly) Text(t("state.$st"), style = Type.label.copy(color = fg, fontWeight = FontWeight.SemiBold), modifier = Modifier.padding(start = 6.dp), maxLines = 1)
     }
-}
-
-@Composable
-private fun DecideIcon(icon: String, label: String, onClick: () -> Unit) {
-    val c = LocalFg.current
-    Box(Modifier.size(46.dp).clip(CircleShape).clickable(onClick = onClick), contentAlignment = Alignment.Center) { FgIcon(icon, size = 18.dp, color = c.ink) }
 }
 
 @Composable
 private fun GlassRound(icon: String, label: String, onClick: () -> Unit) {
     val src = remember { MutableInteractionSource() }
     val press = rememberPress(src)
-    GlassBox(Modifier.size(44.dp), shape = CircleShape, style = glassStyle(strong = true), press = press) {
-        Box(Modifier.fillMaxSize().clickable(interactionSource = src, indication = null, onClick = onClick), contentAlignment = Alignment.Center) { FgIcon(icon, size = 16.dp, stroke = 1.6f, color = LocalFg.current.ink) }
+    GlassBox(Modifier.size(40.dp), shape = CircleShape, style = glassStyle(strong = true), press = press) {
+        Box(Modifier.fillMaxSize().clickable(interactionSource = src, indication = null, onClick = onClick).semantics { contentDescription = label }, contentAlignment = Alignment.Center) { FgIcon(icon, size = 16.dp, stroke = 1.6f, color = LocalFg.current.ink) }
     }
 }
 

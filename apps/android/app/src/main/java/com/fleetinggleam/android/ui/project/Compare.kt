@@ -61,6 +61,7 @@ import com.fleetinggleam.android.core.pct
 import com.fleetinggleam.android.core.t
 import com.fleetinggleam.android.ui.components.FgButton
 import com.fleetinggleam.android.ui.components.FgIcon
+import com.fleetinggleam.android.ui.components.Segmented
 import com.fleetinggleam.android.ui.theme.Ellipsis
 import com.fleetinggleam.android.ui.theme.LocalFg
 import com.fleetinggleam.android.ui.theme.Type
@@ -142,7 +143,7 @@ fun CompareView(photos: List<Photo>, all: List<Photo>, scopeProp: String, cull: 
     }
 
     Column(Modifier.fillMaxSize().padding(bottom = bottomPad)) {
-        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp)) {
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
             val gap = 8f
             val bw = constraints.maxWidth.toFloat(); val bh = constraints.maxHeight.toFloat()
             // 最合适的排法：让照片最大的那个列数
@@ -170,9 +171,9 @@ fun CompareView(photos: List<Photo>, all: List<Photo>, scopeProp: String, cull: 
                 }
             }
         }
-        // ---- 底栏：上一组 · 第几组 · 下一组；张数；范围；同组其他照片
+        // ---- 底栏一行（设计审查 A8.5）：‹ 第几组 › 在左，范围 / 张数的分段在右；同组其他照片另起一行 40dp，只在有候选时出现
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 12.dp).pointerInput(gi) {
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).pointerInput(gi) {
                 var acc = 0f
                 detectHorizontalDragGestures(onDragEnd = { if (acc < -60) jump(1) else if (acc > 60) jump(-1); acc = 0f }) { ch, d -> ch.consume(); acc += d }
             },
@@ -180,39 +181,25 @@ fun CompareView(photos: List<Photo>, all: List<Photo>, scopeProp: String, cull: 
         ) {
             ArrowBtn("M10 3L5 8l5 5", gi > 0) { jump(-1) }
             Text(if (scopeMode == "scene") t("cmp.sceneOf", "n" to groupPhotos.size) else t("cmp.groupOf", "i" to gi + 1, "n" to groups.size), style = Type.monoSmall.copy(color = c.ash),
-                maxLines = 1, overflow = Ellipsis, modifier = Modifier.weight(1f).padding(horizontal = 6.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                maxLines = 1, overflow = Ellipsis, modifier = Modifier.weight(1f).padding(horizontal = 4.dp))
             ArrowBtn("M6 3l5 5-5 5", gi < groups.size - 1) { jump(1) }
+            Segmented(listOf("group" to t("cmp.byGroup"), "scene" to t("cmp.byScene")), scopeMode, { scopeMode = it }, Modifier.padding(start = 8.dp))
+            if (groupPhotos.size > 2) Segmented(listOf(2, 3, 4).filter { it <= groupPhotos.size }.map { it to "$it" }, shownN, { n -> count = n; UiPrefs.put("cmpn", n) }, Modifier.padding(start = 8.dp))
         }
-        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            ScopeToggle(scopeMode) { scopeMode = it }
-            if (groupPhotos.size > 2) Row(Modifier.padding(start = 8.dp).clip(RoundedCornerShape(10.dp)).background(c.surface).border(1.dp, c.line, RoundedCornerShape(10.dp)).padding(2.dp)) {
-                listOf(2, 3, 4).filter { it <= groupPhotos.size }.forEach { n ->
-                    val on = shownN == n
-                    Text("$n", style = Type.mono.copy(color = if (on) c.onInk else c.ink), modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(if (on) c.ink else Color.Transparent)
-                        .clickable { count = n; UiPrefs.put("cmpn", n) }.padding(horizontal = 12.dp, vertical = 5.dp))
-                }
-            }
-            Row(Modifier.weight(1f).padding(start = 8.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                candidates.forEach { p ->
-                    AsyncImage(File(p.thumb), null, Modifier.size(38.dp).clip(RoundedCornerShape(7.dp)).clickable {
-                        slots = slots.toMutableList().also { if (it.isNotEmpty()) it[it.size - 1] = p.path }
-                    }, contentScale = ContentScale.Crop)
-                }
+        if (candidates.isNotEmpty()) Row(Modifier.fillMaxWidth().height(40.dp).padding(horizontal = 16.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            candidates.forEach { p ->
+                AsyncImage(File(p.thumb), null, Modifier.size(36.dp).clip(RoundedCornerShape(6.dp)).clickable {
+                    slots = slots.toMutableList().also { if (it.isNotEmpty()) it[it.size - 1] = p.path }
+                }, contentScale = ContentScale.Crop)
             }
         }
     }
 }
 
+/** 范围切换：和别处同一个分段控件（设计审查 A8.5）。 */
 @Composable
 private fun ScopeToggle(mode: String, onChange: (String) -> Unit) {
-    val c = LocalFg.current
-    Row(Modifier.padding(top = 4.dp).clip(RoundedCornerShape(10.dp)).background(c.surface).border(1.dp, c.line, RoundedCornerShape(10.dp)).padding(2.dp)) {
-        listOf("group" to t("cmp.byGroup"), "scene" to t("cmp.byScene")).forEach { (id, label) ->
-            val on = mode == id
-            Text(label, style = Type.rowDesc.copy(color = if (on) c.onInk else c.ink, fontWeight = FontWeight.Medium), modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(if (on) c.ink else Color.Transparent)
-                .clickable { onChange(id) }.padding(horizontal = 10.dp, vertical = 5.dp))
-        }
-    }
+    Segmented(listOf("group" to t("cmp.byGroup"), "scene" to t("cmp.byScene")), mode, onChange, Modifier.padding(top = 4.dp))
 }
 
 @Composable
@@ -241,7 +228,7 @@ private fun Cell(
     LaunchedEffect(p.path, warm, view.s > 1.02f) { if (large == null && (warm || view.s > 1.02f)) large = Large.get(p.path) }
     val W = with(density) { w.toPx() }; val H = with(density) { h.toPx() }
     val fw = min(W, H * p.ratio); val fh = fw / p.ratio
-    val shape = RoundedCornerShape(12.dp)
+    val shape = RoundedCornerShape(10.dp)
     // 手势里要的是此刻的视野，不是手势开始那一刻捕获的
     val latest by androidx.compose.runtime.rememberUpdatedState(view)
     Box(Modifier.size(w, h), contentAlignment = Alignment.Center) {
@@ -293,32 +280,33 @@ private fun Cell(
             // 标签：推荐 / 已保留 / 已淘汰，放大倍数，放大查看
             Row(Modifier.align(Alignment.TopStart).padding(7.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 PhotoTags(p)
-                if (p.groupBest && count > 1) Tag(t("cmp.best"), star = true)
+                // "推荐"只用文字：四角星只表示保留（R2 / A8.3）
+                if (p.groupBest && count > 1) Tag(t("cmp.best"))
                 if (st == "keep") Tag(t("cmp.kept"), star = true)
                 if (st == "reject") Tag(t("cmp.rejected"))
                 if (view.s > 1.02f) Tag("%.1f×".format(view.s))
             }
-            Box(Modifier.align(Alignment.TopEnd).padding(6.dp).size(30.dp).clip(CircleShape).background(Color(0x99101014)).clickable(onClick = onOpen), contentAlignment = Alignment.Center) {
-                FgIcon("M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5L9 7M2.5 13.5L7 9", size = 13.dp, stroke = 1.5f, color = Color.White)
+            // 压在照片上的圆钮统一规格（A8.4）
+            Box(Modifier.align(Alignment.TopEnd).padding(8.dp).size(26.dp).clip(CircleShape).background(Color(0x4D000000)).border(1.dp, Color(0x33FFFFFF), CircleShape).clickable(onClick = onOpen), contentAlignment = Alignment.Center) {
+                FgIcon("M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5L9 7M2.5 13.5L7 9", size = 13.dp, stroke = 1.5f, color = Color.White.copy(alpha = 0.85f))
             }
             // 底下：编号、几项数字（同组最高的加粗）、保留 / 淘汰
+            // 底下（设计审查 A8.1 / A8.2）：编号 + 几个数值（综合加粗；同组最高者白 100% 加粗，其余白 70%——不用琥珀）、保留 / 淘汰；渐变 0 → 60%
             Row(
                 Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-                    .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color.Transparent, Color(0xB0000000))))
-                    .padding(start = 8.dp, end = 6.dp, top = 18.dp, bottom = 6.dp),
+                    .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color.Transparent, Color(0x99000000))))
+                    .padding(start = 8.dp, end = 6.dp, top = 28.dp, bottom = 6.dp),
                 verticalAlignment = Alignment.Bottom,
             ) {
-                Column(Modifier.weight(1f)) {
-                    Text("${index + 1}  ${p.name}", style = Type.monoSmall.copy(color = Color.White.copy(alpha = 0.85f)), maxLines = 1, overflow = Ellipsis)
-                    Row(Modifier.padding(top = 3.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        metrics.forEach { (key, label, get) ->
-                            val v = get(p)
-                            val vals = set.mapNotNull(get)
-                            val top = v != null && vals.size > 1 && v == vals.max() && v > vals.min()
-                            Row(Modifier.clip(RoundedCornerShape(5.dp)).background(Color.White.copy(alpha = if (key == "score") 0.22f else 0.12f)).padding(horizontal = 5.dp, vertical = 1.dp)) {
-                                Text(label, style = Type.monoSmall.copy(color = Color.White.copy(alpha = 0.75f), fontSize = androidx.compose.ui.unit.TextUnit(10f, androidx.compose.ui.unit.TextUnitType.Sp)))
-                                Text(" ${v ?: "—"}", style = Type.monoSmall.copy(color = if (top) c.gleam else Color.White, fontWeight = if (top) FontWeight.Bold else FontWeight.Normal, fontSize = androidx.compose.ui.unit.TextUnit(10f, androidx.compose.ui.unit.TextUnitType.Sp)))
-                            }
+                Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("${index + 1}", style = Type.monoSmall.copy(color = Color.White), modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(Color.White.copy(alpha = 0.18f)).padding(horizontal = 5.dp, vertical = 1.dp))
+                    metrics.forEach { (key, label, get) ->
+                        val v = get(p)
+                        val vals = set.mapNotNull(get)
+                        val top = v != null && vals.size > 1 && v == vals.max() && v > vals.min()
+                        Row(verticalAlignment = Alignment.Bottom) {
+                            Text(label, style = Type.monoSmall.copy(color = Color.White.copy(alpha = 0.7f)))
+                            Text(" ${v ?: "—"}", style = (if (key == "score") Type.mono else Type.monoSmall).copy(color = Color.White.copy(alpha = if (top || key == "score") 1f else 0.7f), fontWeight = if (top || key == "score") FontWeight.Bold else FontWeight.Normal))
                         }
                     }
                 }
@@ -332,9 +320,9 @@ private fun Cell(
 
 @Composable
 private fun Tag(text: String, star: Boolean = false) {
-    Row(Modifier.clip(RoundedCornerShape(6.dp)).background(Color(0xA30E0E12)).padding(horizontal = 6.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.clip(RoundedCornerShape(4.dp)).background(Color(0xA3000000)).padding(horizontal = 6.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
         if (star) Star(true, 10.dp, glow = false)
-        Text(text, style = Type.monoSmall.copy(color = Color.White, fontSize = androidx.compose.ui.unit.TextUnit(10f, androidx.compose.ui.unit.TextUnitType.Sp)), modifier = Modifier.padding(start = if (star) 3.dp else 0.dp))
+        Text(text, style = Type.caption.copy(color = Color.White), modifier = Modifier.padding(start = if (star) 3.dp else 0.dp))
     }
 }
 
@@ -342,10 +330,10 @@ private fun Tag(text: String, star: Boolean = false) {
 private fun DecideDot(on: Boolean, keep: Boolean, onClick: () -> Unit) {
     val c = LocalFg.current
     Box(
-        Modifier.size(36.dp).clip(CircleShape).background(if (on) (if (keep) c.gleam else Color.White) else Color(0x66000000)).border(1.dp, Color.White.copy(alpha = 0.35f), CircleShape).clickable(onClick = onClick),
+        Modifier.size(32.dp).clip(CircleShape).background(if (on) (if (keep) c.gleam else Color.White) else Color(0x4D000000)).border(1.dp, Color.White.copy(alpha = 0.33f), CircleShape).clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        if (keep) Star(true, 17.dp, color = if (on) c.gleamInk else Color.White, glow = false)
+        if (keep) Star(true, 16.dp, color = if (on) c.gleamInk else Color.White, glow = false)
         else FgIcon("M3 3l6 6M9 3L3 9", size = 12.dp, box = 12f, stroke = 1.8f, color = if (on) Color.Black else Color.White)
     }
 }

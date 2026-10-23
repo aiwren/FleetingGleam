@@ -145,12 +145,14 @@ fun AppShell() {
                 }
             }
         }
-        // 覆盖层（菜单）压在所有浮动件（标签栏、提示、下载胶囊）之上
+        // 覆盖层：对话框与底部弹层按打开顺序叠放，菜单压在最上；都在所有浮动件（标签栏、提示、下载胶囊）之上
+        Box(Modifier.zIndex(9f)) { overlay.layers.forEach { l -> androidx.compose.runtime.key(l.id) { l.body() } } }
         Box(Modifier.zIndex(10f)) { overlay.content?.invoke() }
     }
-    }
+    // 模型下载对话框与文件夹选择器也登记进同一个覆盖层（要在 LocalOverlay 之内）
     ModelGate()
     FolderPicker()
+    }
 }
 
 /**
@@ -178,11 +180,11 @@ private fun FloatingTabBar(backdrop: com.kyant.backdrop.Backdrop, current: Tab, 
                 .padding(4.dp)
                 .pointerInput(itemPx) {
                     detectHorizontalDragGestures(
-                        onDragStart = { dragging = true; scope.launch { lift.animateTo(1f, androidx.compose.animation.core.spring(0.6f, 420f)) } },
+                        onDragStart = { dragging = true; scope.launch { lift.animateTo(1f, Motion.tap()) } },
                         onDragEnd = {
                             val i = Math.round(x.value / itemPx).coerceIn(0, Tab.entries.size - 1)
                             dragging = false
-                            scope.launch { lift.animateTo(0f, androidx.compose.animation.core.spring(0.5f, 300f)) }
+                            scope.launch { lift.animateTo(0f, Motion.tap()) }
                             scope.launch { x.animateTo(i * itemPx, Motion.glide()) }
                             if (Tab.entries[i] != current) onSelect(Tab.entries[i])
                         },
@@ -216,7 +218,7 @@ private fun FloatingTabBar(backdrop: com.kyant.backdrop.Backdrop, current: Tab, 
                         verticalArrangement = Arrangement.Center,
                     ) {
                         FgIcon(tab.icon, size = 22.dp, stroke = 1.5f, color = fg)
-                        Text(t(tab.label), style = Type.monoSmall.copy(fontFamily = com.fleetinggleam.android.ui.theme.Geist, color = fg, fontWeight = FontWeight.SemiBold, fontSize = androidx.compose.ui.unit.TextUnit(10f, androidx.compose.ui.unit.TextUnitType.Sp), lineHeight = androidx.compose.ui.unit.TextUnit(12f, androidx.compose.ui.unit.TextUnitType.Sp)), modifier = Modifier.padding(top = 2.dp), maxLines = 1)
+                        Text(t(tab.label), style = Type.caption.copy(color = fg), modifier = Modifier.padding(top = 2.dp), maxLines = 1)
                     }
                 }
             }

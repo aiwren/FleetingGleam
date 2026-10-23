@@ -2,7 +2,7 @@ import { ReactNode } from "react";
 import { motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 import { SPRING } from "../motion";
-import { Decision, Photo, Reason, State, pct, stars } from "../types";
+import { Decision, Photo, Reason, State, pct } from "../types";
 import { Star } from "./Tile";
 
 const STATES: State[] = ["keep", "review", "reject"];
@@ -21,8 +21,10 @@ function Bar({ label, value }: { label: string; value: number }) {
  * The verdict for one photo, in one compact block: the score, the three marks, why, and the numbers behind it as bars.
  * It lives in the inspector and is the only place these are shown.
  */
-export default function PhotoVerdict({ photo, decision, onDecide, reasonText, scoreTip }: {
+export default function PhotoVerdict({ photo, decision, onDecide, reasonText, scoreTip, onZoom }: {
   photo: Photo; decision?: Decision; onDecide: (s: State | null) => void; reasonText: (r: Reason) => string; scoreTip?: ReactNode;
+  /** 名字行右边的"放大"（检查器里没有预览图了，这是打开大图的入口）。 */
+  onZoom?: () => void;
 }) {
   const { t, i18n } = useTranslation();
   const state = decision?.state ?? "review";
@@ -30,11 +32,18 @@ export default function PhotoVerdict({ photo, decision, onDecide, reasonText, sc
   const reasons = decision?.reasons.map((r) => reasonText(r)).join(i18n.language.startsWith("zh") ? "；" : "; ");
   return (
     <>
-      <h3 className="mono vname">{photo.name}{photo.kind && <span className="ktag">{t(`kind.${photo.kind}`)}</span>}</h3>
+      <div className="vname-row">
+        <h3 className="mono vname">{photo.name}{photo.kind && <span className="ktag">{t(`kind.${photo.kind}`)}</span>}</h3>
+        {onZoom && (
+          <button className="btn icon plain sm" onClick={onZoom} aria-label={t("inspector.zoomLabel")} title={t("inspector.zoomHint")}>
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5L9 7M2.5 13.5L7 9" /></svg>
+          </button>
+        )}
+      </div>
+      {/* 综合分是数字，不画星：四角星只表示保留 / 待复查（R2） */}
       <div className="sscore" title={`${t("inspector.overall")} ${pct(photo.score)}`}>
-        <span className="sstars" role="img" aria-label={`${t("inspector.overall")}: ${stars(photo.score)}/5`}>
-          {[0, 1, 2, 3, 4].map((i) => <Star key={i} filled={i < stars(photo.score)} size={20} />)}
-        </span>
+        <span className="snum mono">{pct(photo.score)}</span>
+        <span className="ash small">{t("inspector.overall")}</span>
         {scoreTip}
       </div>
       <div className="strio">
@@ -52,9 +61,6 @@ export default function PhotoVerdict({ photo, decision, onDecide, reasonText, sc
         {photo.ai_score !== null && <Bar label={t("inspector.ai")} value={pct(photo.ai_score)} />}
         {photo.pref_score !== null && <Bar label={t("inspector.pref")} value={pct(photo.pref_score)} />}
       </div>
-      {photo.face_count > 0 && (
-        <p className="sreasons">{t("inspector.faces")} · {t("inspector.faceValue", { count: photo.face_count, q: photo.face_min === null ? "—" : photo.face_min.toFixed(2) })}</p>
-      )}
     </>
   );
 }

@@ -23,7 +23,6 @@ const svg = (d: string) => (
 const ICON = {
   cull: svg("M2 4.5A1.5 1.5 0 013.5 3h9A1.5 1.5 0 0114 4.5v7a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 11.5zM2.5 11l3.2-3.2a1 1 0 011.4 0L10 10.7M9.4 10l1.2-1.2a1 1 0 011.4 0l1.5 1.5"),
   settings: svg("M8 5.4a2.6 2.6 0 100 5.2 2.6 2.6 0 000-5.2zM8 1.8l.8 1.6 1.7.4 1.5-.9 1.2 1.2-.9 1.5.4 1.7 1.6.8v1.7l-1.6.8-.4 1.7.9 1.5-1.2 1.2-1.5-.9-1.7.4-.8 1.6H6.3l-.8-1.6-1.7-.4-1.5.9-1.2-1.2.9-1.5-.4-1.7L.4 9.3V7.6L2 6.8l.4-1.7-.9-1.5 1.2-1.2 1.5.9 1.7-.4.8-1.6z"),
-  meter: svg("M8 2.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM8 5v3l2 1.2"),
 };
 
 export default function App() {
@@ -61,9 +60,9 @@ export default function App() {
   }, []);
 
   /** Each feature is one module: a sidebar entry plus its own workspace (and inspector). */
+  // 没做好的模块不列（设计审查 M1.2）；导航只留名字，副标题删掉（M1.3）
   const modules: ModuleDef[] = [
-    { id: "culling", title: t("nav.cull"), subtitle: t("nav.cullSub"), ready: true, icon: ICON.cull },
-    { id: "exif", title: t("nav.meter"), subtitle: t("nav.meterSub"), ready: false, icon: ICON.meter },
+    { id: "culling", title: t("nav.cull"), subtitle: "", ready: true, icon: ICON.cull },
   ];
   const current = modules.find((m) => m.id === moduleId);
   // the projects are read from the backend first; until then there is nothing right to show
@@ -101,7 +100,7 @@ export default function App() {
                 <li key={m.id}>
                   <button className={m.id === moduleId ? "active" : ""} onClick={() => { if (m.id === moduleId && m.id === "culling") setActive(null); setModuleId(m.id); }} title={m.title}>
                     {m.id === moduleId && <motion.i layoutId="navpill" className="navpill" transition={SPRING.glide} />}
-                    <span className="nav-inner">{m.icon}<span className="nav-text">{m.title}<small>{m.subtitle}</small></span>{!m.ready && <em>{t("nav.soon")}</em>}</span>
+                    <span className="nav-inner">{m.icon}<span className="nav-text">{m.title}</span>{!m.ready && <em>{t("nav.soon")}</em>}</span>
                   </button>
                 </li>
               ))}

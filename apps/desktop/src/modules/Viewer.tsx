@@ -4,7 +4,7 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { motion, useAnimate, usePresence } from "motion/react";
 import { useTranslation } from "react-i18next";
-import { DUR, EASE_OUT } from "../motion";
+import { DUR, EASE_OUT, SPRING } from "../motion";
 import { useLarge } from "../largeSrc";
 import { Decision, Photo, State, pct, thumbSrc } from "../types";
 import PhotoTags from "../components/PhotoTags";
@@ -191,6 +191,8 @@ export default function Viewer({ photo, decision, index, total, onClose, onStep,
   };
   const [run, setRun] = useState(0);
   const [liveMenu, setLiveMenu] = useState(false);
+  /** 快捷键气泡：按 ? 打开（底部不再常驻那一行提示——M7.2）。 */
+  const [help, setHelp] = useState(false);
   /** Opening a Live photo plays it once by itself, silently; playing it from the menu has sound. */
   const [quiet, setQuiet] = useState(false);
   const startMotion = async (silent = false) => {
@@ -348,6 +350,8 @@ export default function Viewer({ photo, decision, index, total, onClose, onStep,
     const onKey = (e: KeyboardEvent) => {
       if (isModalOpen()) return;
       const k = e.key.toLowerCase();
+      if (k === "escape" && help) { setHelp(false); return; }
+      if (k === "?") { setHelp((v) => !v); return; }
       if (k === "escape" || k === " ") { e.preventDefault(); onClose(); }
       else if (k === "arrowright") onStep(1);
       else if (k === "arrowleft") onStep(-1);
@@ -370,7 +374,7 @@ export default function Viewer({ photo, decision, index, total, onClose, onStep,
     if (!el || !f) return;
     const to = el.getBoundingClientRect();
     animate(el, { x: [f.x + f.width / 2 - (to.x + to.width / 2), 0], y: [f.y + f.height / 2 - (to.y + to.height / 2), 0], scaleX: [f.width / to.width, 1], scaleY: [f.height / to.height, 1] },
-      { type: "spring", stiffness: 230, damping: 30 });
+      SPRING.view);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   // ...and back into whichever tile is now current on close (if that tile is on screen; otherwise just fade).
@@ -383,7 +387,8 @@ export default function Viewer({ photo, decision, index, total, onClose, onStep,
     // Removal must never depend on an animation callback alone: finish on completion or after a fixed time, whichever comes first.
     let done = false;
     const finish = () => { if (!done) { done = true; safeToRemove?.(); } };
-    animate(el, { x: t.x + t.width / 2 - (r.x + r.width / 2), y: t.y + t.height / 2 - (r.y + r.height / 2), scaleX: t.width / r.width, scaleY: t.height / r.height }, { type: "spring", stiffness: 260, damping: 32 })
+    // 进入和关闭用同一条弹簧（M7.5）
+    animate(el, { x: t.x + t.width / 2 - (r.x + r.width / 2), y: t.y + t.height / 2 - (r.y + r.height / 2), scaleX: t.width / r.width, scaleY: t.height / r.height }, SPRING.view)
       .then(finish, finish);
     const timer = setTimeout(finish, 650);
     return () => clearTimeout(timer);
@@ -392,7 +397,7 @@ export default function Viewer({ photo, decision, index, total, onClose, onStep,
 
   // The strip: fixed-size cells, so only the ones near the current photo are mounted (spacers stand in for the rest) and a long folder stays light.
   const strip = useRef<HTMLDivElement>(null);
-  const CELL = 64, GAP = 6, STEP = CELL + GAP, WINDOW = 40;
+  const CELL = 56, GAP = 6, STEP = CELL + GAP, WINDOW = 40;
   const first = Math.max(0, index - WINDOW), last = Math.min(photos.length, index + WINDOW + 1);
   useEffect(() => {
     const el = strip.current;
@@ -401,8 +406,9 @@ export default function Viewer({ photo, decision, index, total, onClose, onStep,
   }, [index]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const isOrigin = photo.path === origin.current;
+  // 顶栏的判定钮（M7.1 / R13）：没有边框的胶囊，选中实心（保留琥珀、其余墨色）；快捷键在悬停气泡里
   const btn = (s: State, key: string) => (
-    <button className={`btn ${decision?.state === s ? "on" : ""}`} onClick={() => onDecide(s)}>{t(`state.${s}`)} <kbd>{key}</kbd></button>
+    <button className={`vbtn ${s} ${decision?.state === s ? "on" : ""}`} onClick={() => onDecide(s)} data-tip={`${t(`state.${s}`)} · ${key}`}>{t(`state.${s}`)}</button>
   );
 
   return (
@@ -412,7 +418,11 @@ export default function Viewer({ photo, decision, index, total, onClose, onStep,
         initial={{ opacity: 0 }} animate={{ opacity: 0.42 }} transition={{ duration: 0.9, ease: EASE_OUT }}
       />
       <div className="viewer-bar" data-tauri-drag-region>
+        <button className="vclose" onClick={onClose} aria-label={t("viewer.close")} data-tip={`${t("viewer.close")} · Esc`}>
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+        </button>
         <span className="mono viewer-title">{photo.name}</span>
+        <span className="mono ash viewer-size">{photo.width} × {photo.height}</span>
         <PhotoTags photo={photo} skip={["motion"]} />
         {photo.motion && (
           <div className="livepill" ref={liveRef}>
@@ -434,10 +444,14 @@ export default function Viewer({ photo, decision, index, total, onClose, onStep,
         <span className="mono ash">{index + 1} / {total} · <span ref={pctRef}>100%</span></span>
         <div className="viewer-actions">
           {btn("keep", "P")}{btn("review", "R")}{btn("reject", "X")}
-          <button className="btn" onClick={() => onRotate(1)} title={t("viewer.rotateTip")}>{t("viewer.rotate")} <kbd>⌘]</kbd></button>
-          <button className="btn" onClick={onClose}>{t("viewer.close")} <kbd>Esc</kbd></button>
+          <i className="tb-sep" aria-hidden />
+          <button className="vbtn icon" onClick={() => onRotate(1)} aria-label={t("viewer.rotate")} data-tip={`${t("viewer.rotate")} · ⌘]`}>
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12.9 9.6A5 5 0 1 1 11.5 4.5M13.5 2.5v3.5H10" /></svg>
+          </button>
+          <button className={`vbtn icon ${help ? "on" : ""}`} onClick={() => setHelp((v) => !v)} aria-label={t("viewer.help")} data-tip={`${t("viewer.help")} · ?`}>?</button>
         </div>
       </div>
+      {help && <div className="vhelp mono" role="dialog" onClick={() => setHelp(false)}>{t("viewer.hint")}</div>}
       <div
         className="viewer-stage" ref={stageRef}
         style={{ cursor: scale > 1 ? (dragging ? "grabbing" : "grab") : "zoom-in" }}
@@ -452,9 +466,9 @@ export default function Viewer({ photo, decision, index, total, onClose, onStep,
           ref={scope}
           className="vwrap"
           style={{ ["--r" as string]: photo.width / photo.height }}
-          initial={isOrigin ? undefined : { opacity: 0, x: dir * 56, scale: 0.985 }}
+          initial={isOrigin ? undefined : { opacity: 0, x: dir * 40, scale: 0.985 }}
           animate={isOrigin ? undefined : { opacity: 1, x: 0, scale: 1 }}
-          transition={{ duration: 0.5, ease: EASE_OUT }}
+          transition={{ duration: DUR.base, ease: EASE_OUT }}
         >
           <div ref={zoomRef} className="vzoom">
             <img className="vthumb" src={thumbSrc(photo)} alt="" draggable={false} />
@@ -494,18 +508,17 @@ export default function Viewer({ photo, decision, index, total, onClose, onStep,
                 style={{ left: n * STEP }} title={p.name} onClick={() => onJump(p.path)}>
                 <img src={thumbSrc(p)} alt="" loading="lazy" draggable={false} />
                 {st === "keep" && <i className="vmark keep" />}
-                {st === "reject" && <i className="vmark reject" />}
               </button>
             );
           })}
         </div>
       </div>
+      {/* 底部只有数字，词汇和检查器一致（M7.3）；快捷键按 ? 看 */}
       <div className="viewer-foot mono">
         <span>{t("viewer.overall")} {pct(photo.score)}</span>
-        <span>{t("viewer.ai")} {photo.ai_score === null ? "—" : pct(photo.ai_score)}</span>
-        <span>{t("viewer.tech")} {pct(photo.tech_score)}</span>
-        <span>{photo.width} × {photo.height}</span>
-        <span className="ash viewer-hint">{t("viewer.hint")}</span>
+        <span>{t("viewer.sharp")} {pct(photo.sharp_score)}</span>
+        <span>{t("viewer.expo")} {pct(photo.expo_score)}</span>
+        {photo.ai_score !== null && <span>{t("viewer.ai")} {pct(photo.ai_score)}</span>}
       </div>
     </motion.div>
   );

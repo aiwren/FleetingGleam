@@ -40,6 +40,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onGloballyPositioned
+import com.kyant.backdrop.backdrops.layerBackdrop
 import androidx.compose.runtime.saveable.rememberSaveable
 import com.fleetinggleam.android.core.Backup
 import com.fleetinggleam.android.core.BackupMeta
@@ -79,6 +81,7 @@ import com.fleetinggleam.android.ui.components.Segmented
 import com.fleetinggleam.android.ui.components.Select
 import com.fleetinggleam.android.ui.components.SettingGroup
 import com.fleetinggleam.android.ui.components.SettingRow
+import com.fleetinggleam.android.ui.components.SettingRowInfo
 import com.fleetinggleam.android.ui.components.StateDot
 import com.fleetinggleam.android.ui.components.Stepper
 import com.fleetinggleam.android.ui.components.Toasts
@@ -163,11 +166,17 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
     val sections = listOf("general" to t("settings.general"), "analysis" to t("settings.analysis"), "personal" to t("settings.personal"), "data" to t("settings.data"), "backup" to t("settings.backup"), "nas" to t("settings.nas"), "about" to t("settings.about"))
     // 设置页的按钮统一用小号（满屏的行，常规按钮显得大）
     androidx.compose.runtime.CompositionLocalProvider(com.fleetinggleam.android.ui.components.LocalSmallButtons provides true) {
-    LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), state = list, contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 110.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        item {
-            if (section == null) {
+    // 分区页的顶栏是浮在列表上的玻璃（全局液态玻璃）：这一页自己的 backdrop，列表从顶栏下面滚过去
+    val glassOn = com.fleetinggleam.android.ui.components.LocalGlassOn.current
+    val backdrop = com.kyant.backdrop.backdrops.rememberLayerBackdrop()
+    var barHeight by remember { mutableStateOf(0) }
+    val barPad = with(androidx.compose.ui.platform.LocalDensity.current) { barHeight.toDp() }
+    Box(Modifier.fillMaxSize()) {
+    // 分组之间 24dp（设计审查 A13.5）
+    LazyColumn(Modifier.fillMaxSize().then(if (glassOn) Modifier.layerBackdrop(backdrop) else Modifier).then(if (section == null) Modifier.statusBarsPadding() else Modifier), state = list, contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 16.dp, end = 16.dp, top = if (section == null) 4.dp else barPad + 8.dp, bottom = 110.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+        if (section == null) item {
                 // 根页：大标题，下面一张分级列表（像 iOS 设置）
-                Text(t("settings.title"), style = Type.largeTitle.copy(color = c.ink), modifier = Modifier.padding(start = 4.dp, top = 10.dp, bottom = 12.dp))
+                Text(t("settings.title"), style = Type.largeTitle.copy(color = c.ink), modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 16.dp))
                 val rows = listOf(
                     Triple("general", Icons.SETTINGS, t("settings.general")) to (I18n.LANGS.firstOrNull { it.code == I18n.lang.value }?.label ?: t("nav.systemLang")),
                     Triple("analysis", "M2 8h2.5l1.5-4 2 8 1.5-4H14", t("settings.analysis")) to (s.tier?.let { t(if (it == "ultra") "settings.qualityUltra" else if (it == "high") "settings.qualityHigh" else "settings.qualityFast") } ?: t("settings.auto")),
@@ -180,9 +189,6 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                 Column(Modifier.clip(RoundedCornerShape(14.dp)).background(c.panel)) {
                     rows.forEachIndexed { i, (r, value) -> com.fleetinggleam.android.ui.components.NavRow(r.second, r.third, value, first = i == 0) { section = r.first } }
                 }
-            } else {
-                com.fleetinggleam.android.ui.components.NavBar(if (section == "data") t("android.settings.modelsStorage") else sections.firstOrNull { it.first == section }?.second ?: "", t("settings.title"), { section = null }, Modifier.layout { m, cs -> val pl = m.measure(cs.copy(maxWidth = cs.maxWidth + 32.dp.roundToPx(), minWidth = 0)); layout(cs.maxWidth, pl.height) { pl.placeRelative(-16.dp.roundToPx(), 0) } }.padding(bottom = 6.dp))
-            }
         }
         if (section == "general") item {
             SettingGroup("") {
@@ -197,17 +203,15 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
         }
         if (section == "analysis") item {
             SettingGroup("") {
-                val how = buildString {
-                    append(t("android.settings.analysisHow")); append("\n\n"); append(t("settings.lastRun")); append("\n")
-                    val i = info
-                    if (i == null) append(t("settings.lastRunNone")) else {
-                        append("${t("settings.modelUsed")}: ${i.model?.let { m -> t(if ("SigLIP" in m) "settings.qualityUltra" else if ("L/14" in m) "settings.qualityHigh" else "settings.qualityFast") } ?: "—"}\n")
-                        append("${t("settings.backendClip")}: $clipLabel\n")
-                        append("${t("android.settings.faces")}: ${if (i.vision) t("android.settings.facesOn") else t("settings.off")}\n")
-                        append("${t("settings.backendCores")}: ${i.cores}")
-                    }
-                }
-                SettingRow(t("settings.analysisAuto"), t("settings.analysisAutoDesc"), info = how, first = true) {
+                // "?"里是几行名字 · 值，不再是用换行拼的长字符串（设计审查 A13.6）
+                val i = info
+                val rows = if (i == null) listOf(t("settings.lastRun") to t("settings.lastRunNone")) else listOf(
+                    t("settings.modelUsed") to (i.model?.let { m -> t(if ("SigLIP" in m) "settings.qualityUltra" else if ("L/14" in m) "settings.qualityHigh" else "settings.qualityFast") } ?: "—"),
+                    t("settings.backendClip") to clipLabel,
+                    t("android.settings.faces") to (if (i.vision) t("android.settings.facesOn") else t("settings.off")),
+                    t("settings.backendCores") to "${i.cores}",
+                )
+                SettingRowInfo(t("settings.analysisAuto"), t("settings.analysisAutoDesc"), t("android.settings.analysisHow"), rows, first = true) {
                     Text(s.tier?.let { t(if (it == "ultra") "settings.qualityUltra" else if (it == "high") "settings.qualityHigh" else "settings.qualityFast") } ?: t("settings.auto"), style = Type.mono.copy(color = c.ash))
                 }
             }
@@ -228,11 +232,7 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                             if (Models.ensurePacks(Strategy.tierPacks(tier)) == Answer.Cancelled) return@launch
                             Settings.set { it.copy(tier = tier, tierRev = it.tierRev + 1) }
                         }
-                    }) {
-                        Box(Modifier.size(20.dp).clip(CircleShape).border(1.5.dp, if (on) c.ink else c.line, CircleShape), contentAlignment = Alignment.Center) {
-                            if (on) Box(Modifier.size(10.dp).clip(CircleShape).background(c.ink))
-                        }
-                    }
+                    }) { com.fleetinggleam.android.ui.components.FgRadio(on) }
                 }
             }
             Text(t("android.settings.tierHint"), style = Type.rowDesc.copy(color = c.ash), modifier = Modifier.padding(start = 16.dp, top = 6.dp))
@@ -272,16 +272,17 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
         if (section == "data") item {
             SettingGroup("") {
                 SettingRow(t("models.title"), t("models.titleDesc"), first = true)
+                // 说明只留用途；装没装由右边表达：随应用安装的写一个灰字，装了的是"删除"，没装的是"下载 · 48 MB"（设计审查 A13.8）
                 packs.forEach { p ->
-                    SettingRow(t("models.name.${p.id}"), "${if (p.bundled) t("models.bundled") else if (p.installed) t("models.have") else t("models.none") + if (p.bytes > 0) " · " + fmtBytes(p.bytes) else ""} · ${t("models.desc.${p.id}")}") {
-                        if (p.bundled) Unit
+                    SettingRow(t("models.name.${p.id}"), t("models.desc.${p.id}")) {
+                        if (p.bundled) Text(t("models.bundled"), style = Type.small.copy(color = c.ash))
                         else if (p.installed) FgButton(t("models.remove"), { scope.launch { runCatching { Models.remove(p.id) }; Strategy.release(p.id) } }, small = true)
                         else {
                             // 正在（后台）下载的这一包：显示进度，点一下把下载对话框叫回来
                             val gate by Models.gate.collectAsState()
                             val g = gate?.takeIf { it.phase == "downloading" && (it.id == p.id || it.ids?.contains(p.id) == true) }
                             if (g != null) FgButton("${if (g.total > 0) Math.round(g.done * 100f / g.total) else 0}%", { Models.showGate() }, small = true)
-                            else FgButton(t("models.get"), { scope.launch { if (Models.ensurePack(p.id) != Answer.Cancelled) Strategy.adopt(p.id) } }, small = true)
+                            else FgButton(t("models.get") + if (p.bytes > 0) " · " + fmtBytes(p.bytes) else "", { scope.launch { if (Models.ensurePack(p.id) != Answer.Cancelled) Strategy.adopt(p.id) } }, small = true)
                         }
                     }
                 }
@@ -328,7 +329,19 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                     }
                 })
                 val b = backup
-                SettingRow(t("settings.backupTitle"), bkSummary, info = t("settings.backupInfo"), below = if (b?.configured == true) ({
+                // 先添加备份方式；自动备份、保留份数在有目标之后才出现（设计审查 A13.7）
+                SettingRow(t("settings.backupTargets"), t("settings.backupTargetsDesc")) { FgButton(t("settings.backupAddTarget"), { bkForm = BkForm() }, small = true, enabled = bkBusy == null) }
+                (b?.targets ?: emptyList()).forEach { tg ->
+                    SettingRow(tg.name, "Cloudflare R2 · ${tg.bucket}", below = {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            StateDot(if (tg.lastError != null) t("settings.backupErrored") else if (tg.lastOk > 0) t("settings.backupLast", "when" to fmtWhen(tg.lastOk)) else t("settings.backupReady"), tg.lastError == null)
+                            Spacer(Modifier.weight(1f))
+                            IconBtn(Icons.EDIT, t("settings.backupEdit"), { bkForm = BkForm(tg.id, tg.name, tg.account, tg.bucket, tg.accessKey, "", tg.hasSecret) }, enabled = bkBusy == null, plain = true, size = 32.dp, tint = c.ash)
+                            IconBtn(Icons.REMOVE, t("settings.backupRemove"), { bkRemoving = tg }, enabled = bkBusy == null, plain = true, size = 32.dp, tint = c.ash)
+                        }
+                    })
+                }
+                if (b?.configured == true) SettingRow(t("settings.backupTitle"), bkSummary, info = t("settings.backupInfo"), below = ({
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FgButton(if (bkBusy == "now") t("settings.backupRunning") else t("settings.backupNow"), {
                             scope.launch { bkBusy = "now"; bkMsg = null; try { Backup.now(); bkMsg = t("settings.backupDone") } catch (e: Exception) { bkMsg = t("settings.backupFailed", "error" to e.message); Backup.refresh() }; bkBusy = null }
@@ -338,22 +351,11 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                             if (l.size == 1) bkConfirm = l[0] else if (l.size > 1) bkPick = true
                         }, small = true, enabled = bkBusy == null)
                     }
-                }) else null) {
-                    FgSwitch(b?.configured == true && b.enabled, { scope.launch { bkBusy = "toggle"; runCatching { Backup.setOptions(enabled = !(b?.enabled ?: false)) }.onFailure { bkMsg = it.message }; bkBusy = null } }, t("settings.backupAuto"), enabled = b?.configured == true && bkBusy == null)
+                })) {
+                    FgSwitch(b.enabled, { scope.launch { bkBusy = "toggle"; runCatching { Backup.setOptions(enabled = !b.enabled) }.onFailure { bkMsg = it.message }; bkBusy = null } }, t("settings.backupAuto"), enabled = bkBusy == null)
                 }
-                SettingRow(t("settings.backupKeep"), t("settings.backupKeepHint")) {
-                    Stepper(b?.keep ?: 30, { n -> scope.launch { runCatching { Backup.setOptions(keep = n) }.onFailure { bkMsg = it.message } } }, t("settings.backupKeep"), enabled = b?.configured == true)
-                }
-                SettingRow(t("settings.backupTargets"), t("settings.backupTargetsDesc")) { FgButton(t("settings.backupAddTarget"), { bkForm = BkForm() }, small = true, enabled = bkBusy == null) }
-                (b?.targets ?: emptyList()).forEach { tg ->
-                    SettingRow(tg.name, "Cloudflare R2 · ${tg.bucket}", below = {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            StateDot(if (tg.lastError != null) t("settings.backupErrored") else if (tg.lastOk > 0) t("settings.backupLast", "when" to fmtWhen(tg.lastOk)) else t("settings.backupReady"), tg.lastError == null)
-                            Spacer(Modifier.weight(1f))
-                            IconBtn(Icons.EDIT, t("settings.backupEdit"), { bkForm = BkForm(tg.id, tg.name, tg.account, tg.bucket, tg.accessKey, "", tg.hasSecret) }, enabled = bkBusy == null)
-                            IconBtn(Icons.REMOVE, t("settings.backupRemove"), { bkRemoving = tg }, enabled = bkBusy == null)
-                        }
-                    })
+                if (b?.configured == true) SettingRow(t("settings.backupKeep"), t("settings.backupKeepHint")) {
+                    Stepper(b.keep, { n -> scope.launch { runCatching { Backup.setOptions(keep = n) }.onFailure { bkMsg = it.message } } }, t("settings.backupKeep"))
                 }
             }
         }
@@ -366,8 +368,9 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                             StateDot(if (!sh.enabled) t("settings.nasDisabled") else if (sh.connected) t("settings.nasConnected") else if (nasBusy == sh.id) t("settings.nasConnecting") else t("settings.nasOffline"), sh.enabled && sh.connected)
                             Spacer(Modifier.weight(1f))
                             FgButton(t("settings.nasNewProject"), { scope.launch { if (Actions.newProjectFromDialog(sh.id)) Toasts.show(t("android.settings.projectMade")) } }, small = true, enabled = sh.enabled)
-                            IconBtn(Icons.EDIT, t("settings.nasEdit"), { nasForm = NasForm(sh.id, sh.name, sh.host, sh.user, "", true, editingUser = sh.user, editingHost = sh.host) }, enabled = nasBusy != sh.id)
-                            IconBtn(Icons.REMOVE, t("settings.nasRemove"), { nasRemoving = sh }, enabled = nasBusy != sh.id)
+                            // 行内图标钮没有灰圆盘（设计审查 A13.4）
+                            IconBtn(Icons.EDIT, t("settings.nasEdit"), { nasForm = NasForm(sh.id, sh.name, sh.host, sh.user, "", true, editingUser = sh.user, editingHost = sh.host) }, enabled = nasBusy != sh.id, plain = true, size = 32.dp, tint = c.ash)
+                            IconBtn(Icons.REMOVE, t("settings.nasRemove"), { nasRemoving = sh }, enabled = nasBusy != sh.id, plain = true, size = 32.dp, tint = c.ash)
                         }
                     }) {
                         FgSwitch(sh.enabled, { v -> scope.launch { nasBusy = sh.id; nasMsg = null; runCatching { Nas.setEnabled(sh.id, v) }.onFailure { nasMsg = sh.id to (it.message ?: "") }; nasBusy = null } }, t("settings.nasEnabled"), enabled = nasBusy != sh.id)
@@ -388,8 +391,9 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                     androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(com.fleetinggleam.android.R.drawable.app_icon), null, Modifier.size(64.dp).clip(RoundedCornerShape(16.dp)))
                     Text(t("brand.name"), style = Type.title.copy(color = c.ink), modifier = Modifier.padding(top = 10.dp))
                     if (zh) Text(t("brand.latin"), style = Type.monoSmall.copy(color = c.ash))
-                    Text(t("brand.tagline"), style = Type.rowDesc.copy(color = c.ash), textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.padding(top = 6.dp))
-                    Text(t("settings.aboutIntro"), style = Type.body.copy(color = c.ink), textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.padding(top = 12.dp))
+                    Text(t("brand.tagline"), style = Type.small.copy(color = c.ash), textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.padding(top = 6.dp))
+                    // 介绍段：灰、左对齐、最多三行（设计审查 A13.9）
+                    Text(t("settings.aboutIntro"), style = Type.body.copy(color = c.ash), maxLines = 3, overflow = com.fleetinggleam.android.ui.theme.Ellipsis, modifier = Modifier.padding(top = 12.dp).fillMaxWidth())
                 }
                 SettingGroup(t("settings.aboutLinks")) {
                     // (图标, 标题 to 说明, 地址, 是否在应用内半屏看)
@@ -410,6 +414,15 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                 }
             }
         }
+    }
+    // ---- 浮层：分区页的玻璃顶栏（‹ 设置 · 分区名）
+    if (section != null) androidx.compose.runtime.CompositionLocalProvider(com.fleetinggleam.android.ui.components.LocalBackdrop provides backdrop) {
+        com.fleetinggleam.android.ui.components.GlassBar(Modifier.align(Alignment.TopCenter).onGloballyPositioned { barHeight = it.size.height }) {
+            Column(Modifier.statusBarsPadding()) {
+                com.fleetinggleam.android.ui.components.NavBar(if (section == "data") t("android.settings.modelsStorage") else sections.firstOrNull { it.first == section }?.second ?: "", t("settings.title"), { section = null })
+            }
+        }
+    }
     }
     }
 

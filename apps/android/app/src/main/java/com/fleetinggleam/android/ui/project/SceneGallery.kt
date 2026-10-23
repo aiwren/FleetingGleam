@@ -26,6 +26,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.foundation.layout.Column
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -50,8 +52,10 @@ import java.io.File
  * 点一个就把照片墙筛到它、回到照片。
  */
 @Composable
-fun SceneGallery(project: Project, data: CullData, cull: CullState, describing: Progress?, canDescribe: Boolean, onDescribe: () -> Unit, bottomPad: Dp) {
+fun SceneGallery(project: Project, data: CullData, cull: CullState, describing: Progress?, canDescribe: Boolean, onDescribe: () -> Unit, topPad: Dp, bottomPad: Dp) {
     val c = LocalFg.current
+    // 导航在项目页的玻璃顶栏里（‹ 项目名 · 场景，设计审查 A11.3）；这里只有网格
+    Column(Modifier.fillMaxSize()) {
     val all by Session.photos.collectAsState()
     val decisions by Session.decisions.collectAsState()
     val texts by Scenes.texts.collectAsState()
@@ -60,20 +64,15 @@ fun SceneGallery(project: Project, data: CullData, cull: CullState, describing: 
         all.filter { p -> (cull.mode == "all" || decisions[p.path]?.state == cull.mode) && (cull.personFilter == null || p.people.contains(cull.personFilter)) }
             .groupBy { it.scene }.map { (id, ps) -> Triple(id, ps.sortedByDescending { it.score }, texts[id] ?: "") }.sortedByDescending { it.second.size }
     }
-    LazyVerticalGrid(GridCells.Fixed(2), contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = bottomPad), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxSize()) {
-        item(span = { GridItemSpan(2) }) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(t("cull.scenes"), style = Type.title.copy(color = c.ink))
-                Text("${groups.size}", style = Type.mono.copy(color = c.ash), modifier = Modifier.padding(start = 8.dp).weight(1f))
-                if (describing != null) Text(t("cull.describing", "done" to describing.done, "total" to describing.total), style = Type.monoSmall.copy(color = c.ash))
-                else if (canDescribe) FgButton(t("cull.describe"), onDescribe, small = true)
-            }
-        }
+    LazyVerticalGrid(GridCells.Fixed(2), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = topPad + 8.dp, bottom = bottomPad), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.fillMaxSize()) {
         itemsIndexed(groups, key = { _, g -> g.first }) { i, (id, photos, text) ->
             val on = cull.sceneFilter == id
-            Column(Modifier.riseIn(i).clip(RoundedCornerShape(14.dp)).border(2.dp, if (on) c.ink else Color.Transparent, RoundedCornerShape(14.dp))
-                .clickable { cull.sceneFilter = id; cull.sceneView = false }) {
-                Box(Modifier.fillMaxWidth().aspectRatio(1.25f).clip(RoundedCornerShape(12.dp))) {
+            // 卡只一层圆角 10；选中 = 画在外侧 2dp 的墨色描边，不嵌套（A11.1）
+            Column(Modifier.riseIn(i).then(if (on) Modifier.drawBehind {
+                val o = 2.dp.toPx()
+                drawRoundRect(c.ink, topLeft = androidx.compose.ui.geometry.Offset(-o * 2, -o * 2), size = androidx.compose.ui.geometry.Size(size.width + o * 4, size.height + o * 4), cornerRadius = androidx.compose.ui.geometry.CornerRadius(12.dp.toPx()), style = androidx.compose.ui.graphics.drawscope.Stroke(o))
+            } else Modifier).clickable { cull.sceneFilter = id; cull.sceneView = false }) {
+                Box(Modifier.fillMaxWidth().aspectRatio(1.25f).clip(RoundedCornerShape(10.dp))) {
                     AsyncImage(File(photos[0].thumb), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.5f to Color.Transparent, 1f to Color(0xB0000000))))
                     if (text.isNotEmpty()) Text(text, style = Type.rowDesc.copy(color = Color.White), maxLines = 2, overflow = Ellipsis, modifier = Modifier.align(Alignment.BottomStart).padding(start = 10.dp, end = 10.dp, bottom = 26.dp))
@@ -87,5 +86,6 @@ fun SceneGallery(project: Project, data: CullData, cull: CullState, describing: 
                 }
             }
         }
+    }
     }
 }

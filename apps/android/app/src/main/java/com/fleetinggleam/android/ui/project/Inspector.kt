@@ -69,69 +69,78 @@ fun stars(v: Float): Int = kotlin.math.ceil(v * 5).toInt().coerceIn(1, 5)
  */
 @Composable
 fun InspectorBody(photo: Photo, decision: Decision?, mates: List<Photo>, onDecide: (String?) -> Unit, onSelect: (String) -> Unit, dark: Boolean = false) {
-    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    val c = LocalFg.current
+    // 区块之间 16（设计审查 A10.5）；详细数据的摘要带名字、不再列一遍"综合"（A10.2）；人脸也是一行名字 · 值（A10.3）
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         PhotoVerdict(photo, decision, onDecide)
         if (mates.size > 1) Mates(photo, mates, onSelect)
-        Column(Modifier.clip(RoundedCornerShape(14.dp)).background(LocalFg.current.panel).border(1.dp, LocalFg.current.line, RoundedCornerShape(14.dp))) {
+        Column(Modifier.clip(RoundedCornerShape(14.dp)).background(c.panel).then(if (c.dark) Modifier.border(1.dp, c.line, RoundedCornerShape(14.dp)) else Modifier)) {
             Accordion("M2.5 12.5V8.5M6.5 12.5V4M10.5 12.5V6.5M14 12.5H1.5", t("inspector.details"),
-                "${photo.clipScore?.let { pct(it).toString() } ?: "—"} · ${photo.sysScore?.let { "%.2f".format(it) } ?: "—"}") {
-                Kv(listOf(
-                    t("inspector.overall") to "${pct(photo.score)}",
-                    t("inspector.local") to (photo.clipScore?.let { "${pct(it)}" } ?: "—"),
-                    t("inspector.system") to (photo.sysScore?.let { "%.2f".format(it) } ?: "—"),
-                    t("inspector.clip") to "%.1f%% / %.1f%%".format(photo.clippedHigh * 100, photo.clippedLow * 100),
-                ), mono = true)
+                "${t("inspector.local")} ${photo.clipScore?.let { pct(it).toString() } ?: "—"} · ${t("inspector.system")} ${photo.sysScore?.let { "%.2f".format(it) } ?: "—"}") {
+                Kv(buildList<Pair<String, Any>> {
+                    add(t("inspector.local") to (photo.clipScore?.let { "${pct(it)}" } ?: "—"))
+                    add(t("inspector.system") to (photo.sysScore?.let { "%.2f".format(it) } ?: "—"))
+                    add(t("inspector.clip") to "%.1f%% / %.1f%%".format(photo.clippedHigh * 100, photo.clippedLow * 100))
+                    if (photo.faceCount > 0) add(t("inspector.faces") to t("inspector.faceValue", "count" to photo.faceCount, "q" to (photo.faceMin?.let { "%.2f".format(it) } ?: "—")))
+                }, mono = true)
             }
-            Box(Modifier.fillMaxWidth().height(1.dp).background(LocalFg.current.line))
+            Box(Modifier.fillMaxWidth().height(0.5.dp).background(c.line))
             FileSection(photo)
         }
     }
 }
 
+/**
+ * 保留 / 待复查 / 淘汰三个钮，两端同一种选中态（设计审查 R13）：选中 = 实心（保留琥珀底、其余墨色底），未选 = surface 底、不描边；44dp、圆角 10。
+ * 再点一次自己标的 = 交还系统的建议。检查器、单张共用；大图里是玻璃胶囊。
+ */
+@Composable
+fun DecideTrio(decision: Decision?, onDecide: (String?) -> Unit, modifier: Modifier = Modifier) {
+    val c = LocalFg.current
+    val state = decision?.state ?: "review"
+    val manual = decision?.manual == true
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf("keep", "review", "reject").forEach { st ->
+            val on = state == st
+            val bg by androidx.compose.animation.animateColorAsState(if (on) (if (st == "keep") c.gleam else c.ink) else c.surface, Motion.fast(), label = "trioBg")
+            val fg = if (on) (if (st == "keep") c.gleamInk else c.onInk) else c.ink
+            Row(
+                Modifier.weight(1f).height(44.dp).clip(RoundedCornerShape(10.dp)).background(bg)
+                    .clickable { onDecide(if (on && manual) null else st) },
+                horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
+            ) {
+                StateIcon(st, fg, 13.dp)
+                Text(t("state.$st"), style = Type.label.copy(color = fg, fontWeight = FontWeight.SemiBold), modifier = Modifier.padding(start = 6.dp), maxLines = 1)
+            }
+        }
+    }
+}
+
 /** 判定：名字、星、保留 / 待复查 / 淘汰、理由、几条数据条（桌面端 PhotoVerdict）。 */
+/** 判定（设计审查 A10.1 / R2）：名字、综合分（24sp 等宽数字，不画星）+ "?"、三个判定钮、理由、几条数据条。 */
 @Composable
 fun PhotoVerdict(photo: Photo, decision: Decision?, onDecide: (String?) -> Unit) {
     val c = LocalFg.current
-    val state = decision?.state ?: "review"
     val reasons = decision?.reasons?.map { reasonText(it) }?.joinToString(if (I18n.isZh) "；" else "; ")
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(photo.name, style = Type.mono.copy(color = c.ink), maxLines = 1, modifier = Modifier.weight(1f, fill = false))
             if (photo.kind.isNotEmpty() && I18n.has("kind.${photo.kind}")) Text(t("kind.${photo.kind}"), style = Type.monoSmall.copy(color = c.ash),
                 modifier = Modifier.padding(start = 8.dp).clip(CircleShape).border(1.dp, c.line, CircleShape).padding(horizontal = 8.dp, vertical = 2.dp))
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            val n = stars(photo.score)
-            (0 until 5).forEach { i -> Star(i < n, 20.dp, color = if (i < n) c.gleam else c.ash, glow = false) }
+            Text("${pct(photo.score)}", style = Type.score.copy(color = c.ink))
+            Text(t("inspector.overall"), style = Type.small.copy(color = c.ash), modifier = Modifier.padding(start = 8.dp))
             InfoPop(t("inspector.overall"), t("inspector.scoreTip"))
-            Text("${pct(photo.score)}", style = Type.mono.copy(color = c.ash), modifier = Modifier.padding(start = 4.dp))
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("keep", "review", "reject").forEach { st ->
-                val on = state == st
-                val manual = decision?.manual == true
-                Row(
-                    Modifier.weight(1f).height(42.dp).clip(RoundedCornerShape(12.dp))
-                        .background(if (on) (if (st == "keep") c.gleam else c.ink) else c.surface)
-                        .border(1.dp, if (on) Color.Transparent else c.line, RoundedCornerShape(12.dp))
-                        // 点系统的建议 = 确认它；再点一次自己标的 = 去掉标记
-                        .clickable { onDecide(if (on && manual) null else st) },
-                    horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    val fg = if (on) (if (st == "keep") c.gleamInk else c.onInk) else c.ink
-                    StateIcon(st, fg, 13.dp)
-                    Text(t("state.$st"), style = Type.label.copy(color = fg, fontWeight = FontWeight.SemiBold), modifier = Modifier.padding(start = 6.dp), maxLines = 1)
-                }
-            }
-        }
+        DecideTrio(decision, onDecide, Modifier.padding(top = 4.dp))
         if (!reasons.isNullOrEmpty()) Text(reasons, style = Type.rowDesc.copy(color = c.ash))
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(Modifier.padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             MBar(t("inspector.sharp"), pct(photo.sharpScore))
             MBar(t("inspector.expo"), pct(photo.expoScore))
             photo.aiScore?.let { MBar(t("inspector.ai"), pct(it)) }
             photo.prefScore?.let { MBar(t("inspector.pref"), pct(it)) }
         }
-        if (photo.faceCount > 0) Text("${t("inspector.faces")} · ${t("inspector.faceValue", "count" to photo.faceCount, "q" to (photo.faceMin?.let { "%.2f".format(it) } ?: "—"))}", style = Type.rowDesc.copy(color = c.ash))
     }
 }
 
@@ -143,7 +152,7 @@ private fun MBar(label: String, value: Int) {
     LaunchedEffect(value) { a.animateTo(maxOf(2, value) / 100f, Motion.soft()) }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(label, style = Type.rowDesc.copy(color = c.ash), modifier = Modifier.width(76.dp), maxLines = 1)
-        Box(Modifier.weight(1f).height(5.dp).clip(CircleShape).background(c.surface2)) {
+        Box(Modifier.weight(1f).height(3.dp).clip(CircleShape).background(c.surface2)) {
             Box(Modifier.fillMaxHeight().fillMaxWidth(a.value).clip(CircleShape).background(c.ink))
         }
         Text("$value", style = Type.monoSmall.copy(color = c.ink), modifier = Modifier.width(34.dp).padding(start = 8.dp))
@@ -156,14 +165,14 @@ private fun Mates(photo: Photo, mates: List<Photo>, onSelect: (String) -> Unit) 
     val c = LocalFg.current
     Column {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(t("inspector.mates").uppercase(), style = Type.overline.copy(color = c.ash))
+            Text(t("inspector.mates"), style = Type.overline.copy(color = c.ash))
             Text("${mates.size}", style = Type.monoSmall.copy(color = c.ash), modifier = Modifier.padding(start = 6.dp))
         }
         Row(Modifier.padding(top = 8.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             mates.forEach { g ->
                 val cur = g.path == photo.path
-                Box(Modifier.size(54.dp).clip(RoundedCornerShape(8.dp)).border(2.dp, if (cur) c.ink else Color.Transparent, RoundedCornerShape(8.dp)).clickable { onSelect(g.path) }) {
-                    AsyncImage(File(g.thumb), null, Modifier.size(54.dp), contentScale = ContentScale.Crop)
+                Box(Modifier.size(56.dp).clip(RoundedCornerShape(6.dp)).border(2.dp, if (cur) c.ink else Color.Transparent, RoundedCornerShape(6.dp)).clickable { onSelect(g.path) }) {
+                    AsyncImage(File(g.thumb), null, Modifier.size(56.dp).graphicsLayer { alpha = if (cur) 1f else 0.6f }, contentScale = ContentScale.Crop)
                     if (g.groupBest) Box(Modifier.align(Alignment.TopEnd).padding(4.dp).size(7.dp).clip(CircleShape).background(c.gleam))
                 }
             }

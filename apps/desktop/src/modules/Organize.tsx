@@ -97,7 +97,7 @@ export default function Organize({ project, photos, decisions, onChanged }: {
       <button className="btn" onClick={() => setMenu((v) => !v)}>{t("organize.button")}</button>
       <AnimatePresence>
         {menu && (
-          <motion.div className="fmenu orgmenu" initial={{ opacity: 0, y: -6, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -4, scale: 0.98 }} transition={{ duration: 0.18, ease: EASE_OUT }}>
+          <motion.div className="fmenu orgmenu" initial={{ opacity: 0, y: -6, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -4, scale: 0.98 }} transition={{ duration: 0.16, ease: EASE_OUT }}>
             {items.map((it) => (
               <button key={it.key} className="orgitem" disabled={it.count === 0} onClick={it.run}>
                 <b>{it.title}</b><span className="ash">{it.count === 0 ? t("organize.none") : it.desc}</span>
