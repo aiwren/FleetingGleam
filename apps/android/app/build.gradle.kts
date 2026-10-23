@@ -10,6 +10,10 @@ plugins {
 // 仓库根目录（Cargo 工作区的根）
 val repoRoot = rootProject.projectDir.parentFile.parentFile
 val rustCrate = "fleetinggleam-android"
+// 内部版本号（build）：仓库的提交次数，每提交一次加一。系统的 versionCode 用它（覆盖安装要求递增），关于页显示成"0.1.0 (105)"
+val buildNumber: Int = runCatching {
+    providers.exec { commandLine("git", "-C", repoRoot.absolutePath, "rev-list", "--count", "HEAD") }.standardOutput.asText.get().trim().toInt()
+}.getOrDefault(1)
 val jniLibs = layout.projectDirectory.dir("src/main/jniLibs")
 val uniffiOut = layout.buildDirectory.dir("generated/uniffi/kotlin")
 // cargo 与 cargo-ndk 在 ~/.cargo/bin；Android Studio 启动的 Gradle 不一定带这个 PATH
@@ -25,7 +29,7 @@ android {
         // 假设：最低 Android 12（API 31）——玻璃材质要实时模糊，面向高端机；记在 docs/ROADMAP.md 阶段 B
         minSdk = 31
         targetSdk = 36
-        versionCode = 1
+        versionCode = buildNumber
         versionName = "0.1.0"
         ndk { abiFilters += listOf("arm64-v8a") }
     }
@@ -66,7 +70,11 @@ android {
     packaging {
         // 原生库在 APK 里压缩存放（34 MB 的核心库压完约 14 MB，APK 小一半）；代价是安装时解压一份到 lib/，装完多占约 34 MB。
         // 我们的包走 GitHub Release 直接下载，下载体积比安装体积更要紧。
-        jniLibs { useLegacyPackaging = true }
+        jniLibs {
+            useLegacyPackaging = true
+            // 高通 NPU 只用 HTP：DSP、GPU 后端和 ONNX Runtime 的 Java 绑定都用不上（核心库直接调 C 接口）
+            excludes += listOf("**/libonnxruntime4j_jni.so", "**/libQnnDsp*.so", "**/libQnnGpu.so")
+        }
     }
 }
 
@@ -161,6 +169,10 @@ dependencies {
     // 和核心库之间的 JSON（方法的参数与结果、事件载荷、projects.json）
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    // ONNX Runtime（带高通 QNN 执行器，1.28.0，与核心库编译时的 C 接口版本一致）和它拉进来的高通 QNN 运行库（2.42.0）：
+    // 核心库运行时加载 libonnxruntime.so；高通手机上 CLIP 跑在 NPU 上，别的手机 QNN 起不来就回落 CPU（见 onnx.rs / scorer.rs）。
+    // 许可：ONNX Runtime 是 MIT；QNN 运行库是高通的 AI Stack License，允许以目标代码形式随应用分发，不许单独分发或逆向（见 docs/THIRD_PARTY.md）
+    implementation("com.microsoft.onnxruntime:onnxruntime-android-qnn:1.28.0")
     // 悬浮标签栏的玻璃材质：对后面的内容做实时模糊（Android 12+；更早的系统退为半透明）
     implementation("dev.chrisbanes.haze:haze:1.6.10")
     implementation("dev.chrisbanes.haze:haze-materials:1.6.10")

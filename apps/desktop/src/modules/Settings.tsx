@@ -498,7 +498,7 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
                 ));
               })()}
               <Row label={t("settings.aboutVersion")}>
-                <span className="mono ash">{version ? `v${version}` : ""}</span>
+                <span className="mono ash">{version ? `v${version} (${__BUILD__})` : ""}</span>
               </Row>
             </Group>
           </motion.div>

@@ -117,7 +117,10 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
     var refFailed by remember { mutableStateOf(false) }
     var tasteBusy by remember { mutableStateOf(false) }
     var tasteMsg by remember { mutableStateOf<String?>(null) }
-    val version = remember { runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "dev" }
+    // "0.1.0 (105)"：括号里是内部版本号（build，仓库的提交次数），一眼分得清是不是最新的包
+    val version = remember {
+        runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).let { "${it.versionName} (${it.longVersionCode})" } }.getOrNull() ?: "dev"
+    }
     val list = rememberLazyListState()
     /** 打开的分区（null = 根页的分级列表）。 */
     var section by rememberSaveable { mutableStateOf<String?>(null) }
@@ -145,7 +148,7 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
     var nasMsg by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     val learnStatus = prefs?.let { if (it.labels == 0) t("settings.learnNone") else t("settings.learnStatus", "n" to it.labels, "k" to it.keeps) } ?: t("settings.learnNone")
-    val clipLabel = info?.let { i -> if (i.clip == null) t("settings.off") else if (i.clip.startsWith("gpu") || i.clip.startsWith("coreml") || i.clip.startsWith("nnapi")) t("android.settings.clipNpu") else t("settings.clipCpu") } ?: "—"
+    val clipLabel = info?.let { i -> if (i.clip == null) t("settings.off") else if (i.clip.startsWith("gpu") || i.clip.startsWith("coreml") || i.clip.startsWith("nnapi") || i.clip.startsWith("qnn")) t("android.settings.clipNpu") else t("settings.clipCpu") } ?: "—"
     val bkSummary = run {
         val b = backup
         when {

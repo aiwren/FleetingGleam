@@ -44,5 +44,9 @@ libc.workspace = true
 # pyke 只提供带 NNAPI 的 aarch64-linux-android 预编译包
 ort = { workspace = true, features = ["nnapi"] }
 
+[features]
+# 高通 NPU（QNN）：ONNX Runtime 改成运行时加载（带 QNN 的 libonnxruntime.so 由宿主随应用带上），安卓上的加速器候选从 NNAPI 换成 QNN 的 HTP。
+qnn = ["ort/qnn", "ort/load-dynamic"]
+
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

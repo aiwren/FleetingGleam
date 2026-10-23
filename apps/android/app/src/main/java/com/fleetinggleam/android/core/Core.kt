@@ -60,6 +60,13 @@ object Core {
                 "data" to data.absolutePath, "thumbs" to thumbs.absolutePath, "models" to models.absolutePath, "scratch" to scratch.absolutePath,
                 "proxy" to proxyOf(cm?.getLinkProperties(cm.activeNetwork)), "version" to version,
             )
+            // ONNX Runtime 由核心库运行时加载（带高通 QNN 的那份，随应用装在原生库目录里）；高通 NPU 的驱动（Skel）由 DSP 那边按
+            // ADSP_LIBRARY_PATH 找，也指向原生库目录（安装时解压出来的真实文件，见 build.gradle.kts 的 useLegacyPackaging）
+            val libDir = ctx.applicationInfo.nativeLibraryDir
+            runCatching {
+                android.system.Os.setenv("ORT_DYLIB_PATH", "$libDir/libonnxruntime.so", true)
+                android.system.Os.setenv("ADSP_LIBRARY_PATH", "$libDir;/vendor/dsp/cdsp;/vendor/lib/rfsa/adsp;/system/lib/rfsa/adsp;/dsp", true)
+            }
             // 核心库的解码交给系统：按需缩放、分块解码，两亿像素的照片也不整张进内存；顺带认识 HEIC / AVIF
             uniffi.fleetinggleam.setImageHelper(AndroidImages)
             val e = FgEngine(config.toString(), object : EventSink {

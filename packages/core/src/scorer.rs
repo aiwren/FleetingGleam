@@ -351,7 +351,12 @@ impl ClipScorer {
             // 平台加速器（Android 的 NNAPI）上的一份，验过和 CPU 一致才用；否则 CPU 上的几份
             let pool = match if accel { spec.build_accelerated() } else { None } {
                 Some(p) => {
-                    backend = if backend == "cpu-fp16" { "nnapi-fp16" } else { "nnapi-int8" };
+                    backend = match (crate::onnx::accelerator(), backend == "cpu-fp16") {
+                        ("qnn", true) => "qnn-fp16",
+                        ("qnn", false) => "qnn-int8",
+                        (_, true) => "nnapi-fp16",
+                        _ => "nnapi-int8",
+                    };
                     p
                 }
                 None => spec.build(n).map_err(|e| format!("load CLIP model: {e}"))?,

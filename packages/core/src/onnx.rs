@@ -14,6 +14,8 @@ use ort::session::Session;
 pub fn accelerator() -> &'static str {
     if cfg!(target_os = "macos") {
         "coreml"
+    } else if cfg!(all(target_os = "android", feature = "qnn")) {
+        "qnn"
     } else if cfg!(target_os = "android") {
         "nnapi"
     } else {
@@ -80,6 +82,10 @@ pub fn small_copies() -> usize {
 /// 一个会话构建器；`threads` 是算子内并行的线程数（None = ONNX Runtime 自己定）。
 pub fn builder(threads: Option<usize>) -> Result<SessionBuilder, String> {
     let mut b = Session::builder().map_err(|e| e.to_string())?;
+    // 推理线程等活时不空转（`FG_SPIN=1` 恢复 ONNX Runtime 的默认）：分析时十几个会话同时在，空转的线程把解码这些真正要算的活挤掉
+    if std::env::var("FG_SPIN").map_or(true, |v| v != "1") {
+        b = b.with_intra_op_spinning(false).map_err(|e| e.to_string())?.with_inter_op_spinning(false).map_err(|e| e.to_string())?;
+    }
     if let Some(n) = threads {
         b = b.with_intra_threads(n).map_err(|e| e.to_string())?;
     }
@@ -112,10 +118,27 @@ pub fn load_accelerated(path: &Path, threads: Option<usize>) -> Result<Session, 
     {
         b = b.with_execution_providers([ort::ep::CoreML::default().build()]).map_err(|e| e.to_string())?;
     }
-    #[cfg(target_os = "android")]
+    #[cfg(all(target_os = "android", not(feature = "qnn")))]
     {
         // NCHW 省掉模型前后的转置；fp16 松弛不开（分数要和别的平台一致）
         b = b.with_execution_providers([ort::ep::NNAPI::default().with_nchw(true).build()]).map_err(|e| e.to_string())?;
+    }
+    #[cfg(all(target_os = "android", feature = "qnn"))]
+    {
+        // 高通 NPU（HTP）：float16 精度跑 float16 的模型；不是高通芯片、或运行库加载失败时这里报错，调用方回落 CPU。
+        // NPU 只吃固定形状：CLIP 导出时四个维度都是动态的（批、通道、高、宽），固定成它实际用的 1 x 3 x 224 x 224，结果不变；
+        // 别的模型没有这些名字的维度，覆盖不起作用
+        for (dim, v) in [("batch_size", 1), ("num_channels", 3), ("height", 224), ("width", 224)] {
+            b = b.with_dimension_override(dim, v).map_err(|e| e.to_string())?;
+        }
+        b = b
+            .with_execution_providers([ort::ep::QNN::default()
+                .with_backend_path("libQnnHtp.so")
+                .with_htp_fp16_precision(true)
+                .with_performance_mode(ort::ep::qnn::PerformanceMode::Burst)
+                .build()
+                .error_on_failure()])
+            .map_err(|e| e.to_string())?;
     }
     match inside_app(path) {
         Some(bytes) => b.commit_from_memory(bytes).map_err(|e| format!("{}: {e}", path.display())),
@@ -143,12 +166,12 @@ pub fn verified(key: &str, check: impl FnOnce() -> Result<bool, String>) -> bool
             true
         }
         Ok(false) => {
-            eprintln!("{} disagrees with the CPU on {key}: not used", accelerator());
+            crate::platform::log(&format!("{} disagrees with the CPU on {key}: not used", accelerator()));
             let _ = std::fs::write(&bad_marker, b"bad");
             false
         }
         Err(e) => {
-            eprintln!("{} not used for {key}: {e}", accelerator());
+            crate::platform::log(&format!("{} not used for {key}: {e}", accelerator()));
             false
         }
     }

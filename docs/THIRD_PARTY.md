@@ -34,6 +34,8 @@
 |---|---|---|
 | [Tauri](https://tauri.app) 2 | 桌面应用框架 | MIT / Apache-2.0 |
 | [ort](https://github.com/pykeio/ort) | ONNX Runtime 的 Rust 封装 | MIT / Apache-2.0 |
+| [ONNX Runtime](https://github.com/microsoft/onnxruntime)（Android 上用微软发布的带 QNN 执行器的 `onnxruntime-android-qnn` 1.28.0） | 模型推理 | MIT |
+| [Qualcomm QNN 运行库](https://central.sonatype.com/artifact/com.qualcomm.qti/qnn-runtime)（`qnn-runtime` 2.42.0，随上面那个包进来） | Android 上高通手机的 NPU（HTP）推理 | 高通 AI Stack License（闭源；允许以目标代码形式随应用分发，不许单独分发、逆向；附带 NOTICE） |
 | [tokenizers](https://github.com/huggingface/tokenizers) | 文本分词 | Apache-2.0 |
 | [smb2](https://github.com/vdavid/smb2) | 纯 Rust 的 SMB2/3 客户端（NAS 直连） | MIT / Apache-2.0 |
 | [UniFFI](https://github.com/mozilla/uniffi-rs) | Rust 核心给 Kotlin 的绑定（Android） | MPL-2.0 |
@@ -53,6 +55,8 @@ cd apps/desktop/src-tauri && cargo tree     # Rust 依赖树（用 cargo-license
 ```
 
 macOS 上的 Vision、ImageIO、Metal Performance Shaders Graph 是系统自带的框架，通过 Swift 调用，不随应用分发。
+
+Android 安装包里的高通 QNN 运行库（`libQnnHtp*.so`、`libQnnSystem.so`）是高通的闭源二进制，不在本仓库里，构建时由 Gradle 从 Maven Central 取得；它们只在高通芯片上被加载，别的手机上不用。**待作者决定**：本项目以 AGPL-3.0 发布，随应用分发闭源的高通运行库并与之动态链接，通常需要作者在许可证里加一条附加许可（AGPL 第 7 条）明确允许；仓库公开前要定下来。
 
 ## 示例照片
 

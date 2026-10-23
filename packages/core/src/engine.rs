@@ -2283,6 +2283,47 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// 手机上：同一批照片先只用 CPU、再让加速器（高通 NPU）参与，逐张比 CLIP 向量与分数，最后比保留 / 待复查 / 淘汰的判定。
+    /// `FG_LIBRARY` + `FG_MODELS`（同 `device_scan_throughput`）。加速器在这台手机上没被选中时两遍都是 CPU，结果当然一样。
+    #[test]
+    #[ignore = "on a device: FG_LIBRARY + FG_MODELS"]
+    fn device_accelerator_matches_cpu() {
+        let (Ok(lib), Ok(models)) = (std::env::var("FG_LIBRARY"), std::env::var("FG_MODELS")) else { return };
+        crate::platform::set_vision(Box::new(crate::facepipe::Factory));
+        let root = std::env::temp_dir().join(format!("fg-device-match-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        crate::platform::set_scratch_dir(root.join("scratch"));
+        let args = ScanArgs { key: "m".into(), dirs: vec![lib.clone()], quality: Some("fast".into()), eye_method: Some("mediapipe".into()), force: true, ..Default::default() };
+        let run = |tag: &str| {
+            let e = Engine::new(Paths { data: root.join(tag).join("data"), thumbs: root.join(tag).join("thumbs"), models: PathBuf::from(&models), downloads: PathBuf::from(&models) }, Box::new(NoEvents), "match");
+            let photos = e.scan_project(args.clone()).expect("scan");
+            let decided = e.decide_photos("m", 1.0, None, false, &HashMap::new()).expect("decide");
+            (photos, decided)
+        };
+        // SAFETY: 测试里单线程地设置环境变量，引擎读它的时候没有别的线程在写
+        unsafe { std::env::set_var("FG_NO_ACCEL", "1") };
+        let (cpu, cpu_d) = run("cpu");
+        unsafe { std::env::remove_var("FG_NO_ACCEL") };
+        let (acc, acc_d) = run("acc");
+        let by: HashMap<&str, &Photo> = cpu.iter().map(|p| (p.path.as_str(), p)).collect();
+        let (mut min_cos, mut max_score) = (1.0f32, 0.0f32);
+        for p in &acc {
+            let q = by[p.path.as_str()];
+            if !p.embedding.is_empty() && !q.embedding.is_empty() {
+                min_cos = min_cos.min(crate::onnx::cosine(&p.embedding, &q.embedding));
+            }
+            max_score = max_score.max((p.score - q.score).abs());
+        }
+        let same_state = acc_d.iter().filter(|(k, d)| cpu_d.get(*k).map(|c| c.state == d.state).unwrap_or(false)).count();
+        let same_group = acc.iter().filter(|p| by[p.path.as_str()].group == p.group).count();
+        println!(
+            "{} photos: CLIP cosine min {min_cos:.6}; score diff max {max_score:.4}; same keep/review/reject {same_state}/{}; same group {same_group}/{}",
+            acc.len(), acc_d.len(), acc.len()
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(min_cos > 0.995, "accelerator embeddings drift from the CPU");
+    }
+
     /// 边分析边判：带 `live` 的分析在结束前就发过 "scan-decide"，每张照片都有过一个判定，而且每条的判定值合法。
     #[test]
     fn photos_are_judged_while_the_scan_runs() {

@@ -3,10 +3,15 @@ import react from "@vitejs/plugin-react";
 // @ts-expect-error type error without @types/node package
 import process from "node:process";
 const host = process.env.TAURI_DEV_HOST;
+// 内部版本号（build）：仓库的提交次数，关于页显示成"0.1.0 (105)"，和 Android 的 versionCode 同一个数
+// @ts-expect-error type error without @types/node package
+import { execSync } from "node:child_process";
+const buildNumber = (() => { try { return String(execSync("git rev-list --count HEAD").toString().trim()); } catch { return "dev"; } })();
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => ({
   plugins: [react()],
+  define: { __BUILD__: JSON.stringify(buildNumber) },
 
   // Production bundle: no source maps, no console output, no comments, minified names. The decision logic that lives in the front end
   // is therefore not readable as source; the scoring itself is compiled Rust.
