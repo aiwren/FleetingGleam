@@ -47,6 +47,12 @@ struct Slot {
 
 /// A CLIP vision encoder running on the GPU. Pictures that arrive while the GPU is busy wait in a queue, and the next run takes up to four of
 /// them at once (see `embed`), which is how many threads feeding it keep it busy without any of them waiting for a full batch.
+///
+/// 2026-10-23 为了把它推快试过、都没留下的做法（数字见 CHANGELOG"分析速度"一节）：批上限 8 / 16——单测里 GPU 每张从 3.8 降到 3.1–3.5 ms，
+/// 可真实分析时批常凑不满、补零图白算，整条流水线反而略慢；一两条专职的高优先级线程来提交——无竞争时快一倍，十条分析线程占满核时
+/// 唤醒它反而更慢；两批同时在飞（同一个 MPSGraph 可执行图并发 run）——不安全，十六条线程时有照片拿到了别人的向量；输入直接送 float16——
+/// 向量逐位相同、GPU 时间少三成，但真实分析时 GPU 只忙三成，看不出效果；MPSGraph 一级优化——没有稳定差别。真正省下时间的是预处理
+/// （`scorer::preprocess_for` 换了缩放器）。
 pub struct GpuClip {
     #[cfg(target_os = "macos")]
     handle: *mut std::ffi::c_void,
@@ -449,12 +455,14 @@ mod tests {
                 println!("  input {i}: cosine GPU vs CPU {s:.6}");
             }
             assert!(worst > 0.999, "{worst}");
+            // 预热：凑一批四张跑一遍，别把第一次的开销算进计时
+            std::thread::scope(|sc| { for _ in 0..8 { sc.spawn(|| { gpu.embed(&inputs[0]).unwrap(); }); } });
             let t = Instant::now();
             for _ in 0..10 { gpu.embed(&inputs[0]).unwrap(); }
             println!("  GPU: {:.1} ms a picture, one thread", t.elapsed().as_secs_f64() * 100.0);
             let t = Instant::now();
-            std::thread::scope(|sc| { for _ in 0..8 { sc.spawn(|| for _ in 0..4 { gpu.embed(&inputs[0]).unwrap(); }); } });
-            println!("  GPU: {:.1} ms a picture, 8 threads", t.elapsed().as_secs_f64() * 1000.0 / 32.0);
+            std::thread::scope(|sc| { for _ in 0..8 { sc.spawn(|| for _ in 0..8 { gpu.embed(&inputs[0]).unwrap(); }); } });
+            println!("  GPU: {:.1} ms a picture, 8 threads", t.elapsed().as_secs_f64() * 1000.0 / 64.0);
             // many threads at once: runs of up to four pictures, and every thread gets the embedding of its own picture
             let each: Vec<Vec<f32>> = (0..inputs.len()).map(|i| gpu.embed(&inputs[i]).unwrap()).collect();
             let t = Instant::now();
@@ -474,6 +482,76 @@ mod tests {
             println!("  CPU (ONNX Runtime): {:.1} ms a picture", t.elapsed().as_secs_f64() * 1000.0 / 3.0);
             let _ = OrtTensor::<f32>::from_array(([1usize], vec![0f32])).is_ok();
         }
+    }
+
+    /// 一张照片的向量不能取决于它和谁一批：同一批真实照片，单张逐一跑和十几条线程一起挤成四张一批跑，每张余弦 > 0.9999。
+    /// `FG_PHOTOS=<文件夹> cargo test -p fleetinggleam --lib embeddings_do_not_depend_on_the_batch -- --ignored --nocapture`。
+    #[test]
+    #[ignore = "needs models/ and FG_PHOTOS"]
+    fn embeddings_do_not_depend_on_the_batch() {
+        let Ok(dir) = std::env::var("FG_PHOTOS") else { return };
+        let models = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../models");
+        let mut photos: Vec<std::path::PathBuf> = std::fs::read_dir(dir).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().map_or(false, |e| e == "jpg")).collect();
+        photos.sort();
+        photos.truncate(32);
+        let inputs: Vec<Vec<f32>> = photos.iter().map(|p| fg_core::scorer::preprocess(&fg_core::analyze::load_for_embedding(p).unwrap())).collect();
+        let cos = |a: &[f32], b: &[f32]| { let d: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum(); d / (a.iter().map(|x| x * x).sum::<f32>().sqrt() * b.iter().map(|x| x * x).sum::<f32>().sqrt()) };
+        for file in ["clip_vit_b32_vision_fp16.onnx", "clip_vit_l14_vision_fp16.onnx"] {
+            let gpu = GpuClip::from_onnx(&std::fs::read(models.join(file)).unwrap()).unwrap();
+            let alone: Vec<Vec<f32>> = inputs.iter().map(|x| gpu.embed(x).unwrap()).collect();
+            let together: Mutex<Vec<Option<Vec<f32>>>> = Mutex::new(vec![None; inputs.len()]);
+            std::thread::scope(|sc| {
+                for (i, x) in inputs.iter().enumerate() {
+                    let (gpu, together) = (&gpu, &together);
+                    sc.spawn(move || { let e = gpu.embed(x).unwrap(); together.lock().unwrap()[i] = Some(e); });
+                }
+            });
+            let together = together.into_inner().unwrap();
+            let worst = alone.iter().zip(&together).map(|(a, b)| cos(a, b.as_ref().unwrap())).fold(1.0f32, f32::min);
+            println!("{file}: {} photos: worst cosine alone vs in a batch {worst:.6}", inputs.len());
+            assert!(worst > 0.9999, "{file}: {worst}");
+        }
+    }
+
+    /// 预处理换了缩放器，向量要和老的一样：同一批真实照片，老预处理（image crate 的 CatmullRom）和新预处理（fast_image_resize 的 CatmullRom）
+    /// 喂同一个网络（GPU 上的 B/32 与 L/14、CPU 上的 B/32），余弦 > 0.9999；int8 模型（Android）的输入逐位不变。顺便量两者每张的 CPU 耗时。
+    /// `FG_PHOTOS=<文件夹> cargo test -p fleetinggleam --lib the_faster_preprocessing_gives_the_same_embedding -- --ignored --nocapture`。
+    #[test]
+    #[ignore = "needs models/ and FG_PHOTOS"]
+    fn the_faster_preprocessing_gives_the_same_embedding() {
+        use std::time::Instant;
+        let Ok(dir) = std::env::var("FG_PHOTOS") else { return };
+        let models = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../models");
+        let mut photos: Vec<std::path::PathBuf> = std::fs::read_dir(dir).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().map_or(false, |e| e == "jpg")).collect();
+        photos.sort();
+        photos.truncate(40);
+        let imgs: Vec<image::DynamicImage> = photos.iter().map(|p| fg_core::analyze::load_for_embedding(p).unwrap()).collect();
+        let pre = |file: &str| -> (Vec<Vec<f32>>, f64) {
+            let t = Instant::now();
+            let v: Vec<Vec<f32>> = imgs.iter().map(|i| fg_core::scorer::preprocess_for(i, file)).collect();
+            (v, t.elapsed().as_secs_f64() * 1000.0 / imgs.len() as f64)
+        };
+        let (old, old_ms) = pre("clip_vit_b32_vision_int8.onnx");
+        let (new, new_ms) = pre("clip_vit_b32_vision_fp16.onnx");
+        let pix: f32 = old.iter().zip(&new).map(|(a, b)| a.iter().zip(b).map(|(x, y)| (x - y).abs()).sum::<f32>() / a.len() as f32).fold(0.0, f32::max);
+        println!("{} photos: preprocessing {old_ms:.1} ms (image crate) vs {new_ms:.1} ms (fast_image_resize); worst mean |Δinput| {pix:.4} (in normalised units)", imgs.len());
+        let cos = |a: &[f32], b: &[f32]| { let d: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum(); d / (a.iter().map(|x| x * x).sum::<f32>().sqrt() * b.iter().map(|x| x * x).sum::<f32>().sqrt()) };
+        for file in ["clip_vit_b32_vision_fp16.onnx", "clip_vit_l14_vision_fp16.onnx"] {
+            let gpu = GpuClip::from_onnx(&std::fs::read(models.join(file)).unwrap()).unwrap();
+            let worst = old.iter().zip(&new).map(|(a, b)| cos(&gpu.embed(a).unwrap(), &gpu.embed(b).unwrap())).fold(1.0f32, f32::min);
+            println!("{file} (GPU): worst cosine old vs new preprocessing {worst:.6}");
+            assert!(worst > 0.9999, "{file}: {worst}");
+        }
+        // float16 模型在 CPU 上（Mac 没有 GPU 编码器时的退路）也一样
+        use ort::session::Session;
+        let mut cpu = Session::builder().unwrap().commit_from_bytes_for_test(&std::fs::read(models.join("clip_vit_b32_vision_fp16.onnx")).unwrap());
+        let worst = old.iter().zip(&new).take(12).map(|(a, b)| cos(&cpu.run_one(a), &cpu.run_one(b))).fold(1.0f32, f32::min);
+        println!("clip_vit_b32_vision_fp16.onnx (CPU): worst cosine old vs new preprocessing {worst:.6}");
+        assert!(worst > 0.9999, "fp16 CPU: {worst}");
+        // Android 走 CPU 上的 int8 模型：它的输入必须和以前逐位相同（快的缩放器在它上面余弦只有 0.984，所以 int8 留在老路上）
+        let again: Vec<Vec<f32>> = imgs.iter().map(fg_core::scorer::preprocess).collect();
+        assert!(old.iter().zip(&again).all(|(a, b)| a == b), "the int8 model's input must not change");
+        println!("clip_vit_b32_vision_int8.onnx (CPU, the Android path): input unchanged, bit for bit");
     }
 
     /// An ONNX Runtime session on the CPU for the comparison above.
