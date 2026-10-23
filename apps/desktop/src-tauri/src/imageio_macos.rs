@@ -1,5 +1,8 @@
 //! 系统图像解码器（macOS）：ImageIO 边车 `fg-image`，给核心库的 `platform::SystemImages` 用。`image` crate 读不了的格式
 //! （HDR 增益图、HEIC / AVIF / JPEG XL / TIFF / 相机 RAW）都由它解。别的平台没有这个边车，这些格式就不提供。
+//! 分析用的缩放解码也走它的常驻进程（`fg-image serve`）。JPEG 还有一条硬件路径（VideoToolbox 整张解码 + GPU 缩放），和软件路径
+//! （ImageIO DCT 域缩放）并行分担、边车按代价调度；默认不开（`FG_IMAGE_HW=1` 开，`=2` 能走硬件的都走硬件）：M1 Max 上量过它省 CPU
+//! 但整条流水线不更快（墙在 CLIP 的 GPU 吞吐），而且两条路给的清晰度分偏差不同，混着用同一项目里的照片不在一个基准上，见 CHANGELOG。
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -59,7 +62,7 @@ struct InfoRow {
     hdr: bool,
 }
 
-/// 常驻解码边车（`fg-image serve`）的回复头。
+/// 常驻解码边车（`fg-image serve`）的回复头。`hw` 为真表示这张是硬件解的。
 #[derive(serde::Deserialize)]
 struct DecodeHead {
     id: u64,
@@ -67,7 +70,21 @@ struct DecodeHead {
     h: Option<u32>,
     ow: Option<u32>,
     oh: Option<u32>,
+    hw: Option<bool>,
     error: Option<String>,
+}
+
+/// 到现在为止边车用硬件 / 软件各解了多少张（基准测试看两条路的分担用）。
+pub static HW_DECODES: AtomicU64 = AtomicU64::new(0);
+pub static SW_DECODES: AtomicU64 = AtomicU64::new(0);
+
+/// `FG_IMAGE_HW` 环境变量：不设或 `0` 每个请求都只走软件（默认），`1` 由边车按代价调度，`2` 能走硬件的都要求硬件（不行再回落）。
+fn hw_preference() -> Option<bool> {
+    match std::env::var("FG_IMAGE_HW").ok().as_deref() {
+        Some("1") => None,
+        Some("2") => Some(true),
+        _ => Some(false),
+    }
 }
 
 /// 一个常驻的 `fg-image serve` 进程：分析线程各自写一行请求（锁一下 stdin），一条读线程按 id 把像素分发回去。
@@ -105,6 +122,7 @@ impl Server {
                         if out.read_exact(&mut px).is_err() {
                             break;
                         }
+                        if head.hw == Some(true) { HW_DECODES.fetch_add(1, Ordering::Relaxed); } else { SW_DECODES.fetch_add(1, Ordering::Relaxed); }
                         image::RgbImage::from_raw(w, h, px).map(|img| (DynamicImage::ImageRgb8(img), ow, oh))
                     }
                     _ => None,
@@ -131,13 +149,18 @@ impl Server {
         }
     }
 
-    fn decode(&self, src: &Path, max: u32, managed: bool) -> Option<(DynamicImage, u32, u32)> {
+    /// `hw`：`Some(true)` 要求硬件路径（不行边车自己回落软件）、`Some(false)` 只走软件、`None` 由边车调度。
+    fn decode(&self, src: &Path, max: u32, managed: bool, hw: Option<bool>) -> Option<(DynamicImage, u32, u32)> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.pending.lock().unwrap_or_else(|e| e.into_inner()).insert(id, tx);
+        let mut req = serde_json::json!({ "id": id, "path": src.to_string_lossy(), "max": max, "managed": managed });
+        if let Some(hw) = hw {
+            req["hw"] = serde_json::Value::Bool(hw);
+        }
         let written = {
             let mut w = self.stdin.lock().unwrap_or_else(|e| e.into_inner());
-            writeln!(w, "{}", serde_json::json!({ "id": id, "path": src.to_string_lossy(), "max": max, "managed": managed })).and_then(|_| w.flush()).is_ok()
+            writeln!(w, "{req}").and_then(|_| w.flush()).is_ok()
         };
         if !written {
             self.pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
@@ -171,11 +194,23 @@ pub struct Helper {
 }
 
 impl Helper {
+    pub(crate) fn new(bin: PathBuf) -> Helper {
+        Helper { bin, server: Mutex::new(None) }
+    }
+
     /// 边车存在就把它注册给核心库；不存在（没编过 `scripts/build-vision.sh`）就什么都不注册，系统格式不提供。
     pub fn register(bin: PathBuf) {
         if cfg!(target_os = "macos") && bin.exists() {
-            fg_core::platform::set_images(Box::new(Helper { bin, server: Mutex::new(None) }));
+            fg_core::platform::set_images(Box::new(Helper::new(bin)));
         }
+    }
+
+    /// 和 `SystemImages::decode` 一样，但由调用方指定走硬件还是软件（`None` 由边车调度）；基准测试比较两条路用。
+    pub(crate) fn decode_with(&self, src: &Path, max: u32, hw: Option<bool>) -> Option<(DynamicImage, u32, u32)> {
+        let over: u32 = std::env::var("FG_IMAGE_OVERSAMPLE").ok().and_then(|v| v.parse().ok()).unwrap_or(1).clamp(1, 4);
+        let managed = std::env::var("FG_IMAGE_MANAGED").map_or(false, |v| v == "1");
+        let (img, ow, oh) = self.server()?.decode(src, max.saturating_mul(over), managed, hw)?;
+        Some((if over > 1 { fg_core::analyze::fast_resize(&img, max) } else { img }, ow, oh))
     }
 
     /// 常驻解码进程；没有或死了就起一个。`FG_IMAGE_DECODE=0` 关掉这条路（调性能、排查用）。
@@ -226,12 +261,9 @@ impl SystemImages for Helper {
     /// 颜色不转 sRGB（`image` crate 也不管色彩配置），CLIP 分才和老分析接得上。ImageIO 在 DCT 域直接缩到 1024 的图比老路（整张解码后
     /// 双线性缩）略锐，清晰度分系统性高约 0.07（中位 0.066、p95 0.11）；`FG_IMAGE_OVERSAMPLE=2` 让边车解到两倍大、这里再用
     /// `fast_resize` 缩，漂移降到 0.02 以内，但管道字节翻四倍、边车 CPU 多一成，整条流水线的提速就没了（量过：60 张重图 57–65 对 68–72 ms/张，
-    /// 老路 63–76），所以默认 1。`FG_IMAGE_MANAGED=1` 转 sRGB，对比用。
+    /// 老路 63–76），所以默认 1。`FG_IMAGE_MANAGED=1` 转 sRGB，对比用。`FG_IMAGE_HW=1|2` 让 JPEG 走硬件路径（默认只软件）。
     fn decode(&self, src: &Path, max: u32) -> Option<(DynamicImage, u32, u32)> {
-        let over: u32 = std::env::var("FG_IMAGE_OVERSAMPLE").ok().and_then(|v| v.parse().ok()).unwrap_or(1).clamp(1, 4);
-        let managed = std::env::var("FG_IMAGE_MANAGED").map_or(false, |v| v == "1");
-        let (img, ow, oh) = self.server()?.decode(src, max.saturating_mul(over), managed)?;
-        Some((if over > 1 { fg_core::analyze::fast_resize(&img, max) } else { img }, ow, oh))
+        self.decode_with(src, max, hw_preference())
     }
 
     fn crop(&self, src: &Path, out: &Path, f: [f64; 4], out_w: u32) -> Result<(), String> {
@@ -251,7 +283,7 @@ mod tests {
     #[ignore]
     fn the_resident_decoder_scales_upright_and_survives_a_bad_file() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let h = Helper { bin: root.join("bin/fg-image"), server: Mutex::new(None) };
+        let h = Helper::new(root.join("bin/fg-image"));
         let dir = std::env::temp_dir().join(format!("fg_imageio_test_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         // 3000x2000 的渐变，缩到长边 1024 应得 1024x683（和核心库 fast_resize 的取整一样）
@@ -267,6 +299,16 @@ mod tests {
         // 比原图小的照片原样给出
         let (same, _, _) = h.decode(&good, 4000).unwrap();
         assert_eq!((same.width(), same.height()), (3000, 2000));
+        // 硬件路径（这台机器有硬件 JPEG 解码器的话；没有就由边车回落软件，结果一样）：同样的尺寸、同样的方向、像素相近
+        let hw0 = HW_DECODES.load(Ordering::Relaxed);
+        let (hw, ow, oh) = h.decode_with(&good, 1024, Some(true)).expect("hardware path (or its fallback)");
+        assert_eq!((ow, oh, hw.width(), hw.height()), (3000, 2000, 1024, 683));
+        let (a, b) = (hw.to_rgb8(), small.to_rgb8());
+        let diff = a.as_raw().iter().zip(b.as_raw()).map(|(x, y)| (*x as f64 - *y as f64).abs()).sum::<f64>() / a.as_raw().len() as f64;
+        assert!(diff < 3.0, "hardware vs software mean |Δpixel| {diff:.2}");
+        let (same_hw, _, _) = h.decode_with(&good, 4000, Some(true)).unwrap();
+        assert_eq!((same_hw.width(), same_hw.height()), (3000, 2000));
+        println!("hardware decoder {}", if HW_DECODES.load(Ordering::Relaxed) > hw0 { "used" } else { "not available here, fell back to software" });
         // 坏文件只是这张没有，边车还活着
         std::fs::write(dir.join("junk.jpg"), b"not a jpeg").unwrap();
         assert!(h.decode(&dir.join("junk.jpg"), 1024).is_none());
@@ -283,7 +325,7 @@ mod tests {
 
     #[test]
     fn raw_and_modern_containers_are_the_helpers() {
-        let h = Helper { bin: PathBuf::from("/nonexistent"), server: Mutex::new(None) };
+        let h = Helper::new(PathBuf::from("/nonexistent"));
         assert!(h.supports("dng") && h.supports("heic") && h.supports("jxl"));
         assert!(!h.supports("jpg") && !h.supports("txt"));
     }

@@ -159,62 +159,80 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    /// 解码这一段单独看：常驻 ImageIO 边车（`SystemImages::decode`）与进程内整张解码再缩（老路）给出的图是否一样大、像素差多少；
-    /// 一条线程与十条线程时各要等多久、缩略图又占多少；边车用了多少 CPU。`FG_LIBRARY=<文件夹> [FG_N=60]`。
+    /// 解码这一段单独看：常驻边车的软件路径（ImageIO 缩略解码）、硬件路径（VideoToolbox + GPU 缩放）各与进程内整张解码再缩（老路）
+    /// 给出的图是否一样大、像素差多少、给分析的信号（人脸数、美学、清晰度、CLIP）漂多少；然后一条线程与十条线程时各要等多久、
+    /// 缩略图又占多少、两条路各分担了几张；边车用了多少 CPU。`FG_LIBRARY=<文件夹> [FG_N=60] [FG_IMAGE_HW=0|1|2]`（计时那段的路径）。
     #[test]
     #[ignore = "timing only: FG_LIBRARY=<folder of photos>; bin/fg-image"]
     fn decode_stage_alone() {
         use rayon::prelude::*;
+        use std::sync::atomic::Ordering;
         use std::time::Instant;
         let Ok(dir) = std::env::var("FG_LIBRARY") else { return };
         let n: usize = std::env::var("FG_N").ok().and_then(|v| v.parse().ok()).unwrap_or(60);
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         crate::imageio_macos::Helper::register(root.join("bin/fg-image"));
         let images = fg_core::platform::images().expect("fg-image");
+        // 指定路径的请求用自己的一个边车进程，不和上面那个（调度路径）混
+        let helper = crate::imageio_macos::Helper::new(root.join("bin/fg-image"));
         let tmp = std::env::temp_dir().join("fg_decode_stage_test");
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         let mut files: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| is_image(p)).collect();
         files.sort();
         files.truncate(n);
-        // 一致性：前 12 张
-        let mut max_diff = 0f64;
+        let mean_diff = |a: &image::DynamicImage, b: &image::DynamicImage| -> f64 {
+            let (a, b) = (a.to_rgb8(), b.to_rgb8());
+            a.as_raw().iter().zip(b.as_raw()).map(|(x, y)| (*x as f64 - *y as f64).abs()).sum::<f64>() / a.as_raw().len() as f64
+        };
+        let hw_done = |since: u64| crate::imageio_macos::HW_DECODES.load(Ordering::Relaxed) - since;
+        // 一致性：前 12 张，两条路径的尺寸都要和老路一样
+        let hw0 = crate::imageio_macos::HW_DECODES.load(Ordering::Relaxed);
+        let (mut d_sw, mut d_hw, mut d_hw_sw) = (0f64, 0f64, 0f64);
         for f in files.iter().take(12) {
-            let (new, ow, oh) = images.decode(f, ANALYZE_SIZE).expect("decode");
+            let (sw, ow, oh) = helper.decode_with(f, ANALYZE_SIZE, Some(false)).expect("software decode");
+            let (hw, ow2, oh2) = helper.decode_with(f, ANALYZE_SIZE, Some(true)).expect("hardware decode (or its fallback)");
             let old_full = load_oriented(f).unwrap();
             let old = fast_resize(&old_full, ANALYZE_SIZE);
             assert_eq!((ow, oh), (old_full.width(), old_full.height()), "{}: displayed size", f.display());
-            assert_eq!((new.width(), new.height()), (old.width(), old.height()), "{}: analysis size", f.display());
-            let (a, b) = (new.to_rgb8(), old.to_rgb8());
-            let diff = a.as_raw().iter().zip(b.as_raw()).map(|(x, y)| (*x as f64 - *y as f64).abs()).sum::<f64>() / a.as_raw().len() as f64;
-            max_diff = max_diff.max(diff);
+            assert_eq!((ow2, oh2), (ow, oh), "{}: displayed size (hardware)", f.display());
+            assert_eq!((sw.width(), sw.height()), (old.width(), old.height()), "{}: analysis size", f.display());
+            assert_eq!((hw.width(), hw.height()), (old.width(), old.height()), "{}: analysis size (hardware)", f.display());
+            d_sw = d_sw.max(mean_diff(&sw, &old));
+            d_hw = d_hw.max(mean_diff(&hw, &old));
+            d_hw_sw = d_hw_sw.max(mean_diff(&hw, &sw));
         }
-        println!("12 photos: sizes identical, mean |Δpixel| at most {max_diff:.2} (resampler and colour management differ)");
-        // 两条解码路径给分析的信号差多少：Vision 的人脸数与美学分、清晰度、CLIP 分（前 FG_N 张）
+        println!("前 12 张：三条路径尺寸全同；平均 |Δ像素| 最多：软件 vs 老路 {d_sw:.2}，硬件 vs 老路 {d_hw:.2}，硬件 vs 软件 {d_hw_sw:.2}；要求硬件的 12 张里真由硬件解的 {} 张", hw_done(hw0));
+        // 两条解码路径给分析的信号各比老路差多少：Vision 的人脸数与美学分、清晰度、CLIP 分（前 FG_N 张）
         let vision = Vision::start(&root.join("bin/fg-vision"), 4, false).expect("fg-vision");
         let scorer = scorer::ClipScorer::load(&dev_models_dir(), true, scorer::Quality::Fast).expect("models/");
-        let (mut same_faces, mut max_aes, mut max_sharp, mut max_clip, mut cmp) = (0, 0f32, 0f32, 0f32, 0);
-        let (mut sharps, mut clips) = (Vec::new(), Vec::new());
+        #[derive(Default)]
+        struct Drift { cmp: usize, same_faces: usize, max_aes: f32, sharps: Vec<f32>, clips: Vec<f32> }
+        let (mut sw_drift, mut hw_drift) = (Drift::default(), Drift::default());
+        let hw1 = crate::imageio_macos::HW_DECODES.load(Ordering::Relaxed);
         for f in &files {
-            let (new, _, _) = images.decode(f, ANALYZE_SIZE).unwrap();
             let old = fast_resize(&load_oriented(f).unwrap(), ANALYZE_SIZE);
-            let (Some(va), Some(vb)) = (SystemVision::analyze_pixels(&vision, &new), SystemVision::analyze_pixels(&vision, &old)) else { continue };
-            cmp += 1;
-            if va.faces.len() == vb.faces.len() { same_faces += 1; } else { println!("{}: faces {} (resident decoder) vs {} (in-process decode)", f.file_name().unwrap().to_string_lossy(), va.faces.len(), vb.faces.len()); }
-            max_aes = max_aes.max((va.aesthetic.unwrap() - vb.aesthetic.unwrap()).abs());
-            let (sa, sb) = (fg_core::scoring::sharp_score(subject_sharpness(&new.to_luma8())), fg_core::scoring::sharp_score(subject_sharpness(&old.to_luma8())));
-            max_sharp = max_sharp.max((sa - sb).abs());
-            sharps.push((sa - sb).abs());
-            if let (Ok(ca), Ok(cb)) = (scorer.analyze(&new), scorer.analyze(&old)) {
-                max_clip = max_clip.max((ca.score - cb.score).abs());
-                clips.push((ca.score - cb.score).abs());
+            let Some(vo) = SystemVision::analyze_pixels(&vision, &old) else { continue };
+            let (so, co) = (fg_core::scoring::sharp_score(subject_sharpness(&old.to_luma8())), scorer.analyze(&old).ok().map(|c| c.score));
+            for (hw, drift, label) in [(false, &mut sw_drift, "软件"), (true, &mut hw_drift, "硬件")] {
+                let (img, _, _) = helper.decode_with(f, ANALYZE_SIZE, Some(hw)).unwrap();
+                let Some(v) = SystemVision::analyze_pixels(&vision, &img) else { continue };
+                drift.cmp += 1;
+                if v.faces.len() == vo.faces.len() { drift.same_faces += 1; } else { println!("{}: 人脸 {} 张（{label}路径）对 {} 张（老路）", f.file_name().unwrap().to_string_lossy(), v.faces.len(), vo.faces.len()); }
+                drift.max_aes = drift.max_aes.max((v.aesthetic.unwrap_or(0.0) - vo.aesthetic.unwrap_or(0.0)).abs());
+                drift.sharps.push((fg_core::scoring::sharp_score(subject_sharpness(&img.to_luma8())) - so).abs());
+                if let (Ok(c), Some(co)) = (scorer.analyze(&img), co) { drift.clips.push((c.score - co).abs()); }
             }
         }
         let pct = |v: &mut Vec<f32>, p: f64| { v.sort_by(|a, b| a.partial_cmp(b).unwrap()); v.get(((v.len() as f64 - 1.0) * p).round() as usize).copied().unwrap_or(0.0) };
-        println!(
-            "{cmp} photos, resident decoder vs in-process (FG_IMAGE_OVERSAMPLE={}): same face count on {same_faces}; max |Δaesthetic| {max_aes:.3}; |Δsharp_score| median {:.3} p95 {:.3} max {max_sharp:.3}; |ΔCLIP score| median {:.3} p95 {:.3} max {max_clip:.3}",
-            std::env::var("FG_IMAGE_OVERSAMPLE").unwrap_or_else(|_| "1".into()), pct(&mut sharps, 0.5), pct(&mut sharps, 0.95), pct(&mut clips, 0.5), pct(&mut clips, 0.95)
-        );
+        for (mut d, label) in [(sw_drift, "软件路径（ImageIO 缩放解码）"), (hw_drift, "硬件路径（VideoToolbox + GPU 缩放）")] {
+            let (s_max, c_max) = (d.sharps.iter().cloned().fold(0f32, f32::max), d.clips.iter().cloned().fold(0f32, f32::max));
+            println!(
+                "{label} vs 老路，{} 张：人脸数相同 {}；最大 |Δ美学| {:.3}；|Δ清晰度分| 中位 {:.3} p95 {:.3} 最大 {s_max:.3}；|ΔCLIP 分| 中位 {:.3} p95 {:.3} 最大 {c_max:.3}",
+                d.cmp, d.same_faces, d.max_aes, pct(&mut d.sharps, 0.5), pct(&mut d.sharps, 0.95), pct(&mut d.clips, 0.5), pct(&mut d.clips, 0.95)
+            );
+        }
+        println!("要求硬件的 {} 张里真由硬件解的 {} 张（FG_IMAGE_OVERSAMPLE={}）", files.len(), hw_done(hw1), std::env::var("FG_IMAGE_OVERSAMPLE").unwrap_or_else(|_| "1".into()));
         let timed = |f: &PathBuf| -> (f64, f64) {
             let t = Instant::now();
             let (img, _, _) = images.decode(f, ANALYZE_SIZE).unwrap();
@@ -224,18 +242,21 @@ mod tests {
             (d, t.elapsed().as_secs_f64() * 1000.0)
         };
         let _ = timed(&files[0]);
-        let helper = |m: &std::collections::BTreeMap<String, f64>| m.values().sum::<f64>();
-        let cpu0 = helper(&live_helper_cpu());
+        drop(helper);   // 比较用的那个边车进程到此为止，CPU 只算调度路径的
+        let total = |m: &std::collections::BTreeMap<String, f64>| m.values().sum::<f64>();
+        let cpu0 = total(&live_helper_cpu());
+        let hw2 = crate::imageio_macos::HW_DECODES.load(Ordering::Relaxed);
         let t = Instant::now();
         let rows: Vec<(f64, f64)> = files.iter().map(timed).collect();
         let seq = t.elapsed();
-        println!("one at a time: {:.0} ms/photo wall; decode wait {:.0} ms, thumbnail {:.0} ms", seq.as_secs_f64() * 1000.0 / n as f64, rows.iter().map(|r| r.0).sum::<f64>() / n as f64, rows.iter().map(|r| r.1).sum::<f64>() / n as f64);
-        let cpu1 = helper(&live_helper_cpu());
+        println!("one at a time (FG_IMAGE_HW={}): {:.0} ms/photo wall; decode wait {:.0} ms, thumbnail {:.0} ms; {} of {n} by hardware", std::env::var("FG_IMAGE_HW").unwrap_or_else(|_| "0".into()), seq.as_secs_f64() * 1000.0 / n as f64, rows.iter().map(|r| r.0).sum::<f64>() / n as f64, rows.iter().map(|r| r.1).sum::<f64>() / n as f64, hw_done(hw2));
+        let cpu1 = total(&live_helper_cpu());
+        let hw3 = crate::imageio_macos::HW_DECODES.load(Ordering::Relaxed);
         let t = Instant::now();
         let rows: Vec<(f64, f64)> = files.par_iter().map(timed).collect();
         let par = t.elapsed();
-        let cpu2 = helper(&live_helper_cpu());
-        println!("{} threads: {:.0} ms/photo wall ({:.0} photos/s); per thread decode wait {:.0} ms, thumbnail {:.0} ms", rayon::current_num_threads(), par.as_secs_f64() * 1000.0 / n as f64, n as f64 / par.as_secs_f64(), rows.iter().map(|r| r.0).sum::<f64>() / n as f64, rows.iter().map(|r| r.1).sum::<f64>() / n as f64);
+        let cpu2 = total(&live_helper_cpu());
+        println!("{} threads: {:.0} ms/photo wall ({:.0} photos/s); per thread decode wait {:.0} ms, thumbnail {:.0} ms; {} of {n} by hardware", rayon::current_num_threads(), par.as_secs_f64() * 1000.0 / n as f64, n as f64 / par.as_secs_f64(), rows.iter().map(|r| r.0).sum::<f64>() / n as f64, rows.iter().map(|r| r.1).sum::<f64>() / n as f64, hw_done(hw3));
         println!("fg-image serve CPU: {:.0} ms/photo one at a time, {:.0} ms/photo in parallel", (cpu1 - cpu0) * 1000.0 / n as f64, (cpu2 - cpu1) * 1000.0 / n as f64);
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -450,8 +471,9 @@ mod tests {
     }
 
 
-    /// 整条分析流水线在一个真实文件夹上的吞吐（调并行度用）：`FG_LIBRARY=<文件夹> [FG_N=64] [FG_QUALITY=fast] [FG_VISION_WORKERS=n]`，
-    /// 睁眼用 MediaPipe、人物识别开着，所有模型都参与。`cargo test -p fleetinggleam --lib whole_scan_on_a_real_folder -- --ignored --nocapture`。
+    /// 整条分析流水线在一个真实文件夹上的吞吐（调并行度用）：`FG_LIBRARY=<文件夹> [FG_N=64] [FG_QUALITY=fast] [FG_VISION_WORKERS=n]`
+    /// `[FG_IMAGE_DECODE=0 走进程内解码的老路 | FG_IMAGE_HW=1 边车软硬件按代价分担 | =2 能走硬件的都走硬件]`，睁眼用 MediaPipe、人物识别开着，所有模型都参与。
+    /// `cargo test -p fleetinggleam --lib whole_scan_on_a_real_folder -- --ignored --nocapture`。
     #[test]
     #[ignore = "timing only: FG_LIBRARY=<folder of photos> [FG_N=64]; models/ and bin/"]
     fn whole_scan_on_a_real_folder() {
@@ -487,9 +509,12 @@ mod tests {
         let warm = t.elapsed();
         // 第二遍的 CPU 时间：本进程（分析线程）与子进程（边车；分析结束时边车被杀并回收，所以算得进来）
         let (own0, reaped0, live0) = (cpu_seconds(libc::RUSAGE_SELF), cpu_seconds(libc::RUSAGE_CHILDREN), live_helper_cpu());
+        use std::sync::atomic::Ordering;
+        let (hw0, sw0) = (crate::imageio_macos::HW_DECODES.load(Ordering::Relaxed), crate::imageio_macos::SW_DECODES.load(Ordering::Relaxed));
         let t = std::time::Instant::now();
         let photos = e.scan_project(args).expect("scan");
         let d = t.elapsed();
+        let (hw, sw) = (crate::imageio_macos::HW_DECODES.load(Ordering::Relaxed) - hw0, crate::imageio_macos::SW_DECODES.load(Ordering::Relaxed) - sw0);
         let (own, reaped, live) = (cpu_seconds(libc::RUSAGE_SELF) - own0, cpu_seconds(libc::RUSAGE_CHILDREN) - reaped0, live_helper_cpu());
         let live_delta: Vec<String> = live.iter().map(|(n, s)| format!("{n} {:.1} s", s - live0.get(n).copied().unwrap_or(0.0))).collect();
         let live_total: f64 = live.iter().map(|(n, s)| s - live0.get(n).copied().unwrap_or(0.0)).sum();
@@ -499,7 +524,7 @@ mod tests {
             photos.iter().filter(|p| p.face_count > 0).count(), photos.iter().filter(|p| p.eye_method.as_deref() == Some("mediapipe")).count(), photos.iter().filter(|p| p.sys_score.is_some()).count()
         );
         println!(
-            "second pass CPU: this process {own:.1} s = {:.1} cores; helpers reaped {reaped:.1} s, still running [{}] = {:.1} cores; together {:.1} cores",
+            "second pass CPU: this process {own:.1} s = {:.1} cores; helpers reaped {reaped:.1} s, still running [{}] = {:.1} cores; together {:.1} cores; resident decoder: {hw} by hardware, {sw} by software",
             own / d.as_secs_f64(), live_delta.join(", "), (reaped + live_total) / d.as_secs_f64(), (own + reaped + live_total) / d.as_secs_f64()
         );
         assert_eq!(first.len(), photos.len());
