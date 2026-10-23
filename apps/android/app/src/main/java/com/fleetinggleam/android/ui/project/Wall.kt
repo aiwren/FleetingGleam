@@ -33,6 +33,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.layout.layout
+import androidx.compose.runtime.key
 import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.ui.layout.onSizeChanged
 import kotlinx.coroutines.launch
@@ -59,6 +62,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Size
@@ -179,78 +183,127 @@ fun Wall(
                 else -> justify(items, width, if (zoom >= 0) JUSTIFY_HEIGHTS[zoom.coerceIn(0, JUSTIFY_HEIGHTS.size - 1)] else 150f)
             }
         }
-        // ---- 双指缩放（像系统相册）：捏的过程中整面墙跟着手指、以两指中点为中心实时缩放；松手按幅度换 0 / 1 / 2 档。
-        // 换档那一刻新布局先以"手指那一刻的大小"出现（缩放 = 手势倍数 ÷ 新旧格子之比），再弹性收拢到 1，两指下那张照片换档前后
-        // 停在原处附近——看起来是一次连续的缩放，而不是跳一下（作者 2026-10-23：之前捏到阈值直接硬切，体验差）
+        // ---- 双指缩放（2026-10-23 调研了苹果照片 / 三星 / 小米的做法后重做）：不是把整面墙放大缩小再硬切，而是两套布局之间的插值——
+        // 手指捏的过程中，屏幕上每张照片从旧位置、旧大小连续滑向下一档布局里的新位置、新大小，手指下那张始终跟着手指；
+        // 捏满一档就换档、接着往下一档流；松手按进度（过半吸附到新档，否则弹回）。过渡用一层覆盖画出来（缩略图都在内存缓存里，
+        // 固定解码尺寸，换档不重解码），底下真正的列表在换档那一刻直接跳到新布局、过渡结束后再露出来。
         val headOff0 = if (header != null) 1 else 0
         val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
         val zoomNow by androidx.compose.runtime.rememberUpdatedState(onZoom)
         val rowsNow by androidx.compose.runtime.rememberUpdatedState(rows)
         val zoomLevel by androidx.compose.runtime.rememberUpdatedState(zoom)
-        val live = remember { androidx.compose.animation.core.Animatable(1f) }
-        var pivot by remember { mutableStateOf(Offset.Zero) }
-        var boxSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+        val thumbNow by androidx.compose.runtime.rememberUpdatedState(thumbOf)
+        var morph by remember { mutableStateOf<Morph?>(null) }
         val zoomScope = androidx.compose.runtime.rememberCoroutineScope()
-        val topPadPx = with(density) { contentPadding.calculateTopPadding().toPx() }
-        val gapPx = with(density) { GAP.dp.toPx() }
+        val dpx = density.density
+        val gapPx = GAP * dpx
         val sidePx = with(density) { contentPadding.calculateLeftPadding(androidx.compose.ui.unit.LayoutDirection.Ltr).toPx() }
-        // 某一档的格子"大小"（网格是格宽，瀑布是行高），用来算新旧之比
+        val topPadPx = with(density) { contentPadding.calculateTopPadding().toPx() }
+        val levels = if (layout == "grid") GRID_COLS.size else JUSTIFY_HEIGHTS.size
         fun cellOf(level: Int): Float = if (layout == "grid") (width - GAP * (GRID_COLS[level] - 1)) / GRID_COLS[level] else JUSTIFY_HEIGHTS[level]
         fun rowsFor(level: Int): List<WallRow> = if (layout == "grid") grid(items, width, 110f, GRID_COLS[level]) else justify(items, width, JUSTIFY_HEIGHTS[level])
-        // 两指下的那张照片：它在新布局里所在的行滚到让它还停在两指那一高度附近
-        fun settle(acc: Float) {
-            val cur = zoomLevel
-            val max = (if (layout == "grid") GRID_COLS.size else JUSTIFY_HEIGHTS.size) - 1
-            val step = when { acc > 1.9f -> 2; acc > 1.15f -> 1; acc < 0.52f -> -2; acc < 0.87f -> -1; else -> 0 }
-            val next = (cur + step).coerceIn(0, max)
-            val spring = androidx.compose.animation.core.spring<Float>(dampingRatio = 0.86f, stiffness = 420f)
-            if (next == cur || cur < 0) { zoomScope.launch { live.animateTo(1f, spring) }; return }
-            // 两指下是哪一张（按此刻屏幕上的行）
-            val info = state.layoutInfo.visibleItemsInfo.firstOrNull { pivot.y - topPadPx >= it.offset && pivot.y - topPadPx < it.offset + it.size }
-            val old = info?.let { rowsNow.getOrNull(it.index - headOff0) }
-            val anchorIdx = old?.let { r ->
-                var x = sidePx
-                var hit = r.to - 1
-                for (i in r.from until r.to) { x += r.widths[i - r.from] * density.density + gapPx; if (pivot.x < x) { hit = i; break } }
-                hit
+        /** 某套布局里第 `i` 张的矩形（像素，列表坐标）：已知该布局里第 `refRow` 行的顶在 `refTop`。 */
+        fun rectIn(rs: List<WallRow>, i: Int, refRow: Int, refTop: Float): Rect? {
+            val r = rs.indexOfFirst { i in it.from until it.to }
+            if (r < 0) return null
+            var top = refTop
+            if (r > refRow) for (k in refRow until r) top += rs[k].height * dpx + gapPx
+            else for (k in r until refRow) top -= rs[k].height * dpx + gapPx
+            var left = sidePx
+            for (k in rs[r].from until i) left += rs[r].widths[k - rs[r].from] * dpx + gapPx
+            return Rect(left, top, left + rs[r].widths[i - rs[r].from] * dpx, top + rs[r].height * dpx)
+        }
+        /** 从当前布局（`cur` 档）到 `next` 档的过渡：以 `pivot`（列表坐标）下那张照片为锚，算出两套布局里屏幕附近每张照片的起止矩形。 */
+        fun buildMorph(cur: Int, next: Int, pivot: Offset, viewH: Float): Morph? {
+            val rs = rowsNow
+            val info = state.layoutInfo.visibleItemsInfo.filter { it.index >= headOff0 }
+            val under = info.firstOrNull { pivot.y >= it.offset && pivot.y < it.offset + it.size } ?: info.firstOrNull() ?: return null
+            val refRow = under.index - headOff0
+            val refTop = under.offset.toFloat()
+            val row = rs.getOrNull(refRow) ?: return null
+            var x = sidePx
+            var anchor = row.to - 1
+            for (i in row.from until row.to) { x += row.widths[i - row.from] * dpx + gapPx; if (pivot.x < x) { anchor = i; break } }
+            val oldA = rectIn(rs, anchor, refRow, refTop) ?: return null
+            val fy = ((pivot.y - oldA.top) / oldA.height).coerceIn(0f, 1f)
+            val ns = rowsFor(next)
+            val nRow = ns.indexOfFirst { anchor in it.from until it.to }
+            if (nRow < 0) return null
+            val nTop = pivot.y - fy * ns[nRow].height * dpx
+            // 两套布局里落在屏幕附近（上下各多一屏）的照片，取并集
+            val span = -viewH..(viewH * 2)
+            val idx = LinkedHashSet<Int>()
+            for (r in rs.indices) { val t = rectIn(rs, r.let { rs[it].from }, refRow, refTop)?.top ?: continue; if (t + rs[r].height * dpx < span.start) continue; if (t > span.endInclusive) break; for (i in rs[r].from until rs[r].to) idx.add(i) }
+            for (r in ns.indices) { val t = rectIn(ns, ns[r].from, nRow, nTop)?.top ?: continue; if (t + ns[r].height * dpx < span.start) continue; if (t > span.endInclusive) break; for (i in ns[r].from until ns[r].to) idx.add(i) }
+            val tiles = idx.mapNotNull { i ->
+                val a = rectIn(rs, i, refRow, refTop) ?: return@mapNotNull null
+                val b = rectIn(ns, i, nRow, nTop) ?: return@mapNotNull null
+                MorphTile(i, a, b, thumbNow?.invoke(i))
             }
-            val ratio = cellOf(next) / cellOf(cur)
-            // 新布局里那张照片所在的行，滚到它的上沿落在两指高度减去半行处
-            if (anchorIdx != null) {
-                val nr = rowsFor(next)
-                val ri = nr.indexOfFirst { anchorIdx in it.from until it.to }
-                if (ri >= 0) {
-                    var want = pivot.y - topPadPx - nr[ri].height * density.density / 2f
-                    var idx = ri
-                    while (idx > 0 && want > 0) { idx--; want -= nr[idx].height * density.density + gapPx }
-                    state.requestScrollToItem(idx + headOff0, (-want).toInt().coerceAtLeast(0))
-                }
-            }
-            zoomScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
-                live.snapTo((acc / ratio).coerceIn(0.3f, 3f))
-                zoomNow?.invoke(next - cur)
-                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
-                live.animateTo(1f, spring)
-            }
+            // 换档后列表要滚到的位置：锚点所在行的顶在 nTop（只能把某一行顶到 beforePadding 以上，所以往前找）
+            var want = nTop
+            var ri = nRow
+            while (ri > 0 && want > topPadPx) { ri--; want -= ns[ri].height * dpx + gapPx }
+            return Morph(cur, next, tiles, ri + headOff0, (topPadPx - want).toInt().coerceAtLeast(0))
+        }
+        fun commit(m: Morph) {
+            state.requestScrollToItem(m.scrollIndex, m.scrollOffset)
+            zoomNow?.invoke(m.toLevel - m.fromLevel)
+            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
         }
         val pinch = if (onZoom == null) Modifier else Modifier.pointerInput(Unit) {
-            // 两根手指时自己处理（在 Initial 阶段先拿到、吃掉，列表就不会跟着滚）；一根手指照常滚动
+            // 两根手指时自己处理（Initial 阶段先拿到、吃掉，列表不跟着滚）；一根手指照常滚动
             awaitEachGesture {
                 awaitFirstDown(requireUnconsumed = false)
                 var acc = 1f
                 var pinching = false
+                var level = zoomLevel
+                var pivot = Offset.Zero
+                var cur: Morph? = null
                 do {
                     val ev = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
                     val n = ev.changes.count { it.pressed }
-                    if (n >= 2) {
+                    if (n >= 2 && level >= 0) {
                         if (!pinching) { pinching = true; pivot = ev.calculateCentroid(useCurrent = true) }
-                        acc = (acc * ev.calculateZoom()).coerceIn(0.35f, 2.8f)
-                        zoomScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { live.snapTo(acc) }
+                        acc = (acc * ev.calculateZoom()).coerceIn(0.4f, 2.5f)
+                        val dir = if (acc >= 1f) 1 else -1
+                        val next = (level + dir).coerceIn(0, levels - 1)
+                        // 方向变了、或还没建：建这一档到下一档的过渡；到顶 / 到底就只记手势
+                        if (next != level && (cur == null || cur.toLevel != next)) {
+                            cur = buildMorph(level, next, pivot, size.height.toFloat())
+                            morph = cur
+                        }
+                        val m = cur
+                        if (m != null) {
+                            val ratio = cellOf(m.toLevel) / cellOf(m.fromLevel)
+                            val p = if (ratio > 1f) (acc - 1f) / (ratio - 1f) else (1f - acc) / (1f - ratio)
+                            zoomScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { m.p.snapTo(p.coerceIn(0f, 1f)) }
+                            if (p >= 1f) {
+                                // 捏满一档：换档，接着往下一档流（锚点换到手指此刻的位置）
+                                commit(m)
+                                level = m.toLevel
+                                acc = 1f
+                                cur = null
+                                zoomScope.launch { kotlinx.coroutines.delay(32); if (morph === m) morph = null }
+                            }
+                        }
                     }
-                    // 开始捏以后，剩下一根手指也不让列表滚（松开前的那一下会让墙乱跳）
                     if (pinching) ev.changes.forEach { it.consume() }
                 } while (ev.changes.any { it.pressed })
-                if (pinching) settle(acc)
+                val m = cur
+                if (pinching && m != null) {
+                    zoomScope.launch {
+                        val spring = androidx.compose.animation.core.spring<Float>(dampingRatio = 0.9f, stiffness = 500f)
+                        if (m.p.value >= 0.45f) {
+                            m.p.animateTo(1f, spring)
+                            commit(m)
+                            kotlinx.coroutines.delay(32)
+                        } else {
+                            m.p.animateTo(0f, spring)
+                        }
+                        if (morph === m) morph = null
+                    }
+                }
             }
         }
         androidx.compose.runtime.LaunchedEffect(reveal, rows) {
@@ -281,9 +334,7 @@ fun Wall(
                         if (!done.add(ri)) continue
                         for (i in r.from until r.to) {
                             val th = thumbOf(i) ?: continue
-                            val w = (r.widths[i - r.from] * density.density).toInt().coerceAtLeast(1)
-                            val h = (r.height * density.density).toInt().coerceAtLeast(1)
-                            loader.enqueue(coil3.request.ImageRequest.Builder(ctx).data(java.io.File(th)).size(w, h).build())
+                            loader.enqueue(coil3.request.ImageRequest.Builder(ctx).data(java.io.File(th)).size(THUMB_DECODE, THUMB_DECODE).build())
                         }
                     }
                 }
@@ -293,11 +344,7 @@ fun Wall(
         androidx.compose.runtime.CompositionLocalProvider(LocalWallScrolling provides state.isScrollInProgress) {
             LazyColumn(
                 state = state, contentPadding = contentPadding, verticalArrangement = Arrangement.spacedBy(GAP.dp),
-                modifier = Modifier.fillMaxSize().onSizeChanged { boxSize = it }.then(pinch).graphicsLayer {
-                    val v = live.value
-                    scaleX = v; scaleY = v
-                    if (boxSize.width > 0 && boxSize.height > 0) transformOrigin = androidx.compose.ui.graphics.TransformOrigin(pivot.x / boxSize.width, pivot.y / boxSize.height)
-                },
+                modifier = Modifier.fillMaxSize().then(pinch).graphicsLayer { alpha = if (morph == null) 1f else 0f },
             ) {
                 if (header != null) item(key = "head") { header() }
                 items(rows, key = { "${items.getOrNull(it.from)?.key}" + "#${it.to - it.from}" }) { r ->
@@ -305,6 +352,39 @@ fun Wall(
                         for (i in r.from until r.to) tile(i, r.widths[i - r.from].dp, r.height.dp)
                     }
                 }
+            }
+        }
+        morph?.let { MorphOverlay(it) }
+    }
+}
+
+/** 两套布局之间的过渡：每张照片的起止矩形（像素，列表坐标），进度 `p` 由手势或松手后的弹簧驱动；`scrollIndex / scrollOffset` 是换档后列表该滚到的位置。 */
+private class Morph(val fromLevel: Int, val toLevel: Int, val tiles: List<MorphTile>, val scrollIndex: Int, val scrollOffset: Int) {
+    val p = androidx.compose.animation.core.Animatable(0f)
+}
+
+private class MorphTile(val index: Int, val from: Rect, val to: Rect, val thumb: String?)
+
+/** 过渡那一层：每张照片画在起止矩形的插值上（缩略图是内存里同一份位图，固定解码尺寸）；只在一套布局里才有的淡入 / 淡出。 */
+@Composable
+private fun MorphOverlay(m: Morph) {
+    val c = LocalFg.current
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    Box(Modifier.fillMaxSize().clipToBounds()) {
+        for (t in m.tiles) key(t.index) {
+            val req = remember(t.thumb) { t.thumb?.let { coil3.request.ImageRequest.Builder(ctx).data(File(it)).size(THUMB_DECODE, THUMB_DECODE).build() } }
+            Box(
+                Modifier.layout { measurable, _ ->
+                    val p = m.p.value
+                    val w = (t.from.width + (t.to.width - t.from.width) * p).toInt().coerceAtLeast(1)
+                    val h = (t.from.height + (t.to.height - t.from.height) * p).toInt().coerceAtLeast(1)
+                    val x = (t.from.left + (t.to.left - t.from.left) * p).toInt()
+                    val y = (t.from.top + (t.to.top - t.from.top) * p).toInt()
+                    val placeable = measurable.measure(androidx.compose.ui.unit.Constraints.fixed(w, h))
+                    layout(w, h) { placeable.place(x, y) }
+                }.background(c.surface),
+            ) {
+                if (req != null) AsyncImage(req, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             }
         }
     }
@@ -338,6 +418,9 @@ fun Star(filled: Boolean, size: Dp = 20.dp, color: Color = Color.White, glow: Bo
 
 // ---------------------------------------------------------------- 照片的入场：对焦
 
+/** 墙上缩略图统一的解码边长（像素）：和格子大小无关，这样换档、换布局都复用同一份位图；640px 的缩略图解到 480 够 2 列的格子用。 */
+const val THUMB_DECODE = 480
+
 /** 照片墙正在滑动（格子据此跳过入场动画）。 */
 val LocalWallScrolling = androidx.compose.runtime.compositionLocalOf { false }
 
@@ -365,8 +448,11 @@ fun FocusImage(path: String, modifier: Modifier = Modifier, quick: Boolean = fal
     }
     if (missing) { Box(modifier.background(c.surface2)); return }
     val v = p.value
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    // 固定按 THUMB_DECODE 解码（不按格子大小）：双指换档后格子尺寸变了，缓存里的还是同一张位图，直接放大缩小，不会先变白再一张张出来
+    val req = remember(path) { coil3.request.ImageRequest.Builder(ctx).data(File(path)).size(THUMB_DECODE, THUMB_DECODE).build() }
     AsyncImage(
-        File(path), null,
+        req, null,
         modifier.graphicsLayer {
             alpha = if (quick) v else (v * 1.9f).coerceAtMost(1f)
             if (!quick && v < 1f) {
