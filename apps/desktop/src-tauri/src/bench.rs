@@ -22,6 +22,27 @@ fn cpu_seconds(who: libc::c_int) -> f64 {
     secs(ru.ru_utime) + secs(ru.ru_stime)
 }
 
+/// 本进程的边车子进程（名字含 `fg-`）此刻各用掉的 CPU 秒数，按名字汇总：问 `ps`。常驻的（`fg-image serve`）不会被回收，
+/// `getrusage` 的子进程统计里没有它们；已回收的（分析结束被杀的 fg-vision）则相反，所以两边都要看。
+fn live_helper_cpu() -> std::collections::BTreeMap<String, f64> {
+    let mut out = std::collections::BTreeMap::new();
+    let Ok(all) = std::process::Command::new("ps").args(["-axo", "ppid=,time=,comm="]).output() else { return out };
+    let me = std::process::id().to_string();
+    for l in String::from_utf8_lossy(&all.stdout).lines() {
+        let mut f = l.split_whitespace();
+        let (Some(ppid), Some(time), Some(comm)) = (f.next(), f.next(), f.next()) else { continue };
+        if ppid != me || !comm.contains("fg-") {
+            continue;
+        }
+        // 格式 [[dd-]hh:]mm:ss.cc
+        let parts: Vec<f64> = time.split(':').filter_map(|x| x.parse().ok()).collect();
+        let secs: f64 = parts.iter().rev().enumerate().map(|(i, v)| v * 60f64.powi(i as i32)).sum();
+        let name = Path::new(comm).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        *out.entry(name).or_insert(0.0) += secs;
+    }
+    out
+}
+
 /// 开发机上的模型目录（`apps/desktop/models/`，不进仓库）。
 fn dev_models_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../models")
@@ -135,6 +156,87 @@ mod tests {
             }
         }
         println!("{total} photos: same face count on {same_faces}; max |Δaesthetic| file vs pixels {max_aes:.4}, decoded copy vs pixels {max_aes_decoded:.4}; {with_faces} with measurable eyes, max |Δeyes| {max_eyes:.4}");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// 解码这一段单独看：常驻 ImageIO 边车（`SystemImages::decode`）与进程内整张解码再缩（老路）给出的图是否一样大、像素差多少；
+    /// 一条线程与十条线程时各要等多久、缩略图又占多少；边车用了多少 CPU。`FG_LIBRARY=<文件夹> [FG_N=60]`。
+    #[test]
+    #[ignore = "timing only: FG_LIBRARY=<folder of photos>; bin/fg-image"]
+    fn decode_stage_alone() {
+        use rayon::prelude::*;
+        use std::time::Instant;
+        let Ok(dir) = std::env::var("FG_LIBRARY") else { return };
+        let n: usize = std::env::var("FG_N").ok().and_then(|v| v.parse().ok()).unwrap_or(60);
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        crate::imageio_macos::Helper::register(root.join("bin/fg-image"));
+        let images = fg_core::platform::images().expect("fg-image");
+        let tmp = std::env::temp_dir().join("fg_decode_stage_test");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| is_image(p)).collect();
+        files.sort();
+        files.truncate(n);
+        // 一致性：前 12 张
+        let mut max_diff = 0f64;
+        for f in files.iter().take(12) {
+            let (new, ow, oh) = images.decode(f, ANALYZE_SIZE).expect("decode");
+            let old_full = load_oriented(f).unwrap();
+            let old = fast_resize(&old_full, ANALYZE_SIZE);
+            assert_eq!((ow, oh), (old_full.width(), old_full.height()), "{}: displayed size", f.display());
+            assert_eq!((new.width(), new.height()), (old.width(), old.height()), "{}: analysis size", f.display());
+            let (a, b) = (new.to_rgb8(), old.to_rgb8());
+            let diff = a.as_raw().iter().zip(b.as_raw()).map(|(x, y)| (*x as f64 - *y as f64).abs()).sum::<f64>() / a.as_raw().len() as f64;
+            max_diff = max_diff.max(diff);
+        }
+        println!("12 photos: sizes identical, mean |Δpixel| at most {max_diff:.2} (resampler and colour management differ)");
+        // 两条解码路径给分析的信号差多少：Vision 的人脸数与美学分、清晰度、CLIP 分（前 FG_N 张）
+        let vision = Vision::start(&root.join("bin/fg-vision"), 4, false).expect("fg-vision");
+        let scorer = scorer::ClipScorer::load(&dev_models_dir(), true, scorer::Quality::Fast).expect("models/");
+        let (mut same_faces, mut max_aes, mut max_sharp, mut max_clip, mut cmp) = (0, 0f32, 0f32, 0f32, 0);
+        let (mut sharps, mut clips) = (Vec::new(), Vec::new());
+        for f in &files {
+            let (new, _, _) = images.decode(f, ANALYZE_SIZE).unwrap();
+            let old = fast_resize(&load_oriented(f).unwrap(), ANALYZE_SIZE);
+            let (Some(va), Some(vb)) = (SystemVision::analyze_pixels(&vision, &new), SystemVision::analyze_pixels(&vision, &old)) else { continue };
+            cmp += 1;
+            if va.faces.len() == vb.faces.len() { same_faces += 1; } else { println!("{}: faces {} (resident decoder) vs {} (in-process decode)", f.file_name().unwrap().to_string_lossy(), va.faces.len(), vb.faces.len()); }
+            max_aes = max_aes.max((va.aesthetic.unwrap() - vb.aesthetic.unwrap()).abs());
+            let (sa, sb) = (fg_core::scoring::sharp_score(subject_sharpness(&new.to_luma8())), fg_core::scoring::sharp_score(subject_sharpness(&old.to_luma8())));
+            max_sharp = max_sharp.max((sa - sb).abs());
+            sharps.push((sa - sb).abs());
+            if let (Ok(ca), Ok(cb)) = (scorer.analyze(&new), scorer.analyze(&old)) {
+                max_clip = max_clip.max((ca.score - cb.score).abs());
+                clips.push((ca.score - cb.score).abs());
+            }
+        }
+        let pct = |v: &mut Vec<f32>, p: f64| { v.sort_by(|a, b| a.partial_cmp(b).unwrap()); v.get(((v.len() as f64 - 1.0) * p).round() as usize).copied().unwrap_or(0.0) };
+        println!(
+            "{cmp} photos, resident decoder vs in-process (FG_IMAGE_OVERSAMPLE={}): same face count on {same_faces}; max |Δaesthetic| {max_aes:.3}; |Δsharp_score| median {:.3} p95 {:.3} max {max_sharp:.3}; |ΔCLIP score| median {:.3} p95 {:.3} max {max_clip:.3}",
+            std::env::var("FG_IMAGE_OVERSAMPLE").unwrap_or_else(|_| "1".into()), pct(&mut sharps, 0.5), pct(&mut sharps, 0.95), pct(&mut clips, 0.5), pct(&mut clips, 0.95)
+        );
+        let timed = |f: &PathBuf| -> (f64, f64) {
+            let t = Instant::now();
+            let (img, _, _) = images.decode(f, ANALYZE_SIZE).unwrap();
+            let d = t.elapsed().as_secs_f64() * 1000.0;
+            let t = Instant::now();
+            let _ = analyze::save_thumb(&img, f, &tmp).unwrap();
+            (d, t.elapsed().as_secs_f64() * 1000.0)
+        };
+        let _ = timed(&files[0]);
+        let helper = |m: &std::collections::BTreeMap<String, f64>| m.values().sum::<f64>();
+        let cpu0 = helper(&live_helper_cpu());
+        let t = Instant::now();
+        let rows: Vec<(f64, f64)> = files.iter().map(timed).collect();
+        let seq = t.elapsed();
+        println!("one at a time: {:.0} ms/photo wall; decode wait {:.0} ms, thumbnail {:.0} ms", seq.as_secs_f64() * 1000.0 / n as f64, rows.iter().map(|r| r.0).sum::<f64>() / n as f64, rows.iter().map(|r| r.1).sum::<f64>() / n as f64);
+        let cpu1 = helper(&live_helper_cpu());
+        let t = Instant::now();
+        let rows: Vec<(f64, f64)> = files.par_iter().map(timed).collect();
+        let par = t.elapsed();
+        let cpu2 = helper(&live_helper_cpu());
+        println!("{} threads: {:.0} ms/photo wall ({:.0} photos/s); per thread decode wait {:.0} ms, thumbnail {:.0} ms", rayon::current_num_threads(), par.as_secs_f64() * 1000.0 / n as f64, n as f64 / par.as_secs_f64(), rows.iter().map(|r| r.0).sum::<f64>() / n as f64, rows.iter().map(|r| r.1).sum::<f64>() / n as f64);
+        println!("fg-image serve CPU: {:.0} ms/photo one at a time, {:.0} ms/photo in parallel", (cpu1 - cpu0) * 1000.0 / n as f64, (cpu2 - cpu1) * 1000.0 / n as f64);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -384,19 +486,21 @@ mod tests {
         let first = e.scan_project(args.clone()).expect("scan");
         let warm = t.elapsed();
         // 第二遍的 CPU 时间：本进程（分析线程）与子进程（边车；分析结束时边车被杀并回收，所以算得进来）
-        let cpu_before = (cpu_seconds(libc::RUSAGE_SELF), cpu_seconds(libc::RUSAGE_CHILDREN));
+        let (own0, reaped0, live0) = (cpu_seconds(libc::RUSAGE_SELF), cpu_seconds(libc::RUSAGE_CHILDREN), live_helper_cpu());
         let t = std::time::Instant::now();
         let photos = e.scan_project(args).expect("scan");
         let d = t.elapsed();
-        let (own, children) = (cpu_seconds(libc::RUSAGE_SELF) - cpu_before.0, cpu_seconds(libc::RUSAGE_CHILDREN) - cpu_before.1);
+        let (own, reaped, live) = (cpu_seconds(libc::RUSAGE_SELF) - own0, cpu_seconds(libc::RUSAGE_CHILDREN) - reaped0, live_helper_cpu());
+        let live_delta: Vec<String> = live.iter().map(|(n, s)| format!("{n} {:.1} s", s - live0.get(n).copied().unwrap_or(0.0))).collect();
+        let live_total: f64 = live.iter().map(|(n, s)| s - live0.get(n).copied().unwrap_or(0.0)).sum();
         println!(
-            "{} photos: first pass {:?} (models loading included), second pass {:?} = {:.0} ms/photo, {:.2} photos/s; faces on {} photos, eyes measured on {}",
+            "{} photos: first pass {:?} (models loading included), second pass {:?} = {:.0} ms/photo, {:.2} photos/s; faces on {} photos, eyes measured on {}, Vision answered on {}",
             photos.len(), warm, d, d.as_secs_f64() * 1000.0 / photos.len() as f64, photos.len() as f64 / d.as_secs_f64(),
-            photos.iter().filter(|p| p.face_count > 0).count(), photos.iter().filter(|p| p.eye_method.as_deref() == Some("mediapipe")).count()
+            photos.iter().filter(|p| p.face_count > 0).count(), photos.iter().filter(|p| p.eye_method.as_deref() == Some("mediapipe")).count(), photos.iter().filter(|p| p.sys_score.is_some()).count()
         );
         println!(
-            "second pass CPU: this process {own:.1} s = {:.1} cores, helpers {children:.1} s = {:.1} cores, together {:.1} cores",
-            own / d.as_secs_f64(), children / d.as_secs_f64(), (own + children) / d.as_secs_f64()
+            "second pass CPU: this process {own:.1} s = {:.1} cores; helpers reaped {reaped:.1} s, still running [{}] = {:.1} cores; together {:.1} cores",
+            own / d.as_secs_f64(), live_delta.join(", "), (reaped + live_total) / d.as_secs_f64(), (own + reaped + live_total) / d.as_secs_f64()
         );
         assert_eq!(first.len(), photos.len());
         let _ = std::fs::remove_dir_all(&tmp);

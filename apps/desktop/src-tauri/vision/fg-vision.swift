@@ -197,7 +197,8 @@ func emit(_ d: [String: Any]) {
 }
 
 let input = Input()
-let queue = DispatchQueue(label: "fg-vision", attributes: .concurrent)
+// 显式要用户级 QoS：没有界面的子进程里不指定时队列继承的 QoS 可能让它落到能效核上（量过没有明显差别，但不留这个变数）
+let queue = DispatchQueue(label: "fg-vision", qos: .userInitiated, attributes: .concurrent)
 // 同时在做的请求不超过 `parallel` 个，另外最多再预读两个在内存里等着（每张 1024px 的像素约 2.4 MB）
 let slots = DispatchSemaphore(value: parallel + 2)
 let inflight = DispatchGroup()
