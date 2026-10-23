@@ -115,6 +115,10 @@
   },
   "scan": {
    "landing": "分析出结果的照片会陆续落到这里"
+  },
+  "cmp": {
+   "keepNth": "留第 {{n}} 张",
+   "groupShort": "第 {{i}} / {{n}} 组"
   }
  },
  "models": {

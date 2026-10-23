@@ -115,6 +115,10 @@
   },
   "scan": {
    "landing": "Photos land here as they are analysed"
+  },
+  "cmp": {
+   "keepNth": "Keep #{{n}}",
+   "groupShort": "Group {{i}} / {{n}}"
   }
  },
  "models": {

@@ -78,7 +78,8 @@ private data class View(val s: Float = 1f, val x: Float = 0f, val y: Float = 0f)
 /**
  * 从一组连拍里挑最好的（桌面端 Compare.tsx 的手机版）。几张照片尽量大地排开；任意一张上双指缩放、拖动、双击，
  * 所有照片一起动，同一处细节（眼睛、手）可以逐张对照。每张上面有它的几项数字（同组最高的加粗）和保留 / 淘汰。
- * 在底栏上左右滑、或点箭头换一组；下面的小图把同组其他照片换进最后一格。
+ * 在照片上左右滑（没放大时）或点箭头换一组。底下三行、高度固定不跳（作者 2026-10-23）：同组照片条（正在比的带编号）、
+ * "留第 1 张 / 留第 2 张"（留下它、别的标淘汰、跳下一组），翻组与范围。手机上固定并排比两张（以前的"2 3 4"张数选择看不懂）。
  */
 @Composable
 fun CompareView(photos: List<Photo>, all: List<Photo>, scopeProp: String, cull: CullState, decisions: Map<String, Decision>, onDecide: (String, String?) -> Unit, onOpen: (String) -> Unit, bottomPad: Dp) {
@@ -95,7 +96,7 @@ fun CompareView(photos: List<Photo>, all: List<Photo>, scopeProp: String, cull: 
     }
     val gi = groups.indexOf(keyOf(cur))
     fun ranked(id: Int) = (members[id] ?: emptyList()).sortedByDescending { it.score }
-    var count by remember { mutableIntStateOf(UiPrefs.int("cmpn", 2).coerceIn(2, 4)) }
+    val count = 2
     val groupPhotos = remember(gi, cur.group, cur.scene, members, scopeMode) { if (gi >= 0) ranked(keyOf(cur)) else emptyList() }
     val shownN = min(count, groupPhotos.size)
     // 屏幕上的几张住在固定的格子里；只有最后一格（挑战者）会被换掉
@@ -111,7 +112,6 @@ fun CompareView(photos: List<Photo>, all: List<Photo>, scopeProp: String, cull: 
         val by = groupPhotos.associateBy { it.path }
         slots.mapNotNull { by[it] }.ifEmpty { groupPhotos.take(shownN) }
     }
-    val candidates = groupPhotos.filter { g -> set.none { it.path == g.path } }
     fun jump(d: Int) {
         val from = if (gi >= 0) gi else if (d > 0) -1 else groups.size
         groups.getOrNull((from + d).coerceIn(0, groups.size - 1))?.let { cull.select(ranked(it)[0].path) }
@@ -142,8 +142,24 @@ fun CompareView(photos: List<Photo>, all: List<Photo>, scopeProp: String, cull: 
         if (faces) add(Triple("face", t("inspector.faces")) { p: Photo -> if (p.faceCount > 0) pct(p.faceMin ?: 0f) else null })
     }
 
+    // 快捷取舍：留下第 i 张、同屏其余的标淘汰，稍等一下（看得见星亮起来）跳下一组
+    fun keepOnly(i: Int) {
+        val chosen = set.getOrNull(i) ?: return
+        // 下一组先记下来：改判后这一组可能从当前页签里消失，列表会变
+        val nextPath = groups.getOrNull(gi + 1)?.let { ranked(it).firstOrNull()?.path }
+        onDecide(chosen.path, "keep")
+        set.forEachIndexed { k, p -> if (k != i) onDecide(p.path, "reject") }
+        scope.launch { delay(350); nextPath?.let { cull.select(it) } }
+    }
+
     Column(Modifier.fillMaxSize().padding(bottom = bottomPad)) {
-        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
+        BoxWithConstraints(
+            Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp).pointerInput(gi) {
+                // 没放大时左右滑换组（放大时单指拖动是平移，照片格子自己会吃掉这些事件）
+                var acc = 0f
+                detectHorizontalDragGestures(onDragStart = { acc = 0f }, onDragEnd = { if (view.value.s <= 1.01f) { if (acc < -80) jump(1) else if (acc > 80) jump(-1) }; acc = 0f }) { _, d -> acc += d }
+            },
+        ) {
             val gap = 8f
             val bw = constraints.maxWidth.toFloat(); val bh = constraints.maxHeight.toFloat()
             // 最合适的排法：让照片最大的那个列数
@@ -171,27 +187,37 @@ fun CompareView(photos: List<Photo>, all: List<Photo>, scopeProp: String, cull: 
                 }
             }
         }
-        // ---- 底栏一行（设计审查 A8.5）：‹ 第几组 › 在左，范围 / 张数的分段在右；同组其他照片另起一行 40dp，只在有候选时出现
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).pointerInput(gi) {
-                var acc = 0f
-                detectHorizontalDragGestures(onDragEnd = { if (acc < -60) jump(1) else if (acc > 60) jump(-1); acc = 0f }) { ch, d -> ch.consume(); acc += d }
-            },
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        // ---- 1. 同组照片条：高度固定、一直在。正在比的带编号和描边；点别的一张把它换进第二格
+        Row(Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 16.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            groupPhotos.forEach { p ->
+                val at = set.indexOfFirst { it.path == p.path }
+                Box(
+                    Modifier.size(40.dp).clip(RoundedCornerShape(6.dp))
+                        .border(if (at >= 0) 2.dp else 0.dp, if (at >= 0) c.ink else Color.Transparent, RoundedCornerShape(6.dp))
+                        .clickable(enabled = at < 0) { slots = slots.toMutableList().also { if (it.isNotEmpty()) it[it.size - 1] = p.path } },
+                ) {
+                    AsyncImage(File(p.thumb), null, Modifier.fillMaxSize().graphicsLayer { alpha = if (at >= 0) 1f else 0.55f }, contentScale = ContentScale.Crop)
+                    if (at >= 0) Text("${at + 1}", style = Type.caption.copy(color = Color.White, fontWeight = FontWeight.Bold),
+                        modifier = Modifier.align(Alignment.BottomStart).padding(3.dp).clip(RoundedCornerShape(3.dp)).background(Color(0xA3000000)).padding(horizontal = 4.dp))
+                    when (decisions[p.path]?.state) {
+                        "keep" -> Box(Modifier.align(Alignment.TopEnd).padding(2.dp)) { Star(true, 11.dp, glow = false) }
+                        "reject" -> Box(Modifier.fillMaxSize().background(Color(0x59000000)))
+                        else -> {}
+                    }
+                }
+            }
+        }
+        // ---- 2. 快捷取舍：留第 1 张 / 留第 2 张
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            set.indices.forEach { i -> FgButton(t("android.cmp.keepNth", "n" to i + 1), { keepOnly(i) }, modifier = Modifier.weight(1f)) }
+        }
+        // ---- 3. 翻组与范围
+        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
             ArrowBtn("M10 3L5 8l5 5", gi > 0) { jump(-1) }
-            Text(if (scopeMode == "scene") t("cmp.sceneOf", "n" to groupPhotos.size) else t("cmp.groupOf", "i" to gi + 1, "n" to groups.size), style = Type.monoSmall.copy(color = c.ash),
-                maxLines = 1, overflow = Ellipsis, modifier = Modifier.weight(1f).padding(horizontal = 4.dp))
+            Text(if (scopeMode == "scene") t("cmp.sceneOf", "n" to groupPhotos.size) else t("android.cmp.groupShort", "i" to gi + 1, "n" to groups.size), style = Type.monoSmall.copy(color = c.ash),
+                maxLines = 1, overflow = Ellipsis, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             ArrowBtn("M6 3l5 5-5 5", gi < groups.size - 1) { jump(1) }
             Segmented(listOf("group" to t("cmp.byGroup"), "scene" to t("cmp.byScene")), scopeMode, { scopeMode = it }, Modifier.padding(start = 8.dp))
-            if (groupPhotos.size > 2) Segmented(listOf(2, 3, 4).filter { it <= groupPhotos.size }.map { it to "$it" }, shownN, { n -> count = n; UiPrefs.put("cmpn", n) }, Modifier.padding(start = 8.dp))
-        }
-        if (candidates.isNotEmpty()) Row(Modifier.fillMaxWidth().height(40.dp).padding(horizontal = 16.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            candidates.forEach { p ->
-                AsyncImage(File(p.thumb), null, Modifier.size(36.dp).clip(RoundedCornerShape(6.dp)).clickable {
-                    slots = slots.toMutableList().also { if (it.isNotEmpty()) it[it.size - 1] = p.path }
-                }, contentScale = ContentScale.Crop)
-            }
         }
     }
 }

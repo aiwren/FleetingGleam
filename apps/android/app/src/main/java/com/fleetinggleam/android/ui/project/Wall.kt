@@ -147,6 +147,8 @@ fun Wall(
     header: (@Composable () -> Unit)? = null,
     /** 选中的那张换了、又不是点出来的（撤销、单张里换的）：把它所在的那一行滚到眼前（已经在屏幕上就不动）。 */
     reveal: String? = null,
+    /** 第 i 张的缩略图（有就预取：按滑动方向提前把后面约三屏解码进内存缓存，滑到时直接有图）。 */
+    thumbOf: ((Int) -> String?)? = null,
     tile: @Composable (index: Int, w: Dp, h: Dp) -> Unit,
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -163,11 +165,41 @@ fun Wall(
             val inView = visible.firstOrNull { it.index == idx }?.let { it.offset >= 0 && it.offset + it.size <= state.layoutInfo.viewportEndOffset - 120 } == true
             if (!inView) state.animateScrollToItem(idx, -200)
         }
-        LazyColumn(state = state, contentPadding = contentPadding, verticalArrangement = Arrangement.spacedBy(GAP.dp), modifier = Modifier.fillMaxSize()) {
-            if (header != null) item(key = "head") { header() }
-            items(rows, key = { "${items.getOrNull(it.from)?.key}" + "#${it.to - it.from}" }) { r ->
-                Row(horizontalArrangement = Arrangement.spacedBy(GAP.dp)) {
-                    for (i in r.from until r.to) tile(i, r.widths[i - r.from].dp, r.height.dp)
+        // 预取（作者 2026-10-23：两千张的相册快速滑动时格子是白的，停下才出图）：格子滑进屏幕时才去磁盘读、解码缩略图，
+        // 快速滑动时一屏几十张同时排队就跟不上。这里按滑动方向把后面 18 行（约三屏）提前解码进 Coil 的内存缓存，尺寸和格子一样
+        if (thumbOf != null) {
+            val ctx = androidx.compose.ui.platform.LocalContext.current
+            val headOff = if (header != null) 1 else 0
+            androidx.compose.runtime.LaunchedEffect(state, rows) {
+                val loader = coil3.SingletonImageLoader.get(ctx)
+                val done = HashSet<Int>()
+                var lastFirst = -1
+                androidx.compose.runtime.snapshotFlow { state.firstVisibleItemIndex to (state.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) }.collect { (first, last) ->
+                    val down = first >= lastFirst
+                    lastFirst = first
+                    val range = if (down) (last + 1)..(last + 18) else (first - 18) until first
+                    for (li in range) {
+                        val ri = li - headOff
+                        val r = rows.getOrNull(ri) ?: continue
+                        if (!done.add(ri)) continue
+                        for (i in r.from until r.to) {
+                            val th = thumbOf(i) ?: continue
+                            val w = (r.widths[i - r.from] * density.density).toInt().coerceAtLeast(1)
+                            val h = (r.height * density.density).toInt().coerceAtLeast(1)
+                            loader.enqueue(coil3.request.ImageRequest.Builder(ctx).data(java.io.File(th)).size(w, h).build())
+                        }
+                    }
+                }
+            }
+        }
+        // 滑动中格子一有图就直接显示，"显影"入场只留给停下来时第一次出现的那些
+        androidx.compose.runtime.CompositionLocalProvider(LocalWallScrolling provides state.isScrollInProgress) {
+            LazyColumn(state = state, contentPadding = contentPadding, verticalArrangement = Arrangement.spacedBy(GAP.dp), modifier = Modifier.fillMaxSize()) {
+                if (header != null) item(key = "head") { header() }
+                items(rows, key = { "${items.getOrNull(it.from)?.key}" + "#${it.to - it.from}" }) { r ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(GAP.dp)) {
+                        for (i in r.from until r.to) tile(i, r.widths[i - r.from].dp, r.height.dp)
+                    }
                 }
             }
         }
@@ -202,6 +234,9 @@ fun Star(filled: Boolean, size: Dp = 20.dp, color: Color = Color.White, glow: Bo
 
 // ---------------------------------------------------------------- 照片的入场：对焦
 
+/** 照片墙正在滑动（格子据此跳过入场动画）。 */
+val LocalWallScrolling = androidx.compose.runtime.compositionLocalOf { false }
+
 /** 这次会话里已经出现过的图（换视图、滚回来时不再"对焦"一遍）。 */
 private val seen = HashSet<String>()
 
@@ -212,7 +247,9 @@ private val seen = HashSet<String>()
 @Composable
 fun FocusImage(path: String, modifier: Modifier = Modifier, quick: Boolean = false, scale: ContentScale = ContentScale.Crop) {
     val c = LocalFg.current
-    val first = remember(path) { path !in seen }
+    val scrolling = LocalWallScrolling.current
+    // 滑动中进来的格子不播"显影"（等它显影完早滑过去了，看到的只是一块块白底）
+    val first = remember(path) { path !in seen && !scrolling }
     val p = remember(path) { Animatable(if (first) 0f else 1f) }
     var loaded by remember(path) { mutableStateOf(!first) }
     var missing by remember(path) { mutableStateOf(false) }

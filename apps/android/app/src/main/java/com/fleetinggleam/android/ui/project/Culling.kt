@@ -366,7 +366,7 @@ fun CullingContent(project: Project, cull: CullState, data: CullData, actions: C
             ) { _ ->
                 val state = rememberLazyListState()
                 Wall(items, if (cull.layout == ViewStyle.Grid) "grid" else "justified", state, PaddingValues(start = 16.dp, end = 16.dp, top = topPad + 4.dp, bottom = bottomPad),
-                    header = { if (data.shown.isEmpty()) EmptyView(cull, data) }, reveal = reveal) { i, w, h ->
+                    header = { if (data.shown.isEmpty()) EmptyView(cull, data) }, reveal = reveal, thumbOf = { data.shown.getOrNull(it)?.thumb }) { i, w, h ->
                     val p = data.shown[i]
                     val d = decisions[p.path]
                     val st = d?.state ?: ""

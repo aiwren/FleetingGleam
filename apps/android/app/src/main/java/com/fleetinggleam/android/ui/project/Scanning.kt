@@ -103,7 +103,7 @@ fun ScanningStage(cull: CullState, data: CullData, progress: Progress, onStop: (
         val card: @Composable () -> Unit = { Box(Modifier.padding(top = 4.dp, bottom = 10.dp).onGloballyPositioned { cardHeight = it.size.height }) { ScanningCard(progress, onStop) } }
         if (m == "all") {
             val items = remember(files) { files.map { WallItem(it.path, it.width.toFloat() / it.height.coerceAtLeast(1)) } }
-            Wall(items, "grid", state, pad, header = card) { i, w, h ->
+            Wall(items, "grid", state, pad, header = card, thumbOf = { i -> items.getOrNull(i)?.key?.let { k -> Session.results[k]?.thumb } }) { i, w, h ->
                 val path = items[i].key
                 val done = Session.results[path]
                 Box(Modifier.onGloballyPositioned { cull.coords[path] = it }) {
