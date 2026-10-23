@@ -60,12 +60,15 @@ object Core {
                 "data" to data.absolutePath, "thumbs" to thumbs.absolutePath, "models" to models.absolutePath, "scratch" to scratch.absolutePath,
                 "proxy" to proxyOf(cm?.getLinkProperties(cm.activeNetwork)), "version" to version,
             )
-            // ONNX Runtime 由核心库运行时加载（带高通 QNN 的那份，随应用装在原生库目录里）；高通 NPU 的驱动（Skel）由 DSP 那边按
-            // ADSP_LIBRARY_PATH 找，也指向原生库目录（安装时解压出来的真实文件，见 build.gradle.kts 的 useLegacyPackaging）
+            // ONNX Runtime 由核心库运行时加载（带高通 QNN 的那份，随应用装在原生库目录里）。高通 NPU 的驱动（libQnnHtpV*Skel.so）
+            // 是 DSP 那边按 ADSP_LIBRARY_PATH 找的：小米等系统给应用进程预设了这个变量、里面没有应用自己的库目录，ONNX Runtime 看到
+            // 已有的就照用，于是 DSP 找不到驱动、NPU 设备建不起来、模型整个落回 CPU。所以把原生库目录放到最前面，系统的路径留在后面。
+            // 另一半在 AndroidManifest.xml：声明 libcdsprpc.so（2026-10-23 真机：两样都有，大模型 CLIP 每张 650 → 46 ms）
             val libDir = ctx.applicationInfo.nativeLibraryDir
             runCatching {
                 android.system.Os.setenv("ORT_DYLIB_PATH", "$libDir/libonnxruntime.so", true)
-                android.system.Os.setenv("ADSP_LIBRARY_PATH", "$libDir;/vendor/dsp/cdsp;/vendor/lib/rfsa/adsp;/system/lib/rfsa/adsp;/dsp", true)
+                val sys = System.getenv("ADSP_LIBRARY_PATH")?.takeIf { it.isNotBlank() } ?: "/vendor/dsp/cdsp;/vendor/lib/rfsa/adsp;/system/lib/rfsa/adsp;/dsp"
+                android.system.Os.setenv("ADSP_LIBRARY_PATH", "$libDir;$sys", true)
             }
             // 核心库的解码交给系统：按需缩放、分块解码，两亿像素的照片也不整张进内存；顺带认识 HEIC / AVIF
             uniffi.fleetinggleam.setImageHelper(AndroidImages)

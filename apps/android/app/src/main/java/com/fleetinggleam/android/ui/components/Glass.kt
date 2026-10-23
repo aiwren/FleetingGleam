@@ -357,7 +357,9 @@ private fun Scrim(visible: Float, locked: Boolean, onDismiss: () -> Unit) {
 }
 
 /**
- * 玻璃对话框：居中、最宽 520dp、圆角 16；标题 16 半粗、正文、底部一行按钮。背后的页面被折射进来。
+ * 对话框：居中、最宽 520dp、圆角 16；标题 16 半粗、正文、底部一行按钮。实底（白卡）加一层柔和的投影。
+ * 液态玻璃只留给浮在内容上的控件（底部标签栏、操作条、圆钮、菜单、大图的控制条）——对话框、弹层、顶栏是承载内容的面，
+ * 做成玻璃时后面的页签和照片透上来、把标题压花（作者 2026-10-23："苹果也不是全部地方都有液态玻璃，只在必要的地方加"）。
  */
 @Composable
 fun GlassDialog(open: Boolean, onDismiss: () -> Unit, title: String, locked: Boolean = false, footer: (@Composable RowScope.() -> Unit)? = null, content: @Composable () -> Unit) {
@@ -371,7 +373,8 @@ fun GlassDialog(open: Boolean, onDismiss: () -> Unit, title: String, locked: Boo
             Box(
                 Modifier.padding(20.dp).widthIn(max = 520.dp).fillMaxWidth().heightIn(max = maxHeight - 40.dp)
                     .graphicsLayer { val s = 0.96f + 0.04f * a.value; scaleX = s; scaleY = s; alpha = a.value; translationY = (1f - a.value) * 12.dp.toPx() }
-                    .glass(LocalBackdrop.current, RoundedCornerShape(16.dp), glassStyle(strong = true), on = LocalGlassOn.current),
+                    .shadow(24.dp, RoundedCornerShape(16.dp), ambientColor = Color.Black.copy(alpha = 0.18f), spotColor = Color.Black.copy(alpha = 0.18f))
+                    .clip(RoundedCornerShape(16.dp)).background(c.panel),
             ) {
                 Column(Modifier.fillMaxWidth()) {
                     Text(title, style = Type.title.copy(fontSize = androidx.compose.ui.unit.TextUnit(16f, androidx.compose.ui.unit.TextUnitType.Sp), lineHeight = androidx.compose.ui.unit.TextUnit(21f, androidx.compose.ui.unit.TextUnitType.Sp), color = c.ink), modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 10.dp))
@@ -390,7 +393,8 @@ fun GlassDialog(open: Boolean, onDismiss: () -> Unit, title: String, locked: Boo
 }
 
 /**
- * 玻璃底部弹层：从底部升起，顶角 16，带把手；最高 90% 屏幕，内容自己滚动。`dark` 强制深色玻璃（大图里用）。
+ * 底部弹层：从底部升起，顶角 16，带把手；最高 90% 屏幕，内容自己滚动。实底：页面的分组底色（和 iOS 的分组弹层一样），
+ * 里面的白卡分组才看得出层次；`dark` 强制深色（大图里用）。不用液态玻璃，理由见 `GlassDialog`。
  */
 @Composable
 fun GlassSheet(open: Boolean, onDismiss: () -> Unit, dark: Boolean? = null, content: @Composable () -> Unit) {
@@ -405,7 +409,7 @@ fun GlassSheet(open: Boolean, onDismiss: () -> Unit, dark: Boolean? = null, cont
                 Box(
                     Modifier.fillMaxWidth().heightIn(max = maxHeight * 0.9f)
                         .graphicsLayer { translationY = (1f - a.value) * 80.dp.toPx(); alpha = a.value }
-                        .glass(LocalBackdrop.current, RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp), glassStyle(strong = true, dark = dark), on = LocalGlassOn.current),
+                        .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)).background(fg.canvas),
                 ) {
                     Column(Modifier.fillMaxWidth()) {
                         Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
@@ -425,7 +429,9 @@ fun GlassSheet(open: Boolean, onDismiss: () -> Unit, dark: Boolean? = null, cont
 @Composable
 fun GlassBar(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     val c = LocalFg.current
-    Box(modifier.fillMaxWidth().glass(LocalBackdrop.current, RoundedCornerShape(0.dp), glassStyle(strong = true).copy(shadow = false), on = LocalGlassOn.current)) {
+    // 实底（和页面同色）+ 底边一条细线：顶栏压在照片墙上做成液态玻璃时，后面的照片被糊成一块块色块透上来，标题和页签压在杂色上，
+    // 作者看真机说"怪怪的"（2026-10-23）。液态玻璃只留给浮在内容上的小件（底部标签栏、底栏、弹层）
+    Box(modifier.fillMaxWidth().background(c.canvas)) {
         content()
         Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(0.5.dp).background(c.line))
     }

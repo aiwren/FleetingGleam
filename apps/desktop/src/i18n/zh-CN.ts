@@ -23,7 +23,7 @@ const zh = {
     folders: "文件夹 · {{count}}", addFolder: "添加文件夹…", removeFolder: "从项目中移除", folderHint: "只是从项目里移除，不会删除任何文件。",
     newPhotos_other: "{{count}} 张新照片",
     loading: "正在载入项目…", probing: "正在读取文件夹…", preparingMedia: "正在为 HDR 和实况照片准备预览 {{done}}/{{total}}…", recognising: "正在识别照片里的人物 {{done}} / {{total}}（只有第一次需要）…",
-    reeval: "重新评估", reevalTip: "偏好已更新：用刚学到的偏好重新给这个项目打分", viewMenu: "浏览方式与排序",
+    reeval: "按新喜好重排", reevalTip: "喜好已更新：用刚学到的喜好重新给这个项目排一遍（不重新分析照片）", viewMenu: "浏览方式与排序",
     renameTip: "双击重命名",
     newProjectBtn: "新建项目",
     emptyFolder: "这个项目里没有找到 JPG、PNG 或 WebP 照片。",

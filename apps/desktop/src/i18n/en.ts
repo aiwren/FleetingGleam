@@ -24,7 +24,7 @@ const en = {
     folders: "Folders · {{count}}", addFolder: "Add folder…", removeFolder: "Remove from project", folderHint: "This only removes it from the project. No files are deleted.",
     newPhotos_one: "{{count}} new photo", newPhotos_other: "{{count}} new photos",
     loading: "Loading project…", probing: "Reading folders…", preparingMedia: "Preparing HDR and motion previews {{done}}/{{total}}…", recognising: "Recognising the people in your photos {{done}} / {{total}} (first time only)…",
-    reeval: "Re-evaluate", reevalTip: "Preferences updated: score this project again with what was just learned", viewMenu: "View and sort",
+    reeval: "Re-rank with new taste", reevalTip: "Your taste changed: rank this project again with what was just learned (photos are not re-analysed)", viewMenu: "View and sort",
     renameTip: "Double-click to rename",
     newProjectBtn: "New project",
     emptyFolder: "No JPG, PNG or WebP photos were found in this project.",

@@ -244,6 +244,17 @@ fn race(acc: &Pool, cpu: &Pool, copies: usize, input: &[f32]) -> Result<(f64, f6
     Ok((acc_ms, cpu_ms))
 }
 
+/// 诊断：在这个会话池上算 `n` 张固定输入（先算一张预热），返回每张的毫秒数。
+pub fn probe_run(pool: &Pool, n: usize) -> Result<f64, String> {
+    let input = probe_input();
+    run_clip(pool, input.clone())?;
+    let t = std::time::Instant::now();
+    for _ in 0..n.max(1) {
+        run_clip(pool, input.clone())?;
+    }
+    Ok(t.elapsed().as_secs_f64() * 1000.0 / n.max(1) as f64)
+}
+
 fn run_clip(pool: &Pool, input: Vec<f32>) -> Result<Vec<f32>, String> {
     let input = Tensor::from_array(([1usize, 3, 224, 224], input)).map_err(|e| e.to_string())?;
     pool.run(|session| {
@@ -339,6 +350,11 @@ impl ClipScorer {
                 if accel && modelfiles::has_model(model_dir, B32_FP16_FILE) { (B32_FP16_FILE, B32_HEAD, "cpu-fp16", "ViT-B/32") } else { (INT8_FILE, B32_HEAD, "cpu-int8", "ViT-B/32") }
             }
         };
+        // 模型文件不在（这台机器没下载这个档）就直接说，不去试加速器、不建会话：搜索索引和场景命名在只装了高质量档的手机上
+        // 每次都来要快档的 B/32，以前每次都要走一遍加速器验证再失败，日志刷屏、还拖慢别的事（2026-10-23 真机）
+        if !modelfiles::has_model(model_dir, file) {
+            return Err(format!("{file}: not downloaded"));
+        }
         let n = copies.unwrap_or_else(|| sessions_for(model, file)).max(1);
         // the cores are shared out between the copies
         let threads = (std::thread::available_parallelism().map(|c| c.get()).unwrap_or(4) / n).max(2);
@@ -786,5 +802,42 @@ mod search_tests {
                 sheet.save(Path::new(&out).join(format!("{}.png", query.replace(' ', "_")))).unwrap();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod device_tests {
+    use super::*;
+
+    /// 手机上：CLIP 模型在加速器（高通 NPU）上被切成几段、哪些算子留在 CPU、一张多少毫秒。
+    /// `FG_MODELS=<模型文件夹> FG_CLIP=<文件名，默认 L/14 fp16>`；ONNX Runtime 的日志调到 Info，只打印和 QNN / 分区有关的行。
+    #[test]
+    #[ignore = "on a device: FG_MODELS"]
+    fn device_clip_on_accelerator() {
+        let Ok(dir) = std::env::var("FG_MODELS") else { return };
+        let file = std::env::var("FG_CLIP").unwrap_or_else(|_| L14_FP16_FILE.to_string());
+        ort::init()
+            .with_logger(std::sync::Arc::new(|_l: ort::logging::LogLevel, _c: &str, _i: &str, _loc: &str, msg: &str| {
+                let m = msg.to_lowercase();
+                if !m.contains("removing initializer") && (m.contains("qnn") || m.contains("partition") || m.contains("soc") || m.contains("arch") || m.contains("platform") || m.contains("device") || m.contains("htp")) {
+                    println!("[ort] {msg}");
+                }
+            }))
+            .commit();
+        if let Ok(env) = ort::environment::Environment::current() {
+            env.set_log_level(ort::logging::LogLevel::Info);
+        }
+        let path = Path::new(&dir).join(&file);
+        let t = std::time::Instant::now();
+        let s = crate::onnx::load_accelerated(&path, Some(2)).expect("accelerated session");
+        println!("load {:?}", t.elapsed());
+        let pool = Pool::new(vec![s]);
+        let input = probe_input();
+        run_clip(&pool, input.clone()).expect("first run");
+        let t = std::time::Instant::now();
+        for _ in 0..5 {
+            run_clip(&pool, input.clone()).unwrap();
+        }
+        println!("{file}: {:.0} ms per picture on the accelerator", t.elapsed().as_secs_f64() * 1000.0 / 5.0);
     }
 }

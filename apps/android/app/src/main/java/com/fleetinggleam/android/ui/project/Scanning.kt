@@ -176,13 +176,16 @@ fun JudgeFlights(cull: CullState) {
     LaunchedEffect(Unit) {
         Session.judged.collect { batch ->
             var wait = 0L
+            // 诊断（作者 2026-10-23 说动效没了）：这一批来了几条、各因为什么没飞
+            var noTile = 0; var noTab = 0; var above = 0; var flown = 0
             for ((path, state) in batch) {
                 if (state == "reject") continue
                 // 一批最多 6 粒、错开 60 ms（设计审查 A5.7）
                 if (motes.size >= 6) break
-                val from = cull.rect(path) ?: continue
-                val to = cull.tabRect(state) ?: continue
-                if (from.bottom < to.top || from.height <= 0f) continue
+                val from = cull.rect(path) ?: run { noTile++; null } ?: continue
+                val to = cull.tabRect(state) ?: run { noTab++; null } ?: continue
+                if (from.bottom < to.top || from.height <= 0f) { above++; continue }
+                flown++
                 // 起点是格子上星出现的位置（右上 19dp），终点是页签数字的左侧 6dp
                 val inset = with(density) { 19.dp.toPx() }
                 val m = Mote(++seq, state == "keep", Offset(from.right - inset, from.top + inset), Offset(to.left - with(density) { 6.dp.toPx() }, to.center.y))
@@ -195,6 +198,7 @@ fun JudgeFlights(cull: CullState) {
                     motes -= m
                 }
             }
+            android.util.Log.i("FleetingGleam", "分拣动效：这批 ${batch.size} 条，飞了 $flown，格子不在屏上 $noTile，没找到页签 $noTab，格子在页签上方 $above，飞行中 ${motes.size}")
         }
     }
     Box(Modifier.fillMaxSize().onGloballyPositioned { origin = it.boundsInRoot().topLeft }) {

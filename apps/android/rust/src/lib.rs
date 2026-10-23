@@ -294,6 +294,8 @@ fn dispatch(e: &Arc<Engine>, method: &str, a: &Value) -> Result<Value, String> {
         }
         // 模型包与机器
         "machine_info" => out(e.machine_info()),
+        "accel_probe" => out(e.accel_probe(&s(a, "file")?)?),
+        "forget_folders" => out(e.forget_folders(&strings(a, "dirs"), &strings(a, "keep"))),
         "packs_status" => out(e.packs_status(b(a, "with_sizes"))),
         "pack_size" => out(e.pack_size(&s(a, "id")?)?),
         "pack_download" => out(e.pack_download(&s(a, "id")?)?),

@@ -31,6 +31,9 @@
         android:supportsRtl="true"
         android:enableOnBackInvokedCallback="true"
         android:theme="@style/Theme.FleetingGleam">
+        <!-- 高通 NPU：QNN 的 HTP 驱动要通过系统的 libcdsprpc.so 和 DSP 通信。Android 12 起应用要用这种厂商公开库必须在这里声明，
+             否则应用进程里 dlopen 找不到它，NPU 设备建不起来、模型整个落回 CPU（2026-10-23 真机）。required=false：非高通手机照常安装 -->
+        <uses-native-library android:name="libcdsprpc.so" android:required="false" />
         <profileable android:shell="true" />
         <activity
             android:name=".MainActivity"

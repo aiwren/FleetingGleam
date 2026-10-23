@@ -142,7 +142,9 @@ fun ProjectHome(onOpenStyles: () -> Unit) {
                     Row(Modifier.fillMaxWidth().padding(top = 10.dp).height(36.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(t("home.title"), style = Type.largeTitle.copy(color = c.ink), modifier = Modifier.weight(1f))
                     }
-                    if (index.available && allFolders.isNotEmpty())
+                    // 有项目就显示搜索框（作者 2026-10-23 找不到全局搜索：以前没下载文字搜索模型时整个入口是藏起来的）；
+                    // 没装模型时点进去会问一次要不要下载（文字搜索 + 快档的 B/32，见 ensureSearch），下完就建索引
+                    if (allFolders.isNotEmpty())
                         com.fleetinggleam.android.ui.project.SearchField(search, Modifier.padding(top = 12.dp), placeholder = t("search.globalPlaceholder"), autoFocus = false)
                 } else {
                     // 回收站：推进页

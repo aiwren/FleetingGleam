@@ -80,7 +80,33 @@ pub fn small_copies() -> usize {
 }
 
 /// 一个会话构建器；`threads` 是算子内并行的线程数（None = ONNX Runtime 自己定）。
+/// ONNX Runtime 自己的警告和错误（以及每个模型在加速器上分了几段）写进我们的诊断日志：默认它们在手机上没人看得到，
+/// 高通 NPU 在应用里没接手模型时，ONNX Runtime 只发一条警告、然后整个模型悄悄落回 CPU（2026-10-23 真机）。
+fn ensure_ort_logging() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        use ort::logging::LogLevel;
+        // FG_ORT_VERBOSE（调试）：ONNX Runtime 与高通 QNN 的详细日志全部转出来
+        let verbose = std::env::var_os("FG_ORT_VERBOSE").is_some();
+        ort::init()
+            .with_logger(std::sync::Arc::new(move |level: LogLevel, _c: &str, _i: &str, _loc: &str, msg: &str| {
+                let serious = matches!(level, LogLevel::Warning | LogLevel::Error | LogLevel::Fatal);
+                let noise = msg.contains("Removing initializer") || msg.contains("appears in graph inputs");
+                if (serious && !noise) || msg.contains("partitions supported") || (verbose && !noise) {
+                    let tag = match level { LogLevel::Fatal => "致命", LogLevel::Error => "错误", LogLevel::Warning => "警告", _ => "信息" };
+                    crate::platform::log(&format!("ONNX Runtime {tag}：{msg}"));
+                }
+            }))
+            .commit();
+        // 分区信息是 Info 级别；Info 级的其余消息被上面的过滤丢掉
+        if let Ok(env) = ort::environment::Environment::current() {
+            env.set_log_level(if verbose { LogLevel::Verbose } else { LogLevel::Info });
+        }
+    });
+}
+
 pub fn builder(threads: Option<usize>) -> Result<SessionBuilder, String> {
+    ensure_ort_logging();
     let mut b = Session::builder().map_err(|e| e.to_string())?;
     // 推理线程等活时不空转（`FG_SPIN=1` 恢复 ONNX Runtime 的默认）：分析时十几个会话同时在，空转的线程把解码这些真正要算的活挤掉
     if std::env::var("FG_SPIN").map_or(true, |v| v != "1") {
@@ -113,6 +139,11 @@ pub fn load(path: &Path, threads: Option<usize>) -> Result<Session, String> {
 /// ONNX Runtime 会把加速器不接的节点留在 CPU 上，所以总能建出来；答案对不对要调用方自己验（`verified`）。
 #[cfg_attr(not(any(target_os = "macos", target_os = "android")), allow(unused_mut))]
 pub fn load_accelerated(path: &Path, threads: Option<usize>) -> Result<Session, String> {
+    #[cfg(all(target_os = "android", feature = "qnn"))]
+    {
+        return load_qnn(path, threads);
+    }
+    #[allow(unreachable_code)]
     let mut b = builder(threads)?;
     #[cfg(target_os = "macos")]
     {
@@ -123,27 +154,73 @@ pub fn load_accelerated(path: &Path, threads: Option<usize>) -> Result<Session, 
         // NCHW 省掉模型前后的转置；fp16 松弛不开（分数要和别的平台一致）
         b = b.with_execution_providers([ort::ep::NNAPI::default().with_nchw(true).build()]).map_err(|e| e.to_string())?;
     }
-    #[cfg(all(target_os = "android", feature = "qnn"))]
-    {
-        // 高通 NPU（HTP）：float16 精度跑 float16 的模型；不是高通芯片、或运行库加载失败时这里报错，调用方回落 CPU。
+    match inside_app(path) {
+        Some(bytes) => b.commit_from_memory(bytes).map_err(|e| format!("{}: {e}", path.display())),
+        None => b.commit_from_file(path).map_err(|e| format!("{}: {e}", path.display())),
+    }
+}
+
+/// 高通 NPU（HTP）上的会话：float16 精度跑 float16 的模型；不是高通芯片、或运行库加载失败时报错，调用方回落 CPU。
+/// NPU 第一次要在手机上把模型编译成它的格式（大模型十几秒），编译结果存在模型旁边（`<模型>.qnn-<大小>.ctx.onnx`），
+/// 以后直接加载它、不再编译；缓存坏了或和这台机器的 NPU 对不上就删掉重编。
+#[cfg(all(target_os = "android", feature = "qnn"))]
+fn load_qnn(path: &Path, threads: Option<usize>) -> Result<Session, String> {
+    let fresh = || -> Result<SessionBuilder, String> {
+        let mut b = builder(threads)?;
         // NPU 只吃固定形状：CLIP 导出时四个维度都是动态的（批、通道、高、宽），固定成它实际用的 1 x 3 x 224 x 224，结果不变；
         // 别的模型没有这些名字的维度，覆盖不起作用
         for (dim, v) in [("batch_size", 1), ("num_channels", 3), ("height", 224), ("width", 224)] {
             b = b.with_dimension_override(dim, v).map_err(|e| e.to_string())?;
         }
-        b = b
-            .with_execution_providers([ort::ep::QNN::default()
-                .with_backend_path("libQnnHtp.so")
-                .with_htp_fp16_precision(true)
-                .with_performance_mode(ort::ep::qnn::PerformanceMode::Burst)
-                .build()
-                .error_on_failure()])
-            .map_err(|e| e.to_string())?;
+        let mut qnn = ort::ep::QNN::default()
+            .with_backend_path("libQnnHtp.so")
+            .with_htp_fp16_precision(true)
+            .with_performance_mode(ort::ep::qnn::PerformanceMode::Burst);
+        // NPU 的代际与芯片编号：应用进程读不了 /sys 里的芯片信息，NPU 自己认不出是哪一代时设备建不起来；宿主按 Build.SOC_MODEL 告诉我们
+        if let Some(arch) = std::env::var("FG_QNN_ARCH").ok().and_then(|v| v.parse::<u32>().ok()).filter(|v| *v > 0) {
+            qnn = qnn.with_htp_arch(arch);
+        }
+        if let Ok(soc) = std::env::var("FG_QNN_SOC") {
+            if !soc.is_empty() {
+                qnn = qnn.with_soc_model(soc);
+            }
+        }
+        b.with_execution_providers([qnn.build().error_on_failure()]).map_err(|e| e.to_string())
+    };
+    if let Some(bytes) = inside_app(path) {
+        return fresh()?.commit_from_memory(bytes).map_err(|e| format!("{}: {e}", path.display()));
     }
-    match inside_app(path) {
-        Some(bytes) => b.commit_from_memory(bytes).map_err(|e| format!("{}: {e}", path.display())),
-        None => b.commit_from_file(path).map_err(|e| format!("{}: {e}", path.display())),
+    let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("model");
+    let ctx = path.with_file_name(format!("{stem}.qnn-{size}.ctx.onnx"));
+    if ctx.exists() {
+        let t = std::time::Instant::now();
+        match fresh()?.commit_from_file(&ctx) {
+            Ok(s) => {
+                crate::platform::log(&format!("QNN {stem}：用编译缓存，{} ms", t.elapsed().as_millis()));
+                return Ok(s);
+            }
+            Err(e) => {
+                crate::platform::log(&format!("QNN {stem}：编译缓存用不了（{e}），重编"));
+                let _ = std::fs::remove_file(&ctx);
+            }
+        }
     }
+    let t = std::time::Instant::now();
+    let mut b = fresh()?
+        .with_config_entry("ep.context_enable", "1")
+        .and_then(|b| b.with_config_entry("ep.context_embed_mode", "1"))
+        .and_then(|b| b.with_config_entry("ep.context_file_path", ctx.to_string_lossy()))
+        .map_err(|e| e.to_string())?;
+    let s = b.commit_from_file(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    crate::platform::log(&format!("QNN {stem}：编译 {} ms，缓存 {}", t.elapsed().as_millis(), if ctx.exists() { "已存" } else { "没存下" }));
+    // 编译缓存只在 NPU 真的接手了模型（哪怕一部分）时才写：没写说明整个模型落回了 CPU，这时这一份"加速器会话"只是一份
+    // 单独的 CPU 会话，分析线程全排在它后面（2026-10-23 真机：大模型"在 NPU 上"每张 554 ms，其实是 CPU）。当作 NPU 不可用，
+    // 让调用方用正常的 CPU 方案
+    if !ctx.exists() {
+        return Err(format!("QNN 没接手 {stem}（整个模型落在 CPU 上）"));
+    }
+    Ok(s)
 }
 
 /// 加速器上的会话是否和 CPU 给出同样的答案，这台机器上只对一次：`check` 建两个会话算一个固定输入、比较并返回是否一致；

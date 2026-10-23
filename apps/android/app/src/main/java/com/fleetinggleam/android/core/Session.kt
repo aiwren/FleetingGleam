@@ -244,6 +244,8 @@ object Session {
      * 跑完时如果页面还开着它就把结果交给页面，不然只更新项目封面、弹一句"分析完成"。`attach` = 页面现在就显示这次分析。
      */
     private suspend fun runScan(project: Project, total: Int, quiet: Boolean, tok: Int, force: Boolean = false, attach: Boolean = true) {
+        // 诊断：每次分析 / 读取从哪里来（作者 2026-10-23："重新分析"点了没反应）
+        android.util.Log.i("FleetingGleam", "runScan ${project.name}：${if (quiet) "安静读取" else "分析"}${if (force) "（强制）" else ""}，来自 ${Throwable().stackTrace.getOrNull(1)?.let { "${it.methodName}:${it.lineNumber}" }}")
         if (quiet) phase.value = Phase.Loading
         else {
             results.clear(); stages.clear(); live.clear(); lastStage = null

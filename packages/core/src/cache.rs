@@ -219,6 +219,16 @@ impl Cache {
     }
 
     /// The photo record of an entry (any analysis version), for showing search results.
+    /// 忘掉这些文件夹（含子文件夹）里照片的分析结果，`keep` 里的文件夹除外（别的项目还用着），返回忘掉的照片路径。
+    pub fn forget_under(&mut self, dirs: &[String], keep: &[String]) -> Vec<String> {
+        let under = |k: &str, d: &String| k.starts_with(&format!("{}/", d.trim_end_matches('/')));
+        let gone: Vec<String> = self.entries.keys().filter(|k| dirs.iter().any(|d| under(k, d)) && !keep.iter().any(|d| under(k, d))).cloned().collect();
+        for k in &gone {
+            self.entries.remove(k);
+        }
+        gone
+    }
+
     pub fn photo(&self, key: &str) -> Option<&Photo> {
         self.entries.get(key).map(|e| &e.photo)
     }

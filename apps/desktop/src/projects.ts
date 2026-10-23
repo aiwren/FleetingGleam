@@ -183,11 +183,24 @@ export function restoreProject(id: string) {
   commit({ ...store, projects: store.projects.map((p) => { if (p.id !== id) return p; const { trashed: _t, ...rest } = p; return rest; }) });
 }
 /** Permanent removal of the project record (never the photos on disk). */
+/**
+ * 彻底删掉的项目：它们文件夹里照片的分析结果和缩略图也一起清掉（还在的项目——含回收站里的——用着的文件夹不动）。
+ * 分析结果是按照片存的，不清的话再用同一个文件夹建项目会直接拿到旧结果（作者 2026-10-23）。
+ */
+function forgetRemoved(removed: Project[], remaining: Project[]) {
+  const dirs = removed.flatMap((p) => p.folders);
+  if (!dirs.length) return;
+  invoke("forget_folders", { dirs, keep: remaining.flatMap((p) => p.folders) }).catch(() => { /* not in Tauri */ });
+}
 export function purgeProject(id: string) {
-  commit({ projects: store.projects.filter((p) => p.id !== id), activeId: store.activeId === id ? null : store.activeId });
+  const left = store.projects.filter((p) => p.id !== id);
+  forgetRemoved(store.projects.filter((p) => p.id === id), left);
+  commit({ projects: left, activeId: store.activeId === id ? null : store.activeId });
 }
 export function emptyTrash() {
-  commit({ ...store, projects: store.projects.filter((p) => !p.trashed) });
+  const left = store.projects.filter((p) => !p.trashed);
+  forgetRemoved(store.projects.filter((p) => p.trashed), left);
+  commit({ ...store, projects: left });
 }
 export function setActive(id: string | null) { commit({ ...store, activeId: id }); }
 
@@ -195,6 +208,8 @@ export function setActive(id: string | null) { commit({ ...store, activeId: id }
 export function purgeExpired() {
   const cutoff = Date.now() - TRASH_DAYS * 86400_000;
   if (store.projects.some((p) => p.trashed && p.trashed <= cutoff)) {
-    commit({ ...store, projects: store.projects.filter((p) => !p.trashed || p.trashed > cutoff) });
+    const left = store.projects.filter((p) => !p.trashed || p.trashed > cutoff);
+    forgetRemoved(store.projects.filter((p) => p.trashed && p.trashed <= cutoff), left);
+    commit({ ...store, projects: left });
   }
 }

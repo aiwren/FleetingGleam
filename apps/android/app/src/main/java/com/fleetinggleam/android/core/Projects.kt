@@ -153,13 +153,28 @@ object Projects {
     }
 
     /** Permanent removal of the project record (never the photos on disk). */
+    /**
+     * 彻底删掉的项目：它们文件夹里照片的分析结果和缩略图也一起清掉（还在的项目——含回收站里的——用着的文件夹不动）。
+     * 分析结果是按照片存的，不清的话再用同一个相册建项目会直接拿到旧结果（作者 2026-10-23）。
+     */
+    private fun forgetRemoved(removed: List<Project>, remaining: List<Project>) {
+        val dirs = removed.flatMap { it.folders }
+        if (dirs.isEmpty()) return
+        val keep = remaining.flatMap { it.folders }
+        Thread({ runCatching { Core.callBlocking("forget_folders", args("dirs" to dirs, "keep" to keep)) } }, "fg-forget").start()
+    }
+
     fun purge(id: String) {
         val s = _store.value
-        commit(ProjectsFile(s.projects.filter { it.id != id }, if (s.activeId == id) null else s.activeId))
+        val left = s.projects.filter { it.id != id }
+        forgetRemoved(s.projects.filter { it.id == id }, left)
+        commit(ProjectsFile(left, if (s.activeId == id) null else s.activeId))
     }
 
     fun emptyTrash() {
-        commit(_store.value.copy(projects = _store.value.projects.filter { it.trashed == null }))
+        val left = _store.value.projects.filter { it.trashed == null }
+        forgetRemoved(_store.value.projects.filter { it.trashed != null }, left)
+        commit(_store.value.copy(projects = left))
     }
 
     fun setActive(id: String?) {
@@ -170,7 +185,9 @@ object Projects {
     fun purgeExpired() {
         val cutoff = System.currentTimeMillis() - TRASH_DAYS * 86_400_000L
         if (_store.value.projects.any { it.trashed != null && it.trashed <= cutoff }) {
-            commit(_store.value.copy(projects = _store.value.projects.filter { it.trashed == null || it.trashed > cutoff }))
+            val left = _store.value.projects.filter { it.trashed == null || it.trashed > cutoff }
+            forgetRemoved(_store.value.projects.filter { it.trashed != null && it.trashed <= cutoff }, left)
+            commit(_store.value.copy(projects = left))
         }
     }
 

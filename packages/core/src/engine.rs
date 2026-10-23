@@ -583,6 +583,7 @@ impl Engine {
             files
         });
         let total = files.len();
+        crate::platform::log(&format!("分析开始 [{}#{job}]：{total} 张，要分析 {}，缓存命中 {}{}{}", a.key, jobs.len(), hits.len(), if force { "，强制重新分析" } else { "" }, if quiet { "，安静读取" } else { "" }));
         // 分析结果还在、缩略图被清掉了（手机的"清理加速"会清应用缓存，或缩略图目录换了地方）：只重做缩略图，不重新分析；
         // 连缩略图都做不出来的（文件读不了了）才回去重新分析
         if hits.iter().any(|p| !Path::new(&p.thumb).exists()) {
@@ -769,6 +770,8 @@ impl Engine {
             }
         }
         if cancelled() {
+            crate::platform::log(&format!("分析被取消 [{}#{job}]：分析出 {} 张（{}）", a.key, fresh.len(),
+                if self.cancel_gen.load(Ordering::Relaxed) != gen { "全部取消" } else { "这个项目又开始了一次新的分析或读取，或被按项目取消" }));
             return Err("cancelled".to_string());
         }
 
@@ -1865,6 +1868,49 @@ impl Engine {
 
     // ------------------------------------------------------------ 模型包
 
+    /// 彻底删除项目（清空回收站、回收站过期）时调用：忘掉这些文件夹里照片的分析结果，删掉它们的缩略图、分析副本、大图预览、
+    /// 清晰块和实况片段。`keep` 是还在的项目（含回收站里的）的文件夹，那里面的照片不动。返回忘掉了几张。
+    /// （作者 2026-10-23：删了项目、清空回收站，再用同一个相册建项目，结果还是直接出来——分析结果是按照片存的、不跟项目走。）
+    pub fn forget_folders(&self, dirs: &[String], keep: &[String]) -> usize {
+        let gone = self.with_cache(|c| {
+            let g = c.forget_under(dirs, keep);
+            if !g.is_empty() {
+                c.save();
+            }
+            g
+        });
+        if gone.is_empty() {
+            return 0;
+        }
+        // 衍生文件都以照片路径的哈希开头（`analyze::cache_name`），分在缩略图目录和它的 large / detail 子目录里
+        let prefixes: std::collections::HashSet<String> = gone.iter().map(|p| analyze::cache_name(Path::new(p), "", Path::new("")).to_string_lossy().into_owned()).collect();
+        for dir in [self.paths.thumbs.clone(), self.paths.thumbs.join("large"), self.paths.thumbs.join("detail")] {
+            let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+            for e in rd.flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                if name.len() >= 16 && prefixes.contains(&name[..16]) {
+                    let _ = std::fs::remove_file(e.path());
+                }
+            }
+        }
+        self.last_photos.lock().unwrap_or_else(|e| e.into_inner()).retain(|(_, ps)| !ps.iter().any(|p| gone.contains(&p.path)));
+        crate::platform::log(&format!("忘掉了 {} 张照片的分析结果（彻底删除的项目）", gone.len()));
+        gone.len()
+    }
+
+    /// 诊断：在这台机器的加速器上单独加载一个 CLIP 模型、算 5 张，结果写进诊断日志并返回（调试开关用，界面上没有入口）。
+    pub fn accel_probe(&self, file: &str) -> Result<String, String> {
+        let path = self.paths.models.join(file);
+        let t = std::time::Instant::now();
+        let s = crate::onnx::load_accelerated(&path, Some(2))?;
+        let load = t.elapsed();
+        let pool = crate::onnx::Pool::new(vec![s]);
+        let ms = scorer::probe_run(&pool, 5)?;
+        let out = format!("加速器试跑 {file}：加载 {} ms，每张 {ms:.0} ms", load.as_millis());
+        crate::platform::log(&out);
+        Ok(out)
+    }
+
     pub fn machine_info(&self) -> Machine {
         Machine { memory_gb: crate::platform::physical_memory() >> 30, cores: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1), accelerator: crate::onnx::accelerator().to_string() }
     }
@@ -2342,6 +2388,28 @@ mod tests {
         ev.0.lock().unwrap().clear();
         e.scan_project(ScanArgs { key: "k".into(), dirs: vec![dir.to_string_lossy().into_owned()], quiet: true, force: true, live: Some(LiveArgs { keep_ratio: 1.0, ..Default::default() }), ..Default::default() }).unwrap();
         assert!(!ev.0.lock().unwrap().iter().any(|(n, _)| n == "scan-decide"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 彻底删除项目后，它文件夹里照片的分析结果和缩略图都没了，再打开要重新分析；别的项目还在用的文件夹不受影响。
+    #[test]
+    fn forgetting_a_deleted_projects_folders() {
+        let (e, root, _) = engine("forget");
+        let (da, db) = (root.join("a"), root.join("b"));
+        photos(&da, 2);
+        photos(&db, 2);
+        let scan = |d: &Path| e.scan_project(ScanArgs { key: "k".into(), dirs: vec![d.to_string_lossy().into_owned()], ..Default::default() }).unwrap();
+        let a = scan(&da);
+        scan(&db);
+        let thumb = PathBuf::from(&a[0].thumb);
+        assert!(thumb.exists());
+        let (sa, sb) = (da.to_string_lossy().into_owned(), db.to_string_lossy().into_owned());
+        // b 还被别的项目用着：a 和 b 都要删，但只忘掉 a
+        assert_eq!(e.forget_folders(&[sa.clone(), sb.clone()], &[sb.clone()]), 2);
+        assert!(!thumb.exists(), "the thumbnail went with it");
+        let probe = |d: &str| e.probe_folder(&[d.to_string()], None, None).unwrap().uncached;
+        assert_eq!(probe(&sa), 2, "a has to be analysed again");
+        assert_eq!(probe(&sb), 0, "b, still in use, is untouched");
         let _ = std::fs::remove_dir_all(&root);
     }
 
