@@ -78,8 +78,8 @@ private data class View(val s: Float = 1f, val x: Float = 0f, val y: Float = 0f)
 /**
  * 从一组连拍里挑最好的（桌面端 Compare.tsx 的手机版）。几张照片尽量大地排开；任意一张上双指缩放、拖动、双击，
  * 所有照片一起动，同一处细节（眼睛、手）可以逐张对照。每张上面有它的几项数字（同组最高的加粗）和保留 / 淘汰。
- * 在照片上左右滑（没放大时）或点箭头换一组。底下三行、高度固定不跳（作者 2026-10-23）：同组照片条（正在比的带编号）、
- * "留第 1 张 / 留第 2 张"（留下它、别的标淘汰、跳下一组），翻组与范围。手机上固定并排比两张（以前的"2 3 4"张数选择看不懂）。
+ * 在照片上左右滑（没放大时）或点箭头换一组。底下两行、高度固定不跳（作者 2026-10-23）：同组照片条（正在比的带编号）、翻组与范围；
+ * "留第 1 张 / 留第 2 张"（留下它、别的标淘汰、跳下一组）在底部浮动栏里。手机上固定并排比两张（以前的"2 3 4"张数选择看不懂）。
  */
 @Composable
 fun CompareView(photos: List<Photo>, all: List<Photo>, scopeProp: String, cull: CullState, decisions: Map<String, Decision>, onDecide: (String, String?) -> Unit, onOpen: (String) -> Unit, bottomPad: Dp) {
@@ -152,6 +152,14 @@ fun CompareView(photos: List<Photo>, all: List<Photo>, scopeProp: String, cull: 
         scope.launch { delay(350); nextPath?.let { cull.select(it) } }
     }
 
+    // 快捷取舍交给底部浮动栏显示
+    val keepNow by androidx.compose.runtime.rememberUpdatedState<(Int) -> Unit> { i -> keepOnly(i) }
+    androidx.compose.runtime.DisposableEffect(cull) {
+        cull.compareKeep = { i -> keepNow(i) }
+        onDispose { cull.compareKeep = null; cull.compareCount = 0 }
+    }
+    androidx.compose.runtime.SideEffect { cull.compareCount = set.size }
+
     Column(Modifier.fillMaxSize().padding(bottom = bottomPad)) {
         BoxWithConstraints(
             Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp).pointerInput(gi) {
@@ -207,11 +215,7 @@ fun CompareView(photos: List<Photo>, all: List<Photo>, scopeProp: String, cull: 
                 }
             }
         }
-        // ---- 2. 快捷取舍：留第 1 张 / 留第 2 张
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            set.indices.forEach { i -> FgButton(t("android.cmp.keepNth", "n" to i + 1), { keepOnly(i) }, modifier = Modifier.weight(1f)) }
-        }
-        // ---- 3. 翻组与范围
+        // ---- 2. 翻组与范围（"留第 1 张 / 留第 2 张"在底部浮动栏里，见 CullBar）
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
             ArrowBtn("M10 3L5 8l5 5", gi > 0) { jump(-1) }
             Text(if (scopeMode == "scene") t("cmp.sceneOf", "n" to groupPhotos.size) else t("android.cmp.groupShort", "i" to gi + 1, "n" to groups.size), style = Type.monoSmall.copy(color = c.ash),

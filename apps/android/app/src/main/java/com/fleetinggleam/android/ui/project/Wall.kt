@@ -33,6 +33,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -95,15 +99,16 @@ import java.io.File
 // ---------------------------------------------------------------- 排版：两端一样的两种布局
 
 /** 照片墙上的一项：它的键（路径）和最终的宽高比（分析前从文件头读到，所以瓷砖从头到尾不变大小）。 */
-/** 照片格子的圆角（瀑布与网格共用）。 */
-val TILE_RADIUS = 6.dp
+/** 照片格子的圆角（瀑布与网格共用）：直角，像系统相册那样一张挨一张（作者 2026-10-23）。 */
+val TILE_RADIUS = 0.dp
 
 data class WallItem(val key: String, val ratio: Float)
 
 /** 一行：哪些项、行高。 */
 data class WallRow(val from: Int, val to: Int, val height: Float, val widths: List<Float>)
 
-const val GAP = 6f
+/** 格子之间的缝（dp）：作者 2026-10-23 嫌 6 偏宽，收到 2。 */
+const val GAP = 2f
 
 /** Justified rows: every row is as wide as the wall and every photo keeps its own aspect ratio, so nothing is cropped (the Mac's Wall.tsx). */
 fun justify(items: List<WallItem>, width: Float, target: Float): List<WallRow> {
@@ -127,9 +132,15 @@ fun justify(items: List<WallItem>, width: Float, target: Float): List<WallRow> {
     return rows
 }
 
-/** Uniform square cells (photos are cropped to fill them). */
-fun grid(items: List<WallItem>, width: Float, cell: Float): List<WallRow> {
-    val cols = maxOf(2, Math.round(width / cell))
+/** 双指缩放的几档（作者 2026-10-23："像手机相册一样缩放调整网格大小"）：网格每行几张、瀑布的目标行高（dp）。档位越大照片越大。 */
+val GRID_COLS = listOf(7, 5, 4, 3, 2)
+val JUSTIFY_HEIGHTS = listOf(80f, 110f, 150f, 200f, 270f)
+const val ZOOM_GRID_DEFAULT = 3
+const val ZOOM_JUSTIFY_DEFAULT = 2
+
+/** Uniform square cells (photos are cropped to fill them). `fixedCols` > 0 定死每行几张（缩放档位）。 */
+fun grid(items: List<WallItem>, width: Float, cell: Float, fixedCols: Int = 0): List<WallRow> {
+    val cols = if (fixedCols > 0) fixedCols else maxOf(2, Math.round(width / cell))
     val size = (width - GAP * (cols - 1)) / cols
     return items.indices.chunked(cols).map { idx -> WallRow(idx.first(), idx.last() + 1, size, idx.map { size }) }
 }
@@ -149,13 +160,57 @@ fun Wall(
     reveal: String? = null,
     /** 第 i 张的缩略图（有就预取：按滑动方向提前把后面约三屏解码进内存缓存，滑到时直接有图）。 */
     thumbOf: ((Int) -> String?)? = null,
+    /** 缩放档位（`GRID_COLS` / `JUSTIFY_HEIGHTS` 的下标）；`onZoom` 不为空时双指捏合 / 张开换一档（+1 照片变大）。 */
+    zoom: Int = -1,
+    onZoom: ((Int) -> Unit)? = null,
     tile: @Composable (index: Int, w: Dp, h: Dp) -> Unit,
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val density = LocalDensity.current
         val pad = with(density) { (contentPadding.calculateLeftPadding(androidx.compose.ui.unit.LayoutDirection.Ltr) + contentPadding.calculateRightPadding(androidx.compose.ui.unit.LayoutDirection.Ltr)).value }
         val width = maxWidth.value - pad
-        val rows = remember(items, width, layout) { if (width <= 0f) emptyList() else if (layout == "grid") grid(items, width, 110f) else justify(items, width, 150f) }
+        val rows = remember(items, width, layout, zoom) {
+            when {
+                width <= 0f -> emptyList()
+                layout == "grid" -> grid(items, width, 110f, if (zoom >= 0) GRID_COLS[zoom.coerceIn(0, GRID_COLS.size - 1)] else 0)
+                else -> justify(items, width, if (zoom >= 0) JUSTIFY_HEIGHTS[zoom.coerceIn(0, JUSTIFY_HEIGHTS.size - 1)] else 150f)
+            }
+        }
+        // 换档后让原来在最上面的那张照片还在最上面（行数变了，按行号滚会跳到别处）
+        var anchor by remember { androidx.compose.runtime.mutableIntStateOf(-1) }
+        val headOff0 = if (header != null) 1 else 0
+        androidx.compose.runtime.LaunchedEffect(rows) {
+            val a = anchor
+            if (a < 0) return@LaunchedEffect
+            anchor = -1
+            val r = rows.indexOfFirst { a in it.from until it.to }
+            if (r >= 0) state.scrollToItem(r + headOff0)
+        }
+        val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+        val zoomNow by androidx.compose.runtime.rememberUpdatedState(onZoom)
+        val rowsNow by androidx.compose.runtime.rememberUpdatedState(rows)
+        val pinch = if (onZoom == null) Modifier else Modifier.pointerInput(Unit) {
+            // 两根手指时自己处理（在 Initial 阶段先拿到、吃掉，列表就不会跟着滚）；一根手指照常滚动
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false)
+                var acc = 1f
+                do {
+                    val ev = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                    if (ev.changes.count { it.pressed } >= 2) {
+                        acc *= ev.calculateZoom()
+                        val step = when { acc > 1.25f -> 1; acc < 0.8f -> -1; else -> 0 }
+                        if (step != 0) {
+                            val firstRow = rowsNow.getOrNull(state.firstVisibleItemIndex - headOff0)
+                            anchor = firstRow?.from ?: anchor
+                            zoomNow?.invoke(step)
+                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                            acc = 1f
+                        }
+                        ev.changes.forEach { it.consume() }
+                    }
+                } while (ev.changes.any { it.pressed })
+            }
+        }
         androidx.compose.runtime.LaunchedEffect(reveal, rows) {
             val key = reveal ?: return@LaunchedEffect
             val r = rows.indexOfFirst { row -> (row.from until row.to).any { items[it].key == key } }
@@ -194,7 +249,7 @@ fun Wall(
         }
         // 滑动中格子一有图就直接显示，"显影"入场只留给停下来时第一次出现的那些
         androidx.compose.runtime.CompositionLocalProvider(LocalWallScrolling provides state.isScrollInProgress) {
-            LazyColumn(state = state, contentPadding = contentPadding, verticalArrangement = Arrangement.spacedBy(GAP.dp), modifier = Modifier.fillMaxSize()) {
+            LazyColumn(state = state, contentPadding = contentPadding, verticalArrangement = Arrangement.spacedBy(GAP.dp), modifier = Modifier.fillMaxSize().then(pinch)) {
                 if (header != null) item(key = "head") { header() }
                 items(rows, key = { "${items.getOrNull(it.from)?.key}" + "#${it.to - it.from}" }) { r ->
                     Row(horizontalArrangement = Arrangement.spacedBy(GAP.dp)) {
@@ -352,7 +407,7 @@ fun Tile(
         prev = state
     }
     val recede by animateFloatAsState(if (state == "reject" && dim) 1f else 0f, tween(Motion.SLOW, easing = Motion.easeOut), label = "recede")
-    // 格子圆角：作者 2026-10-23 嫌 10dp 在瀑布墙上偏大，收到 6dp（光晕、显影边框跟着）
+    // 格子圆角见 TILE_RADIUS（现在是直角）
     val shape = RoundedCornerShape(TILE_RADIUS)
     val kept = photo != null && state == "keep"
     Box(

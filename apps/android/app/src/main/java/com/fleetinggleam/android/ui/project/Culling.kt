@@ -143,6 +143,16 @@ class CullState {
     /** 每张照片的格子的布局坐标：打开大图时照片从它的格子里飞出来。只记坐标对象，位置在用到时才算（滚动时每帧不算矩形）。 */
     val coords = HashMap<String, androidx.compose.ui.layout.LayoutCoordinates>()
     fun rect(path: String): Rect? = coords[path]?.takeIf { it.isAttached }?.boundsInRoot()
+    /** 照片墙的缩放档位（网格、瀑布各一个，记住）。 */
+    var gridZoom by androidx.compose.runtime.mutableIntStateOf(UiPrefs.int("zoom.grid", ZOOM_GRID_DEFAULT))
+    var justifyZoom by androidx.compose.runtime.mutableIntStateOf(UiPrefs.int("zoom.justify", ZOOM_JUSTIFY_DEFAULT))
+    fun zoomBy(grid: Boolean, d: Int) {
+        if (grid) { gridZoom = (gridZoom + d).coerceIn(0, GRID_COLS.size - 1); UiPrefs.put("zoom.grid", gridZoom) }
+        else { justifyZoom = (justifyZoom + d).coerceIn(0, JUSTIFY_HEIGHTS.size - 1); UiPrefs.put("zoom.justify", justifyZoom) }
+    }
+    /** 对比页的快捷取舍（留下第 i 张、同屏其余标淘汰、跳下一组）和同屏几张：底部浮动操作栏上显示成"留第 1 张 / 留第 2 张"。 */
+    var compareKeep by mutableStateOf<((Int) -> Unit)?>(null)
+    var compareCount by androidx.compose.runtime.mutableIntStateOf(0)
     /** 状态条上每个页签的坐标：分析中照片"飞进"页签的动效要用。 */
     val tabCoords = HashMap<String, androidx.compose.ui.layout.LayoutCoordinates>()
     fun tabRect(id: String): Rect? = tabCoords[id]?.takeIf { it.isAttached }?.boundsInRoot()
@@ -366,7 +376,8 @@ fun CullingContent(project: Project, cull: CullState, data: CullData, actions: C
             ) { _ ->
                 val state = rememberLazyListState()
                 Wall(items, if (cull.layout == ViewStyle.Grid) "grid" else "justified", state, PaddingValues(start = 16.dp, end = 16.dp, top = topPad + 4.dp, bottom = bottomPad),
-                    header = { if (data.shown.isEmpty()) EmptyView(cull, data) }, reveal = reveal, thumbOf = { data.shown.getOrNull(it)?.thumb }) { i, w, h ->
+                    header = { if (data.shown.isEmpty()) EmptyView(cull, data) }, reveal = reveal, thumbOf = { data.shown.getOrNull(it)?.thumb },
+                    zoom = if (cull.layout == ViewStyle.Grid) cull.gridZoom else cull.justifyZoom, onZoom = { d -> cull.zoomBy(cull.layout == ViewStyle.Grid, d) }) { i, w, h ->
                     val p = data.shown[i]
                     val d = decisions[p.path]
                     val st = d?.state ?: ""
@@ -584,7 +595,15 @@ private fun CullBar(cull: CullState, sel: Photo?, d: Decision?, modifier: Modifi
                             Box(Modifier.width(1.dp).height(24.dp).background(c.line))
                             BarItem(cull.layout.icon, t("cull.layout.${cull.layout.id}")) { cull.viewSheet = true }
                         }
-                        else -> BarItem(cull.layout.icon, t("cull.layout.${cull.layout.id}")) { cull.viewSheet = true }
+                        else -> {
+                            // 对比页：快捷取舍放在浮动栏里、浏览方式左边（作者 2026-10-23：这里还宽，内容区就不用再占一行）
+                            val keep = cull.compareKeep
+                            if (cull.layout == ViewStyle.Compare && keep != null && cull.compareCount > 0) {
+                                for (i in 0 until cull.compareCount) BarItem("star", t("android.cmp.keepNth", "n" to i + 1), width = 76.dp) { keep(i) }
+                                Box(Modifier.width(1.dp).height(24.dp).background(c.line))
+                            }
+                            BarItem(cull.layout.icon, t("cull.layout.${cull.layout.id}")) { cull.viewSheet = true }
+                        }
                     }
                 }
             }
@@ -593,7 +612,7 @@ private fun CullBar(cull: CullState, sel: Photo?, d: Decision?, modifier: Modifi
 }
 
 @Composable
-private fun BarItem(icon: String, label: String, enabled: Boolean = true, dot: Boolean = false, on: Boolean = false, gold: Boolean = false, box: Float = 16f, onClick: () -> Unit) {
+private fun BarItem(icon: String, label: String, enabled: Boolean = true, dot: Boolean = false, on: Boolean = false, gold: Boolean = false, box: Float = 16f, width: androidx.compose.ui.unit.Dp = 60.dp, onClick: () -> Unit) {
     val c = LocalFg.current
     val src = remember { MutableInteractionSource() }
     val press = rememberPress(src)
@@ -601,7 +620,7 @@ private fun BarItem(icon: String, label: String, enabled: Boolean = true, dot: B
     val bg by androidx.compose.animation.animateColorAsState(if (!on) Color.Transparent else if (gold) c.gleam else c.ink, Motion.fast(), label = "barBg")
     val fg by androidx.compose.animation.animateColorAsState(if (!on) c.ink else if (gold) c.gleamInk else c.onInk, Motion.fast(), label = "barFg")
     Column(
-        Modifier.width(60.dp).height(46.dp).clip(RoundedCornerShape(23.dp)).background(bg)
+        Modifier.width(width).height(46.dp).clip(RoundedCornerShape(23.dp)).background(bg)
             .graphicsLayer { val s = 1f + 0.08f * press(); scaleX = s; scaleY = s; alpha = if (enabled) 1f else 0.35f }
             .clickable(interactionSource = src, indication = null, enabled = enabled, onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
