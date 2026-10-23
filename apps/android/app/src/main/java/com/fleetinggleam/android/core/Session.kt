@@ -345,7 +345,15 @@ object Session {
         }
     }
 
-    fun reevaluate() { val p = current() ?: return; val tok = token; scope.launch { runScan(p, files.value.size, quiet = true, tok = tok) } }
+    /** 用现在学到的喜好重新给这个项目打分（只读缓存、重新分组取舍，不重新分析），做完说一声。 */
+    fun reevaluate() {
+        val p = current() ?: return
+        val tok = token
+        scope.launch {
+            runScan(p, files.value.size, quiet = true, tok = tok)
+            if (tok == token && phase.value == Phase.Done) com.fleetinggleam.android.ui.components.Toasts.show(t("android.cull.reevalDone"))
+        }
+    }
     fun forceRescan() {
         val p = current() ?: return
         val run = running.value

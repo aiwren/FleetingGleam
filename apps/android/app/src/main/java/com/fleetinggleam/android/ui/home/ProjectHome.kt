@@ -295,8 +295,8 @@ private fun ProjectCard(p: Project, inBin: Boolean, index: Int, armed: Boolean, 
         Box {
             Cover(p.cover.orEmpty().take(4))
             // 可见的入口（重命名、移到回收站）：长按还在，但没人知道要长按
-            if (!inBin) CardMenuButton(Modifier.align(Alignment.TopEnd).padding(6.dp)) {
-                overlay.showMenu(anchor.value.let { androidx.compose.ui.geometry.Rect(it.left, it.top, it.right, it.top + it.width * 0.55f) }, listOf(
+            if (!inBin) CardMenuButton(Modifier.align(Alignment.TopEnd).padding(6.dp)) { at ->
+                overlay.showMenu(at, listOf(
                     com.fleetinggleam.android.ui.components.MenuItem(t("bin.rename"), action = onRename),
                     com.fleetinggleam.android.ui.components.MenuItem(t("bin.toBin"), action = onTrash),
                 ), alignEnd = true)
@@ -321,10 +321,12 @@ private fun ProjectCard(p: Project, inBin: Boolean, index: Int, armed: Boolean, 
 
 /** 封面右上角的"⋯"：压在照片上的圆钮的统一规格——26dp、黑 30% 底、1dp 白 20% 边、白 85% 的图标（设计审查 A2.5 / A8.4）。 */
 @Composable
-private fun CardMenuButton(modifier: Modifier, onClick: () -> Unit) {
+private fun CardMenuButton(modifier: Modifier, onClick: (androidx.compose.ui.geometry.Rect) -> Unit) {
+    // 菜单贴着这个按钮弹出（以前用整张卡片当锚点，菜单落在卡片下半截，离手指很远——作者 2026-10-23）
+    val at = com.fleetinggleam.android.ui.components.rememberAnchor()
     Box(
-        modifier.size(26.dp).clip(androidx.compose.foundation.shape.CircleShape).background(Color(0x4D000000)).border(1.dp, Color(0x33FFFFFF), androidx.compose.foundation.shape.CircleShape)
-            .clickable(interactionSource = rememberSource(), indication = null, onClick = onClick),
+        modifier.size(26.dp).then(Modifier.anchor(at)).clip(androidx.compose.foundation.shape.CircleShape).background(Color(0x4D000000)).border(1.dp, Color(0x33FFFFFF), androidx.compose.foundation.shape.CircleShape)
+            .clickable(interactionSource = rememberSource(), indication = null) { onClick(at.value) },
         contentAlignment = Alignment.Center,
     ) {
         androidx.compose.foundation.Canvas(Modifier.size(14.dp)) {
@@ -372,8 +374,8 @@ private fun HeroCard(p: Project, onOpen: () -> Unit, onTrash: () -> Unit, onRena
         }
         // 底部渐变 96dp、0 → 65% 黑：托住两行字就够，不压封面（设计审查 A2.4）
         Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(96.dp).background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color.Transparent, Color(0xA6000000)))))
-        CardMenuButton(Modifier.align(Alignment.TopEnd).padding(10.dp)) {
-            overlay.showMenu(anchor.value.let { androidx.compose.ui.geometry.Rect(it.left, it.top, it.right, it.top + it.height * 0.6f) }, listOf(
+        CardMenuButton(Modifier.align(Alignment.TopEnd).padding(10.dp)) { at ->
+            overlay.showMenu(at, listOf(
                 com.fleetinggleam.android.ui.components.MenuItem(t("bin.rename"), action = onRename),
                 com.fleetinggleam.android.ui.components.MenuItem(t("bin.toBin"), action = onTrash),
             ), alignEnd = true)
@@ -432,6 +434,7 @@ private fun StartScreen(binCount: Int, onBin: () -> Unit) {
         Text(text, style = Type.label.copy(color = c.ink), modifier = Modifier.clip(CircleShape).clickable(onClick = onClick).padding(horizontal = 10.dp, vertical = 10.dp), maxLines = 1)
     }
     val dot: @Composable () -> Unit = { Text("·", style = Type.label.copy(color = c.ash)) }
+    Box(Modifier.fillMaxSize()) {
     Column(
         Modifier.fillMaxSize().statusBarsPadding().verticalScroll(rememberScrollState()).padding(horizontal = 28.dp).padding(top = 32.dp, bottom = 150.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -450,16 +453,27 @@ private fun StartScreen(binCount: Int, onBin: () -> Unit) {
         }
         Column(Modifier.riseIn(4).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
             FgButton(t("android.start.album"), { scope.launch { Actions.newProjectFromDialog(source = "albums") } }, primary = true, modifier = Modifier.padding(top = 32.dp).fillMaxWidth())
-            Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+            // 能换行：窄屏上一行放不下时不再把后面的入口挤出屏幕
+            @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+            androidx.compose.foundation.layout.FlowRow(Modifier.padding(top = 8.dp).fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalArrangement = Arrangement.Center) {
                 entry(t("android.start.folder")) { scope.launch { Actions.newProjectFromDialog(source = "folder") } }
-                dot()
+                Box(Modifier.align(Alignment.CenterVertically)) { dot() }
                 entry(t("android.start.nas")) { com.fleetinggleam.android.core.Nav.openSettings("nas") }
-                dot()
+                Box(Modifier.align(Alignment.CenterVertically)) { dot() }
                 entry(t("android.start.sample")) { scope.launch { com.fleetinggleam.android.core.Samples.open(ctx) } }
-                if (binCount > 0) { dot(); entry(t("bin.tab") + " · $binCount", onBin) }
             }
             Text(t("nav.privacy"), style = Type.small.copy(color = c.ash), textAlign = TextAlign.Center, modifier = Modifier.padding(top = 24.dp))
         }
+    }
+    // 项目全删了（都在回收站里）：右上角单独一个回收站入口，和有项目时顶栏里那个位置一致（作者 2026-10-23：之前塞在一行文字入口末尾，手机上被挤出屏幕，看不到）
+    if (binCount > 0) Row(
+        Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(top = 8.dp, end = 12.dp).clip(CircleShape)
+            .clickable(onClick = onBin).padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        com.fleetinggleam.android.ui.components.FgIcon("M2.5 4h11M6 4V2.5h4V4M3.8 4l.7 9.5h7l.7-9.5M6.5 6.5v4.5M9.5 6.5v4.5", size = 16.dp, color = c.ink)
+        Text(t("bin.tab") + " · $binCount", style = Type.label.copy(color = c.ink), modifier = Modifier.padding(start = 6.dp), maxLines = 1)
+    }
     }
 }
 

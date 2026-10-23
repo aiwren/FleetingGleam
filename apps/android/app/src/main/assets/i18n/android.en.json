@@ -65,7 +65,8 @@
    "busyStop": "Stop it and analyse this",
    "bgDone": "“{{name}}” is analysed",
    "bgFailed": "“{{name}}” could not be analysed: {{error}}",
-   "open": "Open"
+   "open": "Open",
+   "reevalDone": "Re-scored with what it has learned of your taste"
   },
   "models": {
    "background": "Download in background",

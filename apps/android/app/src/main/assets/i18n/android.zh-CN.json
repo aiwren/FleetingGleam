@@ -65,7 +65,8 @@
    "busyStop": "停下它，分析这个",
    "bgDone": "「{{name}}」分析完成",
    "bgFailed": "「{{name}}」分析出错：{{error}}",
-   "open": "打开"
+   "open": "打开",
+   "reevalDone": "已按现在学到的喜好重新评估"
   },
   "models": {
    "background": "后台下载",

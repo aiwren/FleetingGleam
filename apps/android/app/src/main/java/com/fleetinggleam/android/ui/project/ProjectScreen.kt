@@ -174,14 +174,16 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
                     { if (scene) cull.sceneView = false else Projects.setActive(null) }, onTitle = if (scene) null else ({ renaming = true }),
                 ) {
                     if (phase == Phase.Done && !scene && project.search != false) IconBtn(Icons.SEARCH, t("search.label"), { cull.searchOpen = !cull.searchOpen; if (!cull.searchOpen) cull.query = "" }, on = cull.searchOpen, plain = true)
-                    val canReeval = phase == Phase.Done && settings.learn && project.learn != false && dirty > 0
+                    // 开着"学习我的喜好"就随时能点（作者 2026-10-23：删掉项目再新建同一个相册后，菜单一直是灰的，以为坏了）；
+                    // 小红点只在这次打开后又有了新标注时出现
+                    val canReeval = phase == Phase.Done && settings.learn && project.learn != false
                     com.fleetinggleam.android.ui.components.MenuButton(t("pset.settings"), buildList {
                         add(Triple(t("organize.button"), phase == Phase.Done) { organize = true })
                         add(Triple(t("cull.reeval"), canReeval) { Session.reevaluate() })
                         add(Triple(t("pset.settings"), !scanning) { settingsOpen = true })
                         add(Triple(t("styles.title"), true, onOpenStyles))
                         add(Triple(t("bin.rename"), true) { renaming = true })
-                    }, dot = canReeval)
+                    }, dot = canReeval && dirty > 0)
                 }
                 if (phase == Phase.Done && cull.searchOpen && !scene) Box(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp)) { SearchField(cull) }
                 if (phase == Phase.Scanning) StatusStrip(cull, scanData)
