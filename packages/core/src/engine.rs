@@ -674,6 +674,8 @@ impl Engine {
             // What has been analysed is saved to the cache as it goes (in batches), not only at the end: a big project takes a long time, and
             // closing the app part-way used to lose all of it.
             let pending: Mutex<(Vec<Photo>, std::time::Instant)> = Mutex::new((Vec::new(), std::time::Instant::now()));
+            let timing: Mutex<HashMap<&'static str, (f64, usize)>> = Mutex::new(HashMap::new());
+            let wall = std::time::Instant::now();
             let save_batch = |batch: &[Photo]| {
                 self.with_cache(|c| {
                     for p in batch {
@@ -693,13 +695,28 @@ impl Engine {
                         return None;
                     }
                     let key = p.to_string_lossy().into_owned();
+                    // 各阶段用了多久：从上一个阶段开始到这一个阶段开始（最后一段到分析结束），记给结束时的那行日志
+                    let mark = std::cell::RefCell::new(("start", std::time::Instant::now()));
+                    let lap = |next: &'static str| {
+                        let mut m = mark.borrow_mut();
+                        let ms = m.1.elapsed().as_secs_f64() * 1000.0;
+                        if m.0 != "start" {
+                            let mut t = timing.lock().unwrap_or_else(|e| e.into_inner());
+                            let e = t.entry(m.0).or_insert((0.0, 0));
+                            e.0 += ms;
+                            e.1 += 1;
+                        }
+                        *m = (next, std::time::Instant::now());
+                    };
                     let on_stage = |stage: &str, pct: u8, thumb: Option<(&str, u32, u32)>| {
+                        lap(match stage { "decode" => "decode", "quality" => "quality", "ai" => "ai", "system" => "faces", "thumb" => "tail", _ => "other" });
                         if quiet {
                             return;
                         }
                         self.emit("scan-stage", &Stage { path: &key, stage, pct, thumb: thumb.map(|t| t.0), width: thumb.map(|t| t.1), height: thumb.map(|t| t.2) });
                     };
                     let r = analyze::analyze(p, &cache_dir, scorer.as_ref().map(|s| s as &dyn AiScorer), vision.as_deref(), eye_method, mp.as_deref(), fe.as_deref(), &on_stage);
+                    lap("start");
                     let d = done.fetch_add(1, Ordering::Relaxed) + 1;
                     if !quiet {
                         if let Ok(photo) = &r {
@@ -737,6 +754,16 @@ impl Engine {
             };
             let rest = std::mem::take(&mut pending.lock().unwrap_or_else(|e| e.into_inner()).0);
             save_batch(&rest);
+            // 一行性能小结（Android 进系统日志）：每张墙钟耗时，和每条线程上各阶段的平均耗时
+            if !fresh.is_empty() {
+                let t = timing.lock().unwrap_or_else(|e| e.into_inner());
+                let avg = |k: &str| t.get(k).map_or(0.0, |(s, n)| s / *n as f64);
+                crate::platform::log(&format!(
+                    "分析 {} 张：每张 {:.0} ms（墙钟）；{} 条线程，CLIP {}；每条线程上 解码 {:.0} · 质量 {:.0} · CLIP {:.0} · 人脸 {:.0} · 收尾 {:.0} ms",
+                    fresh.len(), wall.elapsed().as_secs_f64() * 1000.0 / fresh.len() as f64, scan_threads(),
+                    scorer.as_ref().map_or("off", |s| s.backend), avg("decode"), avg("quality"), avg("ai"), avg("faces"), avg("tail")
+                ));
+            }
             if let Some(j) = judge {
                 if cancelled() { drop(j) } else { j.finish() }
             }
@@ -2214,6 +2241,45 @@ mod tests {
         let out = root.join("out");
         let r = e.export_photos(&paths, &out.to_string_lossy()).unwrap();
         assert_eq!((r.copied, r.skipped, r.remote), (2, 0, false));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 手机上的整条分析流水线（交叉编译成 arm64 测试程序推到手机上跑，调并行度用）：
+    /// `FG_LIBRARY=<照片文件夹> FG_MODELS=<模型文件夹> [FG_N=60] [FG_QUALITY=fast] [FG_PASSES=2]`，人脸流水线（Android 的 facepipe）、
+    /// MediaPipe 眼睛与人物识别都参与；其余旋钮见 `FG_SCAN_THREADS`、`FG_SMALL_COPIES`、`FG_CLIP_COPIES`、`FG_NO_ACCEL`。
+    /// 注意：测试程序里没有 Android 的 BitmapFactory，解码走 `image` crate，大图的解码比应用里慢；比的是模型那几步。
+    #[test]
+    #[ignore = "timing only, on a device: FG_LIBRARY + FG_MODELS"]
+    fn device_scan_throughput() {
+        let (Ok(lib), Ok(models)) = (std::env::var("FG_LIBRARY"), std::env::var("FG_MODELS")) else { return };
+        let n: usize = std::env::var("FG_N").ok().and_then(|v| v.parse().ok()).unwrap_or(60);
+        let passes: usize = std::env::var("FG_PASSES").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
+        crate::platform::set_vision(Box::new(crate::facepipe::Factory));
+        let root = std::env::temp_dir().join(format!("fg-device-scan-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        // 直接分析那个文件夹（目录遍历不跟随符号链接，链接出来的文件不算）；张数由推过去多少张决定
+        let photos_dir = PathBuf::from(&lib);
+        let _ = n;
+        crate::platform::set_scratch_dir(root.join("scratch"));
+        let e = Engine::new(Paths { data: root.join("data"), thumbs: root.join("thumbs"), models: PathBuf::from(&models), downloads: PathBuf::from(&models) }, Box::new(NoEvents), "bench");
+        let args = ScanArgs {
+            key: "bench".into(),
+            dirs: vec![photos_dir.to_string_lossy().into_owned()],
+            quality: Some(std::env::var("FG_QUALITY").unwrap_or_else(|_| "fast".into())),
+            eye_method: Some("mediapipe".into()),
+            force: true,
+            ..Default::default()
+        };
+        for pass in 0..passes {
+            let t = std::time::Instant::now();
+            let out = e.scan_project(args.clone()).expect("scan");
+            let d = t.elapsed();
+            println!(
+                "pass {pass}: {} photos in {:?} = {:.0} ms/photo, {:.2} photos/s; faces on {}, eyes by mediapipe on {}",
+                out.len(), d, d.as_secs_f64() * 1000.0 / out.len() as f64, out.len() as f64 / d.as_secs_f64(),
+                out.iter().filter(|p| p.face_count > 0).count(), out.iter().filter(|p| p.eye_method.as_deref() == Some("mediapipe")).count()
+            );
+        }
         let _ = std::fs::remove_dir_all(&root);
     }
 

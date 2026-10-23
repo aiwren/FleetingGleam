@@ -178,6 +178,24 @@ pub fn gpu_clip() -> Option<&'static dyn GpuClipFactory> {
     GPU_CLIP.get().map(|b| b.as_ref())
 }
 
+/// 一行诊断信息（性能数字、加速器的选择）：Android 上写进系统日志（tag "FleetingGleam"，`adb logcat -s FleetingGleam`），
+/// 别处写 stderr。Android 的 stderr 没人看，以前那些 eprintln 在手机上全丢了。
+pub fn log(msg: &str) {
+    #[cfg(target_os = "android")]
+    {
+        extern "C" {
+            fn __android_log_write(prio: i32, tag: *const std::os::raw::c_char, text: *const std::os::raw::c_char) -> i32;
+        }
+        let tag = std::ffi::CString::new("FleetingGleam").unwrap();
+        if let Ok(text) = std::ffi::CString::new(msg.replace('\0', " ")) {
+            // 4 = ANDROID_LOG_INFO
+            unsafe { __android_log_write(4, tag.as_ptr(), text.as_ptr()) };
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    eprintln!("{msg}");
+}
+
 /// 这台机器的物理内存（字节）；读不出来就是 0。
 pub fn physical_memory() -> u64 {
     #[cfg(target_os = "macos")]

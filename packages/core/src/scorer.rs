@@ -133,13 +133,22 @@ pub use crate::platform::physical_memory;
 /// How many copies of the model are worth their memory. Measured: every copy of the small model holds about 600 MB (the float16 weights are
 /// widened for the CPU) and a second one makes the encoder about 1.4x quicker, a third hardly more; the large model takes more than a
 /// gigabyte a copy for about 10% (it already keeps all the cores busy), so it gets one.
-/// int8 的那份（手机的 CPU 路径）权重只有 90 MB 左右，6 GB 内存的手机也留两份：一份会话在大小核混着的手机上更占不满。
+/// 小模型按这台机器算，不按机型写死：核数的三分之一（每份两条算子线程最划算），再受内存约束——float16 那份在 CPU 上展开成
+/// float32 约 600 MB，每 4 GB 内存给一份；int8 那份约 150 MB，每 2 GB 一份；最多 4 份。
+/// 量过（2026-10-23，骁龙 SM8850 八核 16 GB，120 张、整条流水线）：1 份 56–72 ms/张，2 份 54–56，3 份 40–46，4 份 52–64（开始抢核）。
+/// 同一台上试过"CPU 几份 + 一份 NNAPI"当额外车道，反而慢到 66–108：那颗芯片的 NNAPI 把算子扔回 CPU，和 CPU 会话抢核，没留。
 fn sessions_for(model: &str, file: &str) -> usize {
     if let Some(n) = std::env::var("FG_CLIP_COPIES").ok().and_then(|v| v.parse().ok()) {
         return n;
     }
-    let gb = physical_memory() >> 30;
-    if model == "ViT-L/14" { 1 } else if file == INT8_FILE { if gb >= 6 { 2 } else { 1 } } else if gb >= 16 { 2 } else { 1 }
+    if model == "ViT-L/14" {
+        return 1;
+    }
+    let cores = std::thread::available_parallelism().map(|c| c.get()).unwrap_or(4);
+    let gb = (physical_memory() >> 30) as usize;
+    let by_cores = (cores + 1) / 3;
+    let by_memory = if file == INT8_FILE { gb / 2 } else { gb / 4 };
+    by_cores.min(by_memory).clamp(1, 4)
 }
 
 /// How the CPU runs a CLIP model (ONNX Runtime): what to load and how many copies of it.
@@ -161,31 +170,45 @@ impl CpuSpec {
             let hs: Vec<_> = (0..copies.max(1)).map(|_| sc.spawn(&one)).collect();
             hs.into_iter().map(|h| h.join().unwrap_or_else(|_| Err("loading panicked".into()))).collect()
         });
-        let sessions = sessions.into_iter().collect::<Result<Vec<_>, _>>()?;
-        Ok(Pool::new(sessions))
+        Ok(Pool::new(sessions.into_iter().collect::<Result<Vec<_>, _>>()?))
     }
 
     fn build(&self, copies: usize) -> Result<Pool, String> {
         self.build_with(copies, false)
     }
 
-    /// 平台加速器上的一个会话池（一份就够：加速器不像 CPU 那样靠多份并行），只在它和 CPU 在固定输入上算出同样的向量时给；
-    /// 这台机器上只比一次（见 `onnx::verified`）。macOS 不走这里（CoreML 接不了 fp16 的 CLIP 图，GPU 路径另有 clipgpu.rs），只有 Android 用。
+    /// 平台加速器上的一个会话池（一份就够：加速器不像 CPU 那样靠多份并行），只在它和 CPU 在固定输入上算出同样的向量、
+    /// 而且在这台手机上真的比 CPU 的那几份会话快时才给。这台机器上只比一次（见 `onnx::verified`）。
+    /// 不按机型写死：NNAPI 在有的芯片上走 NPU 很快，在有的芯片上只是把算子扔回 CPU、还多了来回，所以每台手机自己量。
+    /// macOS 不走这里（CoreML 接不了 fp16 的 CLIP 图，GPU 路径另有 clipgpu.rs），只有 Android 用。
     fn build_accelerated(&self) -> Option<Pool> {
         if !cfg!(target_os = "android") {
             return None;
         }
         let size = std::fs::metadata(self.dir.join(self.file)).map(|m| m.len()).unwrap_or(0);
-        let key = format!("{}-{size}", self.file);
+        // "-speed"：以前只验一致就记"可以"，现在还要比快慢，老的标记不再算数
+        let key = format!("{}-{size}-speed", self.file);
         let mut pool: Option<Pool> = None;
         let ok = crate::onnx::verified(&key, || {
             let fast = self.build_with(1, true)?;
             let input = probe_input();
+            // 第一次各跑一张：既比结果，也是预热（加速器第一次要编译图）
             let a = run_clip(&fast, input.clone())?;
-            let b = run_clip(&self.build_with(1, false)?, input)?;
+            let cpu = self.build_with(self.copies, false)?;
+            let b = run_clip(&cpu, input.clone())?;
             let same = a.iter().all(|v| v.is_finite()) && crate::onnx::cosine(&a, &b) > 0.999;
-            pool = Some(fast);
-            Ok(same)
+            if !same {
+                return Ok(false);
+            }
+            let (acc, cpu_ms) = race(&fast, &cpu, self.copies, &input)?;
+            crate::platform::log(&format!("CLIP {}：{} 每张 {acc:.0} ms，CPU（{} 份会话）每张 {cpu_ms:.0} ms", self.file, crate::onnx::accelerator(), self.copies));
+            // 差不多快时留在 CPU（加速器的会话池只有一份，分析线程多时更容易排队）
+            if acc < cpu_ms * 0.9 {
+                pool = Some(fast);
+                Ok(true)
+            } else {
+                Ok(false)
+            }
         });
         if !ok {
             return None;
@@ -193,6 +216,32 @@ impl CpuSpec {
         // 标记文件早就说过"可以"时，上面的闭包没跑，池还要建
         pool.or_else(|| self.build_with(1, true).map_err(|e| eprintln!("{}: {e}", crate::onnx::accelerator())).ok())
     }
+}
+
+/// 加速器和 CPU 各算 8 张（CPU 那边几份会话同时跑，和分析时一样），返回各自每张的平均毫秒数。
+fn race(acc: &Pool, cpu: &Pool, copies: usize, input: &[f32]) -> Result<(f64, f64), String> {
+    const N: usize = 8;
+    let t = std::time::Instant::now();
+    for _ in 0..N {
+        run_clip(acc, input.to_vec())?;
+    }
+    let acc_ms = t.elapsed().as_secs_f64() * 1000.0 / N as f64;
+    let t = std::time::Instant::now();
+    let lanes = copies.max(1);
+    std::thread::scope(|sc| -> Result<(), String> {
+        let hs: Vec<_> = (0..lanes).map(|k| sc.spawn(move || -> Result<(), String> {
+            for _ in (k..N).step_by(lanes) {
+                run_clip(cpu, input.to_vec())?;
+            }
+            Ok(())
+        })).collect();
+        for h in hs {
+            h.join().map_err(|_| "CPU run panicked".to_string())??;
+        }
+        Ok(())
+    })?;
+    let cpu_ms = t.elapsed().as_secs_f64() * 1000.0 / N as f64;
+    Ok((acc_ms, cpu_ms))
 }
 
 fn run_clip(pool: &Pool, input: Vec<f32>) -> Result<Vec<f32>, String> {
