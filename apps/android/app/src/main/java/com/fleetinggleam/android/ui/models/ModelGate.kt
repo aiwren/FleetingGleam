@@ -61,7 +61,7 @@ fun ModelGate() {
                 // 要下的是大模型：也可以先用小的标准模型（审查第 24 条）。放在正文里，底栏一行放不下三个钮
                 gate.fallbackBytes?.let { alt ->
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        FgButton(t("android.models.useStandard", "size" to fmtBytes(alt)), { Models.fallbackGate() })
+                        FgButton(if (alt > 0) t("android.models.useStandard", "size" to fmtBytes(alt)) else t("android.models.useStandardHere"), { Models.fallbackGate() })
                         Text(t("android.models.useStandardDesc"), style = Type.rowDesc.copy(color = c.ash))
                     }
                 }

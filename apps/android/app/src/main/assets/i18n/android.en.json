@@ -93,7 +93,8 @@
    "useStandard": "Use the standard model for now ({{size}})",
    "useStandardDesc": "Smaller and quicker; you can switch to a better one later under Settings → Analysis.",
    "sampleNote": "The sample photos need an analysis model too, so this is the smallest one; once it is here, your own photos need no further download.",
-   "metered": "You are on a metered network (mobile data or a hotspot); this uses about {{size}} of data."
+   "metered": "You are on a metered network (mobile data or a hotspot); this uses about {{size}} of data.",
+   "useStandardHere": "Use the standard model already on the phone"
   },
   "organize": {
    "toAlbum": "Export keepers to an album",
