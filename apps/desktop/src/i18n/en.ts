@@ -126,7 +126,8 @@ const en = {
     confirmDeleteTitle: "Delete “{{name}}”?",
     confirmDeleteBody: "The {{labels}} choices and {{refs}} reference photos it learned from are erased for good.",
     confirmDeleteUsed: "{{count}} project(s) currently use this style; after deleting they fall back to the default style: {{names}}.",
-    confirmDeleteAction: "Delete permanently", createdOn: "Created {{date}}",
+    confirmDeleteAction: "Delete permanently",
+    confirmResetTitle: "Clear “{{name}}”?", confirmResetBody: "The {{labels}} choices and {{refs}} reference photos it learned from are erased for good; the style itself and the projects using it stay.", confirmResetAction: "Clear", createdOn: "Created {{date}}",
   },
   cmp: { count: "Photos side by side", rail: "Other photos in this group", groupOf: "Group {{i}} of {{n}}", scope: "Compare within", byGroup: "Bursts", byScene: "Scenes", onlyThem: "Only this person", sceneOf: "Whole scene · {{n}} photos", prev: "Previous group", next: "Next group", best: "Suggested", kept: "Kept", rejected: "Rejected", hint: "Wheel to zoom · drag to pan · double-click 2.5× (in sync) · hover a photo, P keeps · X rejects · ↑↓ next challenger · ← → next group", emptyTitle: "No similar shots to compare", emptyBody: "Compare is for picking the best of a burst taken at the same moment.", jump: "Jump to the next group of similar shots" },
   inspector: {
@@ -245,6 +246,7 @@ const en = {
     learn: "Learn my taste", learnShort: "Learns your taste from what you keep and reject. Stays on this computer.", learnDesc: "Learns your taste on this computer from the photos you keep and reject by hand, and uses it to nudge scores. What it learns stays on this device, is never uploaded, and can be reset any time.",
     learnStatus: "Learned from {{n}} manual choices ({{k}} kept)", learnActive: "Taste model is active", learnWarm: "Needs a few more choices before it kicks in (at least 3 kept and 3 rejected)", learnNone: "Nothing learned yet. Press P, R or X on photos in the inspector to start.",
     learnReset: "Reset learned taste", learnResetDone: "Reset",
+    learnResetTitle: "Reset the learned taste?", learnResetBody: "The {{labels}} choices and {{refs}} reference photos the default style learned from are erased for good. To keep a copy, export it under Backup first.", learnResetAction: "Reset",
     customStyles: "Enable custom styles", customStylesDesc: "Only the default style is trained by default. Turn this on to create several styles, each trained on its own and picked per project.",
     about: "About",
     aboutIntro: "FleetingGleam is a photo culling tool that runs on your own device: it groups bursts of the same moment, picks the best frame in each, and explains why. Analysis, search and learning all happen locally; photos are never uploaded.",

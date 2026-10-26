@@ -124,7 +124,8 @@ const zh = {
     confirmDeleteTitle: "删除「{{name}}」？",
     confirmDeleteBody: "它学到的 {{labels}} 次选择和 {{refs}} 张参考照片会被永久清除，无法恢复。",
     confirmDeleteUsed: "目前 {{count}} 个项目在用这个风格，删除后它们会改用默认风格：{{names}}。",
-    confirmDeleteAction: "永久删除", createdOn: "创建于 {{date}}",
+    confirmDeleteAction: "永久删除",
+    confirmResetTitle: "清空「{{name}}」？", confirmResetBody: "它学到的 {{labels}} 次判断和 {{refs}} 张参考照片会被永久清除，无法恢复；风格本身和用它的项目都还在。", confirmResetAction: "清空", createdOn: "创建于 {{date}}",
   },
   cmp: { count: "同时对比的张数", rail: "同组的其他照片", groupOf: "第 {{i}} / {{n}} 组相似照片", scope: "对比范围", byGroup: "相似组", byScene: "同场景", onlyThem: "只看这个人", sceneOf: "整个场景 · {{n}} 张", prev: "上一组", next: "下一组", best: "推荐", kept: "已保留", rejected: "已淘汰", hint: "滚轮缩放 · 拖动平移 · 双击放大到 2.5 倍（同步） · 悬停一张，按 P 保留 · X 淘汰 · ↑↓ 换对手 · ← → 换组", emptyTitle: "这张没有相似的照片可以对比", emptyBody: "对比用来在同一瞬间连拍的几张里挑出最好的一张。", jump: "跳到下一组相似照片" },
   inspector: {
@@ -243,6 +244,7 @@ const zh = {
     learn: "学习我的喜好", learnShort: "根据你的保留和淘汰，学习你的口味。只保存在这台电脑上。", learnDesc: "根据你手动保留和淘汰的照片，在这台电脑上学习你的口味，并用它微调评分。学到的内容只保存在本机，不会上传，也可以随时重置。",
     learnStatus: "已从 {{n}} 次手动选择中学习（其中保留 {{k}} 张）", learnActive: "偏好模型已生效", learnWarm: "还需要更多选择才会生效（保留和淘汰各至少 3 张）", learnNone: "还没有学习记录。在检查器里对照片按 P、R、X 就会开始积累。",
     learnReset: "重置已学习的偏好", learnResetDone: "已重置",
+    learnResetTitle: "重置已学习的偏好？", learnResetBody: "默认风格学到的 {{labels}} 次判断和 {{refs}} 张参考照片会被永久清除，无法恢复。想留一份的话，先在「备份」里导出。", learnResetAction: "重置",
     customStyles: "启用自定义风格", customStylesDesc: "默认只训练一个风格。打开后可以新建多个风格，分别训练、按项目选用。",
     about: "关于",
     aboutIntro: "惊鸿是一个在本机运行的选片工具：把同一瞬间的连拍归成一组，在每组里推荐最好的一张，并说明为什么。所有分析、搜索和学习都在你自己的设备上完成，照片不会上传。",

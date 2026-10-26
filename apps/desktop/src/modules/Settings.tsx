@@ -61,6 +61,8 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
   const [cleared, setCleared] = useState(false);
   const [prefs, setPrefs] = useState<PrefsInfo | null>(null);
   const [prefsReset, setPrefsReset] = useState(false);
+  /** 重置前先确认，写明会丢掉多少（和删除风格一样）。 */
+  const [resetAsk, setResetAsk] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const sections = [
     { id: "sec-general", label: t("settings.general") },
@@ -125,6 +127,7 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
     try { await invoke("clear_cache"); setCache(0); setCleared(true); bumpCacheRev(); } catch { /* ignore */ }
   };
   const resetPrefs = async () => {
+    setResetAsk(false);
     try { const v = await invoke<PrefsInfo>("prefs_reset"); setPrefs(v && typeof v === "object" ? v : null); setPrefsReset(true); bumpPrefsRevision(); } catch { /* ignore */ }
   };
 
@@ -291,6 +294,11 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
           {bkErr && <p className="error">{t("settings.backupFailed", { error: bkErr })}</p>}
         </div>
       </Modal>
+      <Modal open={resetAsk} onClose={() => setResetAsk(false)} title={t("settings.learnResetTitle")}
+        footer={(<><button className="btn" onClick={() => setResetAsk(false)}>{t("organize.cancel")}</button>
+          <button className="btn danger" autoFocus onClick={resetPrefs}>{t("settings.learnResetAction")}</button></>)}>
+        <p>{t("settings.learnResetBody", { labels: prefs?.labels ?? 0, refs: prefs?.refs ?? 0 })}</p>
+      </Modal>
       <Modal open={proxyOpen} onClose={() => setProxyOpen(false)} title={t("settings.proxy")}
         footer={(<>{proxy?.manual && <button className="btn" onClick={() => proxySave(null)}>{t("settings.proxyUseSystem")}</button>}
           <button className="btn" onClick={() => setProxyOpen(false)}>{t("settings.nasCancel")}</button>
@@ -426,7 +434,7 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
               </Row>
               {prefs && (prefs.labels > 0 || prefs.refs > 0) && (
                 <Row label={t("settings.learnReset")} desc={t("settings.learned", { count: prefs.labels + prefs.refs, n: prefs.labels + prefs.refs })}>
-                  <button className="btn" onClick={resetPrefs}>{prefsReset ? t("settings.learnResetDone") : t("settings.learnReset")}</button>
+                  <button className="btn" onClick={() => setResetAsk(true)}>{prefsReset ? t("settings.learnResetDone") : t("settings.learnReset")}</button>
                 </Row>
               )}
             </Group>
