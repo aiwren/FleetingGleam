@@ -204,6 +204,49 @@ object Media {
         return null
     }
 
+    // ------------------------------------------------------------ 镜像占的空间（审查第 31 条：以前不计入缓存、从不清理）
+
+    /** 应用的 Context（彻底删除项目时在后台线程里删镜像要用；FgApp 启动时给）。 */
+    @Volatile private var app: Context? = null
+    fun init(ctx: Context) { app = ctx.applicationContext }
+
+    /** 每个网盘镜像在本机占多少字节（`files/saf/<编号>`）。 */
+    fun mirrorUsage(ctx: Context): List<Pair<Mirror, Long>> = mirrors(ctx).map { m -> m to dirBytes(mirrorDir(ctx, m.id)) }
+
+    private fun dirBytes(dir: File): Long = if (!dir.exists()) 0 else dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+
+    /**
+     * 清掉一个镜像的本机副本：照片删掉，镜像本身（原处文件夹与读权限）留着，下次打开项目重新拉——拉回来的照片大小与修改时间和原处一样，
+     * 分析结果照用。返回释放的字节数。
+     */
+    fun clearMirror(ctx: Context, id: String): Long {
+        val dir = mirrorDir(ctx, id)
+        val before = dirBytes(dir)
+        dir.listFiles()?.forEach { it.deleteRecursively() }
+        return before - dirBytes(dir)
+    }
+
+    /**
+     * 彻底删除项目后：`dirs` 里落在网盘镜像上、而且没有别的项目（`keep`，含回收站里的）还在用的镜像，连本机副本带记录一起删，读权限也还给系统。
+     * 别的项目用着同一个镜像的子文件夹或上一级也算在用。
+     */
+    fun forgetMirrors(dirs: List<String>, keep: List<String>) {
+        val ctx = app ?: return
+        val all = mirrors(ctx)
+        val gone = all.filter { m ->
+            val root = mirrorDir(ctx, m.id).absolutePath
+            val inRoot = { d: String -> d == root || d.startsWith("$root/") }
+            dirs.any(inRoot) && keep.none(inRoot)
+        }
+        if (gone.isEmpty()) return
+        for (m in gone) {
+            mirrorDir(ctx, m.id).deleteRecursively()
+            runCatching { ctx.contentResolver.releasePersistableUriPermission(Uri.parse(m.uri), Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
+                .onFailure { runCatching { ctx.contentResolver.releasePersistableUriPermission(Uri.parse(m.uri), Intent.FLAG_GRANT_READ_URI_PERMISSION) } }
+        }
+        saveMirrors(ctx, all - gone.toSet())
+    }
+
     /** 这个路径是不是镜像里的（这样的照片在原处回收，不进系统回收站）。 */
     fun isMirror(ctx: Context, path: String): Boolean = path.startsWith(File(ctx.filesDir, "saf").absolutePath + "/")
 }

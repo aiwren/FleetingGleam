@@ -54,7 +54,11 @@
    "glassDesc": "标签栏和浮动控件折射后面的内容。关掉后换成普通磨砂，老机器上更流畅。",
    "learnResetTitle": "重置已学习的偏好？",
    "learnResetBody": "学到的 {{labels}} 次判断和 {{refs}} 张参考照片会被清除，无法恢复。想留一份，先到「备份」里导出喜好。",
-   "learnResetAction": "重置"
+   "learnResetAction": "重置",
+   "mirrors": "NAS / 网盘副本",
+   "mirrorsDesc": "从 NAS、网盘选的文件夹，照片会复制一份在手机上。清掉后下次打开项目重新拉，分析结果保留。",
+   "mirrorNas": "NAS · {{name}}",
+   "mirrorSaf": "网盘 · {{name}}"
   },
   "cull": {
    "hint": "点一张照片选中，底栏可以保留、淘汰或放大查看；单张模式里上推留下、下拉淘汰。",

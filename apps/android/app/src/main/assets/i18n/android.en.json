@@ -54,7 +54,11 @@
    "glassDesc": "The tab bar and floating controls refract what is behind them. Off, they are plain frosted panels, smoother on older phones.",
    "learnResetTitle": "Reset the learned taste?",
    "learnResetBody": "The {{labels}} choices and {{refs}} reference photos it learned from are erased for good. To keep a copy, export your taste under Backup first.",
-   "learnResetAction": "Reset"
+   "learnResetAction": "Reset",
+   "mirrors": "NAS and cloud copies",
+   "mirrorsDesc": "Folders picked from a NAS or a cloud drive keep a copy of their photos on the phone. Clear one and it is fetched again the next time the project opens; the analysis is kept.",
+   "mirrorNas": "NAS · {{name}}",
+   "mirrorSaf": "Cloud · {{name}}"
   },
   "cull": {
    "hint": "Tap a photo to select it; the bar below keeps, rejects or opens it. In single view, push up to keep and pull down to reject.",

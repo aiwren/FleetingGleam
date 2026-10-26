@@ -130,6 +130,16 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
     val wanted by com.fleetinggleam.android.core.Nav.settings.collectAsState()
     LaunchedEffect(wanted) { if (wanted != null) { section = wanted; com.fleetinggleam.android.core.Nav.consumed() } }
 
+    // NAS / 网盘副本各占多少：核心算 NAS 的（还没有这个命令的老核心就当没有），网盘镜像这里自己算
+    var nasUsage by remember { mutableStateOf<List<com.fleetinggleam.android.core.MirrorUsage>?>(null) }
+    var safUsage by remember { mutableStateOf<List<Pair<Media.Mirror, Long>>>(emptyList()) }
+    var mirrorBusy by remember { mutableStateOf<String?>(null) }
+    suspend fun loadMirrors() {
+        nasUsage = runCatching { Core.get<List<com.fleetinggleam.android.core.MirrorUsage>>("nas_mirror_usage") }.getOrNull()?.filter { it.bytes > 0 }
+        safUsage = withContext(Dispatchers.IO) { runCatching { Media.mirrorUsage(ctx).filter { it.second > 0 } }.getOrDefault(emptyList()) }
+    }
+    LaunchedEffect(section) { if (section == "data") loadMirrors() }
+
     LaunchedEffect(Unit) {
         Styles.refresh(); Nas.refresh(); Backup.refresh(); Models.refresh()
         prefs = Styles.prefsInfo()
@@ -296,6 +306,31 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                         scope.launch { runCatching { Core.call("clear_cache"); cache = 0; cleared = true; Settings.bumpCacheRev() } }
                     }, small = true, enabled = (cache ?: 0) > 0)
                 }
+                // NAS / 网盘的本机副本：单列出来（以前不算进缓存，实际可能几十 GB），一台一台地清（审查第 31 条）
+                val mirrorTotal = (nasUsage?.sumOf { it.bytes } ?: 0L) + safUsage.sumOf { it.second }
+                if (!nasUsage.isNullOrEmpty() || safUsage.isNotEmpty()) SettingRow(t("android.settings.mirrors"), t("android.settings.mirrorsDesc"), below = {
+                    Column {
+                        nasUsage.orEmpty().forEach { u ->
+                            MirrorLine(t("android.settings.mirrorNas", "name" to u.name.ifEmpty { u.id }), u.bytes, mirrorBusy == u.id) {
+                                scope.launch {
+                                    mirrorBusy = u.id
+                                    runCatching { Core.call("nas_mirror_clear", args("id" to u.id)); Settings.bumpCacheRev() }
+                                    loadMirrors(); mirrorBusy = null
+                                }
+                            }
+                        }
+                        safUsage.forEach { (m, bytes) ->
+                            MirrorLine(t("android.settings.mirrorSaf", "name" to m.name), bytes, mirrorBusy == m.id) {
+                                scope.launch {
+                                    mirrorBusy = m.id
+                                    withContext(Dispatchers.IO) { runCatching { Media.clearMirror(ctx, m.id) } }
+                                    Settings.bumpCacheRev()
+                                    loadMirrors(); mirrorBusy = null
+                                }
+                            }
+                        }
+                    }
+                }) { Text(fmtBytes(mirrorTotal), style = Type.mono.copy(color = c.ash)) }
                 SettingRow(t("settings.privacy"), t("android.settings.privacyBody"))
             }
         }
@@ -568,6 +603,17 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
         FgButton(t("settings.nasCancel"), { nasRemoving = null })
         FgButton(t("settings.nasRemoveConfirm"), { val sh = nasRemoving ?: return@FgButton; nasRemoving = null; scope.launch { nasBusy = sh.id; runCatching { Nas.remove(sh.id) }.onFailure { nasMsg = sh.id to (it.message ?: "") }; nasBusy = null } }, primary = true)
     }) { Text(t("settings.nasRemoveBody"), style = Type.body.copy(color = c.ash)) }
+}
+
+/** 副本列表的一行：名字 · 大小 · 清除。 */
+@Composable
+private fun MirrorLine(name: String, bytes: Long, busy: Boolean, onClear: () -> Unit) {
+    val c = LocalFg.current
+    Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(name, style = Type.rowDesc.copy(color = c.ink), maxLines = 1, overflow = com.fleetinggleam.android.ui.theme.Ellipsis, modifier = Modifier.weight(1f))
+        Text(fmtBytes(bytes), style = Type.monoSmall.copy(color = c.ash))
+        FgButton(t("settings.clear"), onClear, small = true, enabled = !busy)
+    }
 }
 
 private data class BkForm(val id: String? = null, val name: String = "", val account: String = "", val bucket: String = "", val accessKey: String = "", val secret: String = "", val hasSecret: Boolean = false)

@@ -103,6 +103,8 @@ data class Decision(val state: String, val manual: Boolean = false, val reasons:
     /** 没连上的原因归成三类："auth" / "denied" / "net"（老核心没有 error 时按连不上算）。 */
     val failure: String? get() = if (connected) null else Errors.parse(error)?.kind?.takeIf { it == "auth" || it == "denied" } ?: "net"
 }
+/** 一台 NAS 的镜像在本机占多少（`nas_mirror_usage`，第 31 条）。 */
+@Serializable data class MirrorUsage(val id: String, val name: String = "", val bytes: Long = 0)
 @Serializable data class NasEntry(val name: String, val dir: Boolean, val size: Long = 0)
 @Serializable data class Listing(val path: String, val local: String, val entries: List<NasEntry> = emptyList())
 @Serializable data class NasProgress(val share: String, val done: Int, val total: Int, val bytesDone: Long = 0, val bytesTotal: Long = 0)

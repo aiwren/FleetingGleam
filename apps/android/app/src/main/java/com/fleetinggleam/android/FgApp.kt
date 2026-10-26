@@ -25,6 +25,7 @@ class FgApp : Application() {
         com.fleetinggleam.android.core.UiPrefs.init(this)
         Core.init(this, packageManager.getPackageInfo(packageName, 0).versionName ?: "0.1.0")
         Models.init(this)
+        com.fleetinggleam.android.core.Media.init(this)
         Nas.init()
         Backup.watch()
         Session.init(this)

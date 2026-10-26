@@ -161,7 +161,11 @@ object Projects {
         val dirs = removed.flatMap { it.folders }
         if (dirs.isEmpty()) return
         val keep = remaining.flatMap { it.folders }
-        Thread({ runCatching { Core.callBlocking("forget_folders", args("dirs" to dirs, "keep" to keep)) } }, "fg-forget").start()
+        Thread({
+            runCatching { Core.callBlocking("forget_folders", args("dirs" to dirs, "keep" to keep)) }
+            // 网盘镜像是 Kotlin 自己管的（NAS 镜像由核心在 forget_folders 里删）：它独占的那份也删掉（审查第 31 条）
+            runCatching { Media.forgetMirrors(dirs, keep) }
+        }, "fg-forget").start()
     }
 
     fun purge(id: String) {
