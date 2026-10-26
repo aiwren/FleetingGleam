@@ -99,6 +99,17 @@ pub struct Probe {
     pub files: Vec<ProbeFile>,
     pub bytes: u64,
     pub uncached: usize,
+    /// 项目在 NAS 上、这次连不上：没同步，照片是本机镜像里上次同步的那些（界面说"显示上次同步的照片"，NAS 上的整理操作置灰）。
+    #[serde(default)]
+    pub offline: bool,
+}
+
+/// 一台 NAS 的本机副本占多少（设置里"NAS / 网盘副本"那一栏）。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct MirrorUsage {
+    pub id: String,
+    pub name: String,
+    pub bytes: u64,
 }
 
 /// 分析一个项目要的参数（和桌面端 `scan_project` 命令的参数一样）。
@@ -256,11 +267,24 @@ pub struct Listing {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ExportResult {
     pub copied: usize,
+    /// 没复制的：不是照片的，以及目标里已有同名、同大小、同修改时间的（以前导出过）。
     pub skipped: usize,
     pub dest: String,
     /// 导出到了 NAS 上（`dest` 是 smb:// 地址，本机没有这个文件夹）。
     #[serde(default)]
     pub remote: bool,
+    /// 复制失败的照片和原因（原因带 `errors` 约定的前缀，比如 `space:` 磁盘满了）；写了一半的目标文件已经删掉。
+    #[serde(default)]
+    pub failed: Vec<ExportFailure>,
+    /// `export_cancel` 让它在那一张之后停下了。
+    #[serde(default)]
+    pub cancelled: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ExportFailure {
+    pub path: String,
+    pub error: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -362,6 +386,8 @@ pub struct Engine {
     cancel_gen: AtomicU64,
     /// Bumped by every recorded label; the retraining scheduled by a label only runs if no newer label came in the meantime.
     retrain_gen: AtomicU64,
+    /// 当前分析模型出的向量有多长（最近一次分析看到的）；喜好只用这个维度训练（见 `Prefs::retrain`）。0 = 这次启动还没分析过。
+    model_dim: AtomicUsize,
     /// Loaded once, on first use: the scene-description model (a few hundred MB) and the English-to-Chinese one.
     captioner: Mutex<Option<Arc<florence::Captioner>>>,
     translator: Mutex<Option<Arc<translate::Translator>>>,
@@ -371,7 +397,11 @@ pub struct Engine {
     scene_job: AtomicU64,
     /// NAS 共享的连接，住在自己的线程里（见 nas.rs）。
     nas: nas::Pool,
+    /// 每台 NAS 最后一次连接失败的原因（带前缀），连上就清掉；`ShareStatus.error` 给界面分开说"密码不对"和"连不上"。
+    nas_errors: Mutex<HashMap<String, String>>,
     downloads: Downloads,
+    /// `export_cancel` 设上：正在进行的导出做完当前这张就停。
+    export_stop: Arc<AtomicBool>,
     /// Writes of `projects.json` are serialised and go through a temporary file and a rename.
     projects_write: Mutex<()>,
     /// 这台设备的名字（备份里记下来，另一端恢复前能看到是谁做的）；应用启动时告诉引擎，没告诉就用平台名。
@@ -403,6 +433,8 @@ pub struct BackupMeta {
 impl Engine {
     pub fn new(paths: Paths, events: Box<dyn Events>, app_version: &str) -> Arc<Engine> {
         let _ = std::fs::create_dir_all(&paths.data);
+        // 日志同时写进 data/logs/app.log；核心崩溃写 data/logs/crash-*.txt
+        crate::diagnostics::init(&paths.data);
         let _ = std::fs::create_dir_all(&paths.thumbs);
         let prefs = prefs::Styles::load(&paths.data);
         Arc::new(Engine {
@@ -419,12 +451,15 @@ impl Engine {
             scan_seq: AtomicU64::new(0),
             cancel_gen: AtomicU64::new(0),
             retrain_gen: AtomicU64::new(0),
+            model_dim: AtomicUsize::new(0),
             captioner: Mutex::new(None),
             translator: Mutex::new(None),
             scene_sentences: Mutex::new(None),
             scene_job: AtomicU64::new(0),
             nas: nas::Pool::start(),
+            nas_errors: Mutex::new(HashMap::new()),
             downloads: Downloads::default(),
+            export_stop: Arc::new(AtomicBool::new(false)),
             projects_write: Mutex::new(()),
             device: Mutex::new(String::new()),
         })
@@ -518,7 +553,7 @@ impl Engine {
         let tag = scorer::analysis_tag(scorer::resolve(&self.paths.models, compute != Some("cpu"), Quality::parse(quality)));
         // 离开项目时页面会 `scan_cancel`，正在从 NAS 拉照片的探测也就跟着停
         let gen = self.cancel_gen.load(Ordering::Relaxed);
-        self.nas_sync_dirs(dirs, gen, None)?;
+        let offline = self.nas_sync_dirs(dirs, gen, None)?;
         // 先按扩展名和大小列出文件（不读文件）；缓存里认识的（没变过）尺寸直接查表，是否"已分析"按当前模型的 tag 看。
         // 其余的文件头只读一次：读不出来的（损坏、扩展名不对）剔除，读出来的尺寸直接用——以前筛一遍、取尺寸又读一遍，
         // 手机上几千张 HEIC 要等很久，界面上一直是"正在读取文件夹…"。边读边发 "probe-progress"。
@@ -556,7 +591,7 @@ impl Engine {
         // Size of what still needs analysing, which is what the confirmation screen talks about.
         let bytes = files.iter().zip(&out).filter(|(_, o)| !o.cached).filter_map(|(p, _)| std::fs::metadata(p).ok()).map(|m| m.len()).sum();
         let uncached = out.iter().filter(|f| !f.cached).count();
-        Ok(Probe { files: out, bytes, uncached })
+        Ok(Probe { files: out, bytes, uncached, offline })
     }
 
     /// Analyses whatever is new or changed, reuses the cache for the rest, then groups and scores every photo
@@ -583,7 +618,7 @@ impl Engine {
         let vision_cell: std::cell::OnceCell<Option<Box<dyn SystemVision>>> = std::cell::OnceCell::new();
 
         let cancelled = || !self.scan_live(gen, &a.key, job);
-        // 镜像里可能有探测之后才到 NAS 上的新照片；再对一次远端，没变化时只是几次目录列表
+        // 镜像里可能有探测之后才到 NAS 上的新照片；再对一次远端，没变化时只是几次目录列表。NAS 连不上就分析镜像里已有的
         self.nas_sync_dirs(&a.dirs, gen, Some((a.key.clone(), job)))?;
         let mut hits: Vec<Photo> = Vec::new();
         let mut jobs: Vec<(PathBuf, u64, i64)> = Vec::new();
@@ -665,7 +700,12 @@ impl Engine {
             }
         }
 
-        let prefs = if a.learn { Some(self.prefs.lock().unwrap_or_else(|e| e.into_inner()).get(a.style.as_deref()).prefs.clone()) } else { None };
+        // 缓存里认识的照片说明了当前模型的向量长度；学到的喜好要是按别的维度训练的（刚换了分析档、或刚导入了别的设备的判断），
+        // 先按这个维度重训一次，否则这次分析混不进喜好
+        if let Some(d) = hits.iter().map(|p| p.embedding.len()).find(|&n| n > 0) {
+            self.note_model_dim(d, a.style.as_deref());
+        }
+        let mut prefs = if a.learn { Some(self.prefs.lock().unwrap_or_else(|e| e.into_inner()).get(a.style.as_deref()).prefs.clone()) } else { None };
         let mut fresh: Vec<Photo> = Vec::new();
         if !jobs.is_empty() {
             // 边分析边判：已经认识的照片先放进去，分析线程每出一张放一张；判定线程隔一会儿发一次 "scan-decide"
@@ -907,6 +947,13 @@ impl Engine {
         let mut photos = hits;
         photos.extend(fresh);
         photos.sort_by(|a, b| a.path.cmp(&b.path));
+        // 第一次分析（缓存里一张都没有）这时才知道当前模型的向量长度
+        if let Some(d) = photos.iter().map(|p| p.embedding.len()).find(|&n| n > 0).filter(|&d| d != self.model_dim.load(Ordering::Relaxed)) {
+            self.note_model_dim(d, a.style.as_deref());
+            if a.learn {
+                prefs = Some(self.prefs.lock().unwrap_or_else(|e| e.into_inner()).get(a.style.as_deref()).prefs.clone());
+            }
+        }
         // 刚分析出来的记录是 0 度；文件没变、用户转过的，缓存里（`put` 时）已经套上了角度，这里把它拿回来
         self.with_cache(|c| {
             for p in photos.iter_mut() {
@@ -1086,7 +1133,7 @@ impl Engine {
     pub fn taste_apply(&self, pack: taste::Pack) -> Result<(taste::Summary, serde_json::Value), String> {
         let (summary, touched) = {
             let mut styles = self.prefs.lock().unwrap_or_else(|e| e.into_inner());
-            taste::unpack(&mut styles, &pack)?
+            self.with_cache(|c| taste::unpack(&mut styles, &pack, |k| c.embedding(k)))?
         };
         for id in &touched {
             self.retrain_outside_lock(Some(id));
@@ -1258,13 +1305,31 @@ impl Engine {
 
     pub fn nas_list(&self) -> Vec<nas::ShareStatus> {
         let dir = &self.paths.data;
+        let errors = self.nas_errors.lock().unwrap_or_else(|e| e.into_inner()).clone();
         nas::load(dir)
             .iter()
-            .map(|s| nas::ShareStatus { id: s.id.clone(), name: s.name.clone(), host: s.host.clone(), user: s.user.clone(), enabled: s.enabled, local: nas::local_dir(dir, &s.id).to_string_lossy().into_owned(), connected: self.nas.is_connected(&s.id) })
+            .map(|s| {
+                let connected = self.nas.is_connected(&s.id);
+                let error = if connected { None } else { errors.get(&s.id).cloned() };
+                nas::ShareStatus { id: s.id.clone(), name: s.name.clone(), host: s.host.clone(), user: s.user.clone(), enabled: s.enabled, local: nas::local_dir(dir, &s.id).to_string_lossy().into_owned(), connected, error }
+            })
             .collect()
     }
 
-    /// 没连着就用记住的密码连上；没有记住的密码就说明缺什么。停用的不连。
+    /// 记下一次连接的结果：失败记原因（带前缀），成功清掉。
+    fn note_nas<T>(&self, id: &str, r: &Result<T, String>) {
+        let mut errors = self.nas_errors.lock().unwrap_or_else(|e| e.into_inner());
+        match r {
+            Ok(_) => {
+                errors.remove(id);
+            }
+            Err(e) => {
+                errors.insert(id.to_string(), e.clone());
+            }
+        }
+    }
+
+    /// 没连着就用记住的密码连上；没有记住的密码就说明缺什么。停用的不连。错误前面是 NAS 的名字，前缀（`auth:` 等）仍在最前。
     fn nas_connect_saved(&self, s: &nas::Share) -> Result<(), String> {
         if self.nas.is_connected(&s.id) {
             return Ok(());
@@ -1272,17 +1337,27 @@ impl Engine {
         if !s.enabled {
             return Err(format!("the NAS \"{}\" is turned off in Settings", s.name));
         }
-        let pw = nas::saved_password(&self.paths.data, s).ok_or_else(|| format!("the NAS \"{}\" needs its password: connect it in Settings", s.name))?;
-        self.nas.connect(s, &pw).map_err(|e| format!("{}: {e}", s.name))
+        let r = match nas::saved_password(&self.paths.data, s) {
+            Some(pw) => self.nas.connect(s, &pw).map_err(|e| crate::errors::context(&s.name, &e)),
+            None => Err(format!("auth:the NAS \"{}\" needs its password: connect it in Settings", s.name)),
+        };
+        self.note_nas(&s.id, &r);
+        r
     }
 
     /// 项目文件夹里落在共享镜像上的，先把远端同步进来（进度发 "nas-progress"）；`scan_cancel`（或分析时这个项目的任务被顶掉）就停。
-    fn nas_sync_dirs(self: &Arc<Self>, dirs: &[String], gen: u64, job: Option<(String, u64)>) -> Result<(), String> {
+    /// NAS 连不上（或同步中途断了）不算错：记一笔、跳过它，调用方用镜像里已有的照片，返回值为真（"离线"）。只有取消是错误。
+    fn nas_sync_dirs(self: &Arc<Self>, dirs: &[String], gen: u64, job: Option<(String, u64)>) -> Result<bool, String> {
         let data = &self.paths.data;
         let shares = nas::load(data);
+        let mut offline = false;
         for d in dirs {
             let Some((s, rel)) = nas::share_of_path(data, &shares, Path::new(d)) else { continue };
-            self.nas_connect_saved(s)?;
+            if let Err(e) = self.nas_connect_saved(s) {
+                crate::platform::log(&format!("NAS 连不上，用本机镜像里上次同步的照片：{e}"));
+                offline = true;
+                continue;
+            }
             let local = nas::local_dir(data, &s.id);
             // 进度与取消在 NAS 的线程上回调，所以各拿一份引擎的引用
             let (emit, watch) = (self.clone(), self.clone());
@@ -1290,9 +1365,41 @@ impl Engine {
             let r = self.nas.sync(&s.id, &rel, &local, move |p| emit.emit("nas-progress", &p), move || {
                 watch.cancel_gen.load(Ordering::Relaxed) != gen || job.as_ref().map_or(false, |(k, j)| !watch.scan_live(gen, k, *j))
             });
-            r.map_err(|e| if e.contains("ancelled") { "cancelled".to_string() } else { format!("{}: {e}", s.name) })?;
+            match r {
+                Ok(()) => {}
+                Err(e) if e.contains("ancelled") => return Err(crate::errors::CANCELLED.to_string()),
+                Err(e) => {
+                    let e = crate::errors::context(&s.name, &e);
+                    crate::platform::log(&format!("NAS 同步没完成，用本机镜像里已有的照片：{e}"));
+                    if !self.nas.is_connected(&s.id) {
+                        self.note_nas::<()>(&s.id, &Err(e));
+                    }
+                    offline = true;
+                }
+            }
         }
-        Ok(())
+        Ok(offline)
+    }
+
+    /// 每台 NAS 的本机副本（镜像）占多少字节。
+    pub fn nas_mirror_usage(&self) -> Vec<MirrorUsage> {
+        let dir = &self.paths.data;
+        nas::load(dir).into_iter().map(|s| MirrorUsage { bytes: nas::mirror_bytes(dir, &s.id), id: s.id, name: s.name }).collect()
+    }
+
+    /// 清掉一台 NAS 的本机副本，返回释放的字节数。分析结果（按文件大小与修改时间记的）留着：下次打开项目重新拉照片，
+    /// 拉下来的文件大小与修改时间和原来一样，不用重新分析。
+    pub fn nas_mirror_clear(&self, id: &str) -> Result<u64, String> {
+        let dir = &self.paths.data;
+        if !nas::load(dir).iter().any(|s| s.id == id) {
+            return Err("unknown NAS".to_string());
+        }
+        let bytes = nas::mirror_bytes(dir, id);
+        let local = nas::local_dir(dir, id);
+        if local.exists() {
+            std::fs::remove_dir_all(&local).map_err(|e| crate::errors::io(&e, &local, 0))?;
+        }
+        Ok(bytes)
     }
 
     /// 添加或编辑 NAS 时的"测试连接"：连上这台服务器，返回它的共享名；什么都不记。编辑时密码留空就用记住的。
@@ -1321,7 +1428,9 @@ impl Engine {
         // 密码留空 = 用记住的（账号没变时）
         let same_account = next.host == old.host && next.user == old.user;
         let pw = if password.is_empty() { if same_account { nas::saved_password(dir, &old).unwrap_or_default() } else { String::new() } } else { password.to_string() };
-        self.nas.connect(&next, &pw)?;
+        let r = self.nas.connect(&next, &pw);
+        self.note_nas(id, &r);
+        r?;
         if !same_account {
             nas::forget_password(dir, &old);
         }
@@ -1362,6 +1471,7 @@ impl Engine {
         if let Some(s) = list.iter().find(|s| s.id == id).cloned() {
             self.nas.disconnect(&s.id);
             nas::forget_password(dir, &s);
+            self.nas_errors.lock().unwrap_or_else(|e| e.into_inner()).remove(&s.id);
             let _ = std::fs::remove_dir_all(nas::local_dir(dir, &s.id));
             list.retain(|x| x.id != id);
             nas::save(dir, &list)?;
@@ -1375,7 +1485,9 @@ impl Engine {
         let s = nas::load(dir).into_iter().find(|s| s.id == id).ok_or("unknown share")?;
         match password.filter(|p| !p.is_empty()) {
             Some(pw) => {
-                self.nas.connect(&s, pw)?;
+                let r = self.nas.connect(&s, pw);
+                self.note_nas(&s.id, &r);
+                r?;
                 nas::remember_password(dir, &s, pw)?;
             }
             None => self.nas_connect_saved(&s)?,
@@ -1432,7 +1544,12 @@ impl Engine {
 
     /// Copies the given photos into `dest`. Originals are never touched and nothing is overwritten.
     /// `dest` 落在某台 NAS 的镜像里（文件夹选择器选 NAS 上的文件夹时给的就是镜像路径）：直接上传到 NAS 上那个文件夹。
+    ///
+    /// 目标里已有同名、同大小、同修改时间的视为导出过，计入 `skipped`（复制时把修改时间设成原图的，再导出一次就全是这种）。
+    /// 开始前看空间，不够就 `space:` 错误、一张都不复制。每张先写到旁边的 `.名字.part`，写完才改名，失败就删掉它：目标里永远没有半张照片；
+    /// 失败的和原因进 `failed`，中途磁盘满了后面的都不再试。`export_cancel` 让它做完当前这张就停（`cancelled`）。
     pub fn export_photos(self: &Arc<Self>, paths: &[String], dest: &str) -> Result<ExportResult, String> {
+        self.export_stop.store(false, Ordering::Relaxed);
         let shares = nas::load(&self.paths.data);
         if let Some((s, rel)) = nas::share_of_path(&self.paths.data, &shares, Path::new(dest)) {
             if rel.is_empty() {
@@ -1441,40 +1558,73 @@ impl Engine {
             return self.export_to_nas(s, &rel, paths);
         }
         let dest_dir = PathBuf::from(dest);
-        std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&dest_dir).map_err(|e| crate::errors::io(&e, &dest_dir, 0))?;
         let total = paths.len();
-        let (mut copied, mut skipped) = (0usize, 0usize);
-        for (i, p) in paths.iter().enumerate() {
+        let mut skipped = 0usize;
+        let mut todo: Vec<(&str, u64)> = Vec::new();
+        for p in paths {
             let src = Path::new(p);
-            if analyze::is_image(src) && src.is_file() {
-                let target = unique_path(&dest_dir, src.file_name().unwrap_or_default());
-                match std::fs::copy(src, &target) {
-                    Ok(_) => copied += 1,
-                    Err(_) => skipped += 1,
+            match std::fs::metadata(src) {
+                Ok(m) if m.is_file() && analyze::is_image(src) => {
+                    if same_file_at(&dest_dir, src, &m) {
+                        skipped += 1;
+                    } else {
+                        todo.push((p, m.len()));
+                    }
                 }
-            } else {
-                skipped += 1;
+                _ => skipped += 1,
             }
-            self.emit("export-progress", &Progress { done: i + 1, total });
         }
-        Ok(ExportResult { copied, skipped, dest: dest.to_string(), remote: false })
+        crate::errors::check_space(&dest_dir, todo.iter().map(|(_, n)| n).sum())?;
+        let (mut copied, mut failed, mut cancelled) = (0usize, Vec::new(), false);
+        self.emit("export-progress", &Progress { done: skipped, total });
+        for (i, &(p, size)) in todo.iter().enumerate() {
+            if self.export_stop.load(Ordering::Relaxed) {
+                cancelled = true;
+                break;
+            }
+            match copy_into(Path::new(p), &dest_dir, size) {
+                Ok(()) => copied += 1,
+                Err(e) => {
+                    let full = e.starts_with("space:");
+                    failed.push(ExportFailure { path: p.to_string(), error: e.clone() });
+                    if full {
+                        // 磁盘满了：后面的一样写不进去，不再一张张试
+                        failed.extend(todo[i + 1..].iter().map(|(q, _)| ExportFailure { path: q.to_string(), error: e.clone() }));
+                        break;
+                    }
+                }
+            }
+            self.emit("export-progress", &Progress { done: skipped + i + 1, total });
+        }
+        Ok(ExportResult { copied, skipped, dest: dest.to_string(), remote: false, failed, cancelled })
+    }
+
+    /// 让正在进行的导出做完当前这张就停（返回的 `ExportResult.cancelled` 为真）。
+    pub fn export_cancel(&self) {
+        self.export_stop.store(true, Ordering::Relaxed);
     }
 
     /// 上传到 NAS 上的文件夹（`共享/路径`）：连上（用记住的密码），逐张写过去，进度照样发 "export-progress"。
+    /// NAS 上已有同名、同大小、同修改时间的视为导出过；`export_cancel` 同样做完当前这张就停。
     fn export_to_nas(self: &Arc<Self>, s: &nas::Share, rel: &str, paths: &[String]) -> Result<ExportResult, String> {
-        self.nas_connect_saved(s).map_err(|e| format!("{}: {e}", s.name))?;
+        self.nas_connect_saved(s)?;
         let files: Vec<PathBuf> = paths.iter().map(PathBuf::from).filter(|p| analyze::is_image(p) && p.is_file()).collect();
         let not_photos = paths.len() - files.len();
         let total = paths.len();
         let emit = self.clone();
-        let results = self.nas.upload(&s.id, rel, files, move |done| emit.emit("export-progress", &Progress { done: done + not_photos, total }));
-        let copied = results.iter().filter(|r| r.is_ok()).count();
-        if copied == 0 {
-            if let Some(Err(e)) = results.iter().find(|r| r.is_err()) {
-                return Err(format!("{}: {e}", s.name));
+        let stop = self.export_stop.clone();
+        let results = self.nas.upload(&s.id, rel, files.clone(), move |done| emit.emit("export-progress", &Progress { done: done + not_photos, total }), move || stop.load(Ordering::Relaxed));
+        let copied = results.iter().filter(|r| matches!(r, Ok(nas::Sent::Uploaded(_)))).count();
+        let same = results.iter().filter(|r| matches!(r, Ok(nas::Sent::Same(_)))).count();
+        let failed: Vec<ExportFailure> = files.iter().zip(&results).filter_map(|(f, r)| r.as_ref().err().map(|e| ExportFailure { path: f.to_string_lossy().into_owned(), error: e.clone() })).collect();
+        if copied == 0 && same == 0 {
+            if let Some(f) = failed.first() {
+                return Err(crate::errors::context(&s.name, &f.error));
             }
         }
-        Ok(ExportResult { copied, skipped: total - copied, dest: nas::share_url(s, rel), remote: true })
+        let cancelled = results.len() < files.len();
+        Ok(ExportResult { copied, skipped: not_photos + same, dest: nas::share_url(s, rel), remote: true, failed, cancelled })
     }
 
     /// Moves photos to the trash (recoverable). Only image files are accepted, so this can never be used to trash anything else.
@@ -1910,7 +2060,10 @@ impl Engine {
     /// 彻底删除项目（清空回收站、回收站过期）时调用：忘掉这些文件夹里照片的分析结果，删掉它们的缩略图、分析副本、大图预览、
     /// 清晰块和实况片段。`keep` 是还在的项目（含回收站里的）的文件夹，那里面的照片不动。返回忘掉了几张。
     /// （作者 2026-10-23：删了项目、清空回收站，再用同一个相册建项目，结果还是直接出来——分析结果是按照片存的、不跟项目走。）
+    ///
+    /// `dirs` 里落在 NAS 镜像里的文件夹，本机副本也删掉（NAS 上的照片不动）；还被 `keep` 里的项目用着的部分留着。
     pub fn forget_folders(&self, dirs: &[String], keep: &[String]) -> usize {
+        self.forget_mirrors(dirs, keep);
         let (gone, pending) = self.with_cache(|c| {
             let g = c.forget_under(dirs, keep);
             (g, c.save())
@@ -1933,6 +2086,39 @@ impl Engine {
         self.last_photos.lock().unwrap_or_else(|e| e.into_inner()).retain(|(_, ps)| !ps.iter().any(|p| gone.contains(&p.path)));
         crate::platform::log(&format!("忘掉了 {} 张照片的分析结果（彻底删除的项目）", gone.len()));
         gone.len()
+    }
+
+    /// 彻底删除的项目在 NAS 镜像里的文件夹：删掉本机副本。文件夹本身在某个还在的项目文件夹里面（或就是它）的不动；
+    /// 还在的项目文件夹在它里面的，只删那些之外的文件。不在镜像里的文件夹（本机相册）从来不碰。
+    fn forget_mirrors(&self, dirs: &[String], keep: &[String]) {
+        let data = &self.paths.data;
+        let shares = nas::load(data);
+        for d in dirs {
+            let dp = Path::new(d);
+            // 至少要在某个共享里面：整台 NAS 的镜像根不是项目文件夹
+            if !nas::share_of_path(data, &shares, dp).map_or(false, |(_, rel)| !rel.is_empty()) || !dp.is_dir() {
+                continue;
+            }
+            if keep.iter().any(|k| dp.starts_with(k)) {
+                continue;
+            }
+            let inner: Vec<&Path> = keep.iter().map(Path::new).filter(|k| k.starts_with(dp)).collect();
+            if inner.is_empty() {
+                let _ = std::fs::remove_dir_all(dp);
+            } else {
+                for e in WalkDir::new(dp).contents_first(true).into_iter().filter_map(Result::ok) {
+                    if inner.iter().any(|k| e.path().starts_with(k)) {
+                        continue;
+                    }
+                    if e.file_type().is_dir() {
+                        let _ = std::fs::remove_dir(e.path()); // 空了才删得掉
+                    } else {
+                        let _ = std::fs::remove_file(e.path());
+                    }
+                }
+            }
+            crate::platform::log(&format!("删掉了彻底删除的项目在 NAS 镜像里的本机副本：{d}"));
+        }
     }
 
     /// 诊断：在这台机器的加速器上单独加载一个 CLIP 模型、算 5 张，结果写进诊断日志并返回（调试开关用，界面上没有入口）。
@@ -1965,7 +2151,8 @@ impl Engine {
             .collect()
     }
 
-    /// How many bytes a pack still needs (0 if it is installed), so the app can say so before asking.
+    /// How many bytes a pack still needs on this device (0 if it is installed; standard 包只算这台设备用的那份 B/32，上次没下完的
+    /// `.part` 已有的部分也不算), so the app can say so before asking.
     pub fn pack_size(&self, id: &str) -> Result<u64, String> {
         let dir = &self.paths.models;
         let p = modelpacks::pack(id).ok_or("unknown pack")?;
@@ -1975,7 +2162,8 @@ impl Engine {
         modelpacks::manifest_sizes(dir, id)
     }
 
-    /// 下载一个包缺的文件（一次只能下一个包），进度发 `model-progress`；`pack_cancel` 可以中途停，下了一半的文件会删掉。
+    /// 下载一个包缺的文件（一次只能下一个包），进度发 `model-progress`；`pack_cancel` 可以中途停，下了一半的文件留着（`.part`），
+    /// 下次接着下。空间不够、网络、校验的错误带 `errors` 约定的前缀。
     pub fn pack_download(&self, id: &str) -> Result<(), String> {
         {
             let mut busy = self.downloads.busy.lock().unwrap_or_else(|e| e.into_inner());
@@ -2014,7 +2202,21 @@ impl Engine {
 
     fn retrain_style(&self, styles: &mut prefs::Styles, style: Option<&str>) {
         let p = &mut styles.get_mut(style).prefs;
-        self.with_cache(|c| p.retrain(|k| c.embedding(k), || c.pool()));
+        let dim = self.model_dim.load(Ordering::Relaxed);
+        self.with_cache(|c| p.retrain(dim, |k| c.embedding(k), || c.pool()));
+    }
+
+    /// 记下当前分析模型的向量长度；这个风格的喜好是按别的维度训练的，就按新的重训。
+    fn note_model_dim(&self, dim: usize, style: Option<&str>) {
+        self.model_dim.store(dim, Ordering::Relaxed);
+        let stale = {
+            let styles = self.prefs.lock().unwrap_or_else(|e| e.into_inner());
+            let p = &styles.get(style).prefs;
+            p.dim != dim && (!p.labels.is_empty() || !p.refs.is_empty() || !p.imported.is_empty())
+        };
+        if stale {
+            self.retrain_outside_lock(style);
+        }
     }
 
     /// Records (or clears) one explicit user decision. The label is recorded at once; the retraining it calls for runs a moment later,
@@ -2051,7 +2253,8 @@ impl Engine {
     /// `styles.json` outside the lock as well.
     fn retrain_outside_lock(&self, style: Option<&str>) {
         let mut copy = self.prefs.lock().unwrap_or_else(|e| e.into_inner()).get(style).prefs.clone();
-        self.with_cache(|c| copy.retrain(|k| c.embedding(k), || c.pool()));
+        let dim = self.model_dim.load(Ordering::Relaxed);
+        self.with_cache(|c| copy.retrain(dim, |k| c.embedding(k), || c.pool()));
         let pending = {
             let mut styles = self.prefs.lock().unwrap_or_else(|e| e.into_inner());
             styles.get_mut(style).prefs.adopt_weights(&copy);
@@ -2133,6 +2336,8 @@ impl Engine {
         if refs.len() < 6 {
             return Err("at least 6 readable photos are needed to learn from a folder".to_string());
         }
+        // 参考照片用的就是界面当前的分析档：它的向量长度就是当前模型的维度
+        self.model_dim.store(refs[0].emb.len(), Ordering::Relaxed);
         let mut styles = self.prefs.lock().unwrap_or_else(|e| e.into_inner());
         {
             let p = &mut styles.get_mut(style).prefs;
@@ -2142,6 +2347,75 @@ impl Engine {
         self.retrain_style(&mut styles, style);
         styles.save();
         Ok(styles.get(style).prefs.info())
+    }
+
+    // ------------------------------------------------------------ 诊断
+
+    /// 日志与崩溃记录的目录（`<数据目录>/logs`）。Android 的 Kotlin 未捕获异常与 `ApplicationExitInfo` 也写到这里。
+    pub fn diagnostics_dir(&self) -> String {
+        let dir = crate::diagnostics::logs_dir(&self.paths.data);
+        let _ = std::fs::create_dir_all(&dir);
+        dir.to_string_lossy().into_owned()
+    }
+
+    /// "导出诊断信息"：版本、系统、设置、最近的 app.log、全部崩溃 / 退出记录，写成一个文本文件 `out`，返回它的路径。纯本地，不联网。
+    /// 一切密码、令牌、NAS 用户名、备份的 Access Key 与账户、地址里的账号都抹掉（`diagnostics::redact`）。
+    pub fn diagnostics_export(&self, out: &str) -> Result<String, String> {
+        let data = &self.paths.data;
+        let mut secrets = crate::secrets::all_values(data);
+        let shares = nas::load(data);
+        secrets.extend(shares.iter().map(|s| s.user.clone()).filter(|u| !u.is_empty()));
+        let backup = r2::load(data);
+        secrets.extend(backup.targets.iter().flat_map(|t| [t.access_key.clone(), t.account.clone()]).filter(|x| !x.is_empty()));
+        let m = self.machine_info();
+        let mut h = String::new();
+        h.push_str(&format!("FleetingGleam 诊断信息
+生成于 {}
+
+", crate::diagnostics::generated_at()));
+        h.push_str(&format!("应用版本：{}（核心 {}）
+平台：{PLATFORM}
+设备：{}
+系统：{}
+内存：{} GB，{} 核，加速器：{}
+", self.app_version, crate::VERSION, self.device_name(), crate::diagnostics::os_info(), m.memory_gb, m.cores, m.accelerator));
+        h.push_str(&format!("代理：{}
+", crate::platform::proxy().unwrap_or_else(|| "无".into())));
+        h.push_str("
+模型包：
+");
+        for p in self.packs_status(false) {
+            h.push_str(&format!("  {}：{}
+", p.id, if p.installed { "已装" } else { "未装" }));
+        }
+        h.push_str("
+NAS：
+");
+        for s in self.nas_list() {
+            h.push_str(&format!("  {}（{}）：{}，{}，账号：{}{}
+", s.name, s.host, if s.enabled { "启用" } else { "停用" }, if s.connected { "已连接" } else { "未连接" }, if s.user.is_empty() { "访客" } else { "有（不显示）" }, s.error.map(|e| format!("，最后的错误：{e}")).unwrap_or_default()));
+        }
+        h.push_str(&format!("
+云备份：{}，保留 {} 份
+", if backup.enabled { "自动" } else { "手动" }, backup.keep()));
+        for t in &backup.targets {
+            h.push_str(&format!("  {}（{}）：桶 {}，密钥{}，上次成功 {}{}
+", t.name, t.kind, t.bucket, if r2::saved_secret(data, &t.id).is_some() { "已存" } else { "未存" }, t.last_ok, t.last_error.as_ref().map(|e| format!("，最后的错误：{e}")).unwrap_or_default()));
+        }
+        h.push_str("
+喜好与风格：
+");
+        for s in self.styles_list() {
+            h.push_str(&format!("  {}{}：标注 {}（保留 {}），参考照片 {}，导入 {}，其他模型 {}，训练 {}
+", if s.name.is_empty() { "默认" } else { &s.name }, if s.is_default { "（默认）" } else { "" }, s.info.labels, s.info.keeps, s.info.refs, s.info.imported, s.info.other_dim, s.info.trained));
+        }
+        let text = crate::diagnostics::report(&crate::diagnostics::logs_dir(data), &h, &secrets);
+        let out = PathBuf::from(out);
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| crate::errors::io(&e, parent, 0))?;
+        }
+        std::fs::write(&out, text.as_bytes()).map_err(|e| crate::errors::io(&e, &out, text.len() as u64))?;
+        Ok(out.to_string_lossy().into_owned())
     }
 
     // ------------------------------------------------------------ 缓存
@@ -2158,6 +2432,29 @@ impl Engine {
         }
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())
     }
+}
+
+/// `dir` 里已有和 `src` 同名、同大小、同修改时间（秒）的文件：导出过了。
+fn same_file_at(dir: &Path, src: &Path, m: &std::fs::Metadata) -> bool {
+    let secs = |t: std::io::Result<std::time::SystemTime>| t.ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs());
+    let Some(name) = src.file_name() else { return false };
+    std::fs::metadata(dir.join(name)).map_or(false, |d| d.is_file() && d.len() == m.len() && secs(d.modified()).is_some() && secs(d.modified()) == secs(m.modified()))
+}
+
+/// 把一张照片复制进 `dir`：先写到 `.名字.part`，修改时间设成原图的（下次导出认得出），再改成不重名的正式名字。失败就删掉 `.part`。
+fn copy_into(src: &Path, dir: &Path, size: u64) -> Result<(), String> {
+    let name = src.file_name().unwrap_or_default();
+    let tmp = dir.join(format!(".{}.part", name.to_string_lossy()));
+    let r = (|| -> std::io::Result<()> {
+        std::fs::copy(src, &tmp)?;
+        let modified = std::fs::metadata(src)?.modified()?;
+        std::fs::OpenOptions::new().write(true).open(&tmp)?.set_modified(modified)?;
+        std::fs::rename(&tmp, unique_path(dir, name))
+    })();
+    r.map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        crate::errors::io(&e, src, size)
+    })
 }
 
 /// 没有系统解码器时的局部：`image` crate 解出摆正的原图，裁出那一块，宽不超过 `out_w`。
@@ -2350,6 +2647,163 @@ mod tests {
         let out = root.join("out");
         let r = e.export_photos(&paths, &out.to_string_lossy()).unwrap();
         assert_eq!((r.copied, r.skipped, r.remote), (2, 0, false));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 再导出一次：同名同大小同时间的算导出过；读不了的那张进 failed，目标里不留半截文件。
+    #[test]
+    fn exporting_again_skips_what_is_there_and_a_failure_leaves_nothing_behind() {
+        use std::os::unix::fs::PermissionsExt;
+        let (e, root, _) = engine("export-again");
+        let dir = root.join("photos");
+        photos(&dir, 3);
+        let paths: Vec<String> = ["p0.jpg", "p1.jpg"].iter().map(|n| dir.join(n).to_string_lossy().into_owned()).collect();
+        let out = root.join("out");
+        let r = e.export_photos(&paths, &out.to_string_lossy()).unwrap();
+        assert_eq!((r.copied, r.skipped, r.failed.len(), r.cancelled), (2, 0, 0, false));
+        let r = e.export_photos(&paths, &out.to_string_lossy()).unwrap();
+        assert_eq!((r.copied, r.skipped), (0, 2), "导出过的不再复制一份 (2)");
+        assert_eq!(std::fs::read_dir(&out).unwrap().count(), 2);
+        // 原图改过（大小变了）：照常复制，不覆盖，另起名字
+        std::fs::write(dir.join("p0.jpg"), std::fs::read(dir.join("p2.jpg")).unwrap()).unwrap();
+        let r = e.export_photos(&paths[..1], &out.to_string_lossy()).unwrap();
+        assert_eq!(r.copied, 1);
+        assert!(out.join("p0 (2).jpg").exists());
+        // 读不了的一张：进 failed，目标里没有它的半截文件
+        let bad = dir.join("p1.jpg");
+        std::fs::set_permissions(&bad, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let out2 = root.join("out2");
+        let r = e.export_photos(&[bad.to_string_lossy().into_owned(), dir.join("p2.jpg").to_string_lossy().into_owned()], &out2.to_string_lossy()).unwrap();
+        std::fs::set_permissions(&bad, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(r.copied, 1);
+        assert_eq!(r.failed.len(), 1);
+        assert_eq!(r.failed[0].path, bad.to_string_lossy());
+        assert!(r.failed[0].error.starts_with("denied:"), "{}", r.failed[0].error);
+        let left: Vec<String> = std::fs::read_dir(&out2).unwrap().map(|x| x.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(left, vec!["p2.jpg"], "没有半截的 .part");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 导出时取消：做完当前这张就停，返回 cancelled。
+    #[test]
+    fn an_export_can_be_cancelled() {
+        struct StopOnFirst(std::sync::OnceLock<std::sync::Weak<Engine>>, AtomicBool);
+        impl Events for Arc<StopOnFirst> {
+            fn emit(&self, ev: &str, v: serde_json::Value) {
+                if ev == "export-progress" && v["done"].as_u64() == Some(1) && !self.1.swap(true, Ordering::Relaxed) {
+                    if let Some(e) = self.0.get().and_then(|w| w.upgrade()) {
+                        e.export_cancel();
+                    }
+                }
+            }
+        }
+        let root = std::env::temp_dir().join(format!("fg-engine-export-cancel-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let hook = Arc::new(StopOnFirst(std::sync::OnceLock::new(), AtomicBool::new(false)));
+        let paths = Paths { data: root.join("data"), thumbs: root.join("thumbs"), models: root.join("models"), downloads: root.join("models") };
+        let e = Engine::new(paths, Box::new(hook.clone()), "0.0.0-test");
+        let _ = hook.0.set(Arc::downgrade(&e));
+        let dir = root.join("photos");
+        photos(&dir, 4);
+        let paths: Vec<String> = (0..4).map(|i| dir.join(format!("p{i}.jpg")).to_string_lossy().into_owned()).collect();
+        let r = e.export_photos(&paths, &root.join("out").to_string_lossy()).unwrap();
+        assert!(r.cancelled);
+        assert_eq!(r.copied, 1);
+        // 下一次导出不受上一次取消的影响
+        let r = e.export_photos(&paths, &root.join("out").to_string_lossy()).unwrap();
+        assert!(!r.cancelled);
+        assert_eq!((r.copied, r.skipped), (3, 1));
+        drop(e);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 诊断文件：有版本、日志和崩溃记录，没有任何密码、令牌、NAS 用户名、Access Key。
+    #[test]
+    fn diagnostics_never_carry_passwords_or_tokens() {
+        let (e, root, _) = engine("diag");
+        let data = e.paths.data.clone();
+        let share = nas::Share { id: "n1".into(), name: "Home NAS".into(), host: "nas.local".into(), user: "alice-nas-user".into(), enabled: false };
+        nas::save(&data, std::slice::from_ref(&share)).unwrap();
+        nas::remember_password(&data, &share, "hunter2-nas-pw").unwrap();
+        let mut cfg = r2::load(&data);
+        cfg.targets.push(r2::Target { id: "t1".into(), name: "My R2".into(), kind: "r2".into(), account: "acct-0123456789".into(), bucket: "photos-taste".into(), access_key: "AKIA-ACCESS-KEY-ID".into(), ..Default::default() });
+        r2::save(&data, &cfg).unwrap();
+        r2::remember_secret(&data, "t1", "s3cr3t-r2-token").unwrap();
+        let logs = PathBuf::from(e.diagnostics_dir());
+        assert_eq!(logs, data.join("logs"));
+        std::fs::write(logs.join("app.log"), "2026-10-26 connect smb://alice-nas-user@nas.local with hunter2-nas-pw\nproxy http://bob:pa55@proxy:8080\n").unwrap();
+        std::fs::write(logs.join("crash-20261026-010203.txt"), "panicked at engine.rs: token s3cr3t-r2-token key AKIA-ACCESS-KEY-ID").unwrap();
+        std::fs::write(logs.join("exit-20261026-010203.txt"), "REASON_LOW_MEMORY").unwrap();
+        let out = root.join("export").join("diag.txt");
+        assert_eq!(e.diagnostics_export(&out.to_string_lossy()).unwrap(), out.to_string_lossy());
+        let text = std::fs::read_to_string(&out).unwrap();
+        for bad in ["hunter2-nas-pw", "alice-nas-user", "s3cr3t-r2-token", "AKIA-ACCESS-KEY-ID", "acct-0123456789", "pa55", "bob:"] {
+            assert!(!text.contains(bad), "诊断里出现了 {bad}：\n{text}");
+        }
+        for good in ["0.0.0-test", "Home NAS", "photos-taste", "panicked at engine.rs", "REASON_LOW_MEMORY", "===== app.log ====="] {
+            assert!(text.contains(good), "诊断里应该有 {good}：\n{text}");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// NAS 连不上：探测与分析不报错，用镜像里上次同步的照片，探测说 offline；连接错误带前缀进 `ShareStatus.error`。
+    #[test]
+    fn a_project_on_an_unreachable_nas_opens_from_the_mirror() {
+        let (e, root, _) = engine("nas-offline");
+        let share = nas::Share { id: "n1".into(), name: "Home NAS".into(), host: "127.0.0.1".into(), user: "me".into(), enabled: true };
+        nas::save(&e.paths.data, std::slice::from_ref(&share)).unwrap();
+        let dir = nas::local_dir(&e.paths.data, "n1").join("photos").join("2026");
+        photos(&dir, 3);
+        let dirs = vec![dir.to_string_lossy().into_owned()];
+        let p = e.probe_folder(&dirs, Some("cpu"), Some("fast")).expect("no error while the NAS is away");
+        assert!(p.offline);
+        assert_eq!(p.files.len(), 3, "上次同步的照片");
+        let status = e.nas_ensure(&dirs);
+        assert_eq!(status.len(), 1);
+        assert!(!status[0].connected);
+        assert!(status[0].error.as_deref().map_or(false, |x| x.starts_with("auth:")), "{:?}", status[0].error);
+        let photos = e.scan_project(ScanArgs { key: "k".into(), dirs: dirs.clone(), compute: Some("cpu".into()), quiet: true, ..Default::default() }).expect("analyses the mirror");
+        assert_eq!(photos.len(), 3);
+        // 本机的文件夹不是离线
+        let local = root.join("local");
+        photos_in(&local);
+        assert!(!e.probe_folder(&[local.to_string_lossy().into_owned()], Some("cpu"), Some("fast")).unwrap().offline);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn photos_in(dir: &Path) {
+        photos(dir, 2);
+    }
+
+    /// 镜像占多少、清掉；彻底删除项目时删它独占的本机副本，还被别的项目用着的留下，本机相册从来不碰。
+    #[test]
+    fn nas_mirrors_are_counted_cleared_and_forgotten_with_their_projects() {
+        let (e, root, _) = engine("nas-mirror");
+        let share = nas::Share { id: "n1".into(), name: "Home NAS".into(), host: "127.0.0.1".into(), user: String::new(), enabled: false };
+        nas::save(&e.paths.data, std::slice::from_ref(&share)).unwrap();
+        let m = nas::local_dir(&e.paths.data, "n1").join("photos");
+        let s = |p: &Path| p.to_string_lossy().into_owned();
+        for (d, n) in [("a", 1), ("a/kept", 1), ("b", 2)] {
+            photos(&m.join(d), n);
+        }
+        let local = root.join("local");
+        photos(&local, 1);
+        let usage = e.nas_mirror_usage();
+        assert_eq!(usage.len(), 1);
+        assert_eq!(usage[0].name, "Home NAS");
+        assert!(usage[0].bytes > 4 * 8 * 1024, "{}", usage[0].bytes);
+        e.forget_folders(&[s(&m.join("a")), s(&m.join("b")), s(&local)], &[s(&m.join("a/kept"))]);
+        assert!(!m.join("b").exists(), "只属于删掉的项目的副本删掉了");
+        assert!(!m.join("a/p0.jpg").exists());
+        assert!(m.join("a/kept/p0.jpg").exists(), "还在的项目的照片留着");
+        assert!(local.join("p0.jpg").exists(), "本机相册不碰");
+        // 文件夹在一个还在的项目里面：不动
+        e.forget_folders(&[s(&m.join("a/kept"))], &[s(&m.join("a"))]);
+        assert!(m.join("a/kept/p0.jpg").exists());
+        let before = e.nas_mirror_usage()[0].bytes;
+        assert_eq!(e.nas_mirror_clear("n1").unwrap(), before);
+        assert_eq!(e.nas_mirror_usage()[0].bytes, 0);
+        assert!(e.nas_mirror_clear("nope").is_err());
         let _ = std::fs::remove_dir_all(&root);
     }
 

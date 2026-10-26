@@ -52,6 +52,12 @@ pub struct Prefs {
     b: f32,
     /// How many labelled photos the current weights were trained on.
     pub n: usize,
+    /// 训练用的向量维度：当前分析模型的维度（换了分析模型，向量长度就变了）；0 = 还没训练过。
+    #[serde(default)]
+    pub dim: usize,
+    /// 维度和 `dim` 不同、这次没参与训练的样本数：多半是从别的设备导入、那边用的是另一个分析模型。样本留着，换回那个模型时还能用。
+    #[serde(default)]
+    pub other_dim: usize,
     #[serde(skip)]
     path: PathBuf,
 }
@@ -77,6 +83,8 @@ pub struct PrefsInfo {
     /// Examples at which the strength passes half of its maximum, and at which it reaches it.
     pub half_at: usize,
     pub full_at: usize,
+    /// 来自别的分析模型（向量维度不同）、暂不参与训练的样本数；界面可以说"另有 N 条来自其他模型的判断暂不参与"。
+    pub other_dim: usize,
 }
 
 /// Reads a JSON file into its type. A file that is there but cannot be parsed is set aside under a timestamped name instead of
@@ -133,6 +141,7 @@ impl Prefs {
             min_per_class: MIN_PER_CLASS,
             half_at: examples_for(MAX_STRENGTH / 2.0),
             full_at: examples_for(MAX_STRENGTH),
+            other_dim: self.other_dim,
         }
     }
 
@@ -144,6 +153,8 @@ impl Prefs {
         self.w.clear();
         self.b = 0.0;
         self.n = 0;
+        self.dim = 0;
+        self.other_dim = 0;
     }
 
     /// Probability that the user would keep a photo with this (unit-length) embedding.
@@ -166,6 +177,8 @@ impl Prefs {
         self.w = trained.w.clone();
         self.b = trained.b;
         self.n = trained.n;
+        self.dim = trained.dim;
+        self.other_dim = trained.other_dim;
     }
 
     /// How strongly the learned taste is blended into a score: grows with evidence, capped.
@@ -176,33 +189,50 @@ impl Prefs {
     /// Trains on the explicit keep / reject labels and on the reference photos. Reference photos only say what is chosen, so the "not chosen"
     /// examples come from the analysed photos in `pool` (as many as there are references, evenly spread, skipping any that are a reference
     /// themselves); explicit rejects always count.
-    pub fn retrain(&mut self, emb_of: impl Fn(&str) -> Option<Vec<f32>>, pool: impl Fn() -> Vec<(String, Vec<f32>)>) {
-        let mut data: Vec<(Vec<f32>, f32)> = self
+    ///
+    /// `dim` 是当前分析模型的向量维度：只用这个维度的样本训练（`predict` 拿到的就是这个模型的向量），别的维度的样本留着、记进
+    /// `other_dim`。以前取出现最多的维度，导入一大份别的设备（别的模型）的判断后，本机的学习就悄悄失效了。`dim` 为 0（还不知道
+    /// 当前模型，比如刚启动还没分析过）时按本机自己的样本（标注与参考照片）里最多的维度，本机没有样本才看导入的。
+    pub fn retrain(&mut self, dim: usize, emb_of: impl Fn(&str) -> Option<Vec<f32>>, pool: impl Fn() -> Vec<(String, Vec<f32>)>) {
+        let labelled: Vec<(Vec<f32>, f32)> = self
             .labels
             .iter()
             .filter_map(|(k, &keep)| emb_of(k).map(|e| (e, if keep { 1.0 } else { 0.0 })))
             .collect();
-        if !self.refs.is_empty() {
-            let stems: std::collections::HashSet<&str> = self.refs.iter().map(|r| r.stem.as_str()).collect();
-            data.extend(self.refs.iter().map(|r| (r.emb.clone(), 1.0)));
-            let dim = self.refs[0].emb.len();
+        let dim = if dim > 0 {
+            dim
+        } else {
+            let most = |lens: &mut dyn Iterator<Item = usize>| {
+                let mut sizes: HashMap<usize, usize> = HashMap::new();
+                lens.for_each(|n| *sizes.entry(n).or_default() += 1);
+                sizes.into_iter().max_by_key(|&(d, n)| (n, d)).map(|(d, _)| d)
+            };
+            most(&mut labelled.iter().map(|d| d.0.len()).chain(self.refs.iter().map(|r| r.emb.len())))
+                .or_else(|| most(&mut self.imported.iter().map(|e| e.emb.len())))
+                .unwrap_or(0)
+        };
+        let refs: Vec<&Reference> = self.refs.iter().filter(|r| r.emb.len() == dim).collect();
+        self.other_dim = labelled.iter().filter(|d| d.0.len() != dim).count()
+            + self.refs.len()
+            - refs.len()
+            + self.imported.iter().filter(|e| e.emb.len() != dim).count();
+        self.dim = dim;
+        let mut data: Vec<(Vec<f32>, f32)> = labelled.into_iter().filter(|d| d.0.len() == dim).collect();
+        if !refs.is_empty() {
+            let stems: std::collections::HashSet<&str> = refs.iter().map(|r| r.stem.as_str()).collect();
+            data.extend(refs.iter().map(|r| (r.emb.clone(), 1.0)));
             let others: Vec<Vec<f32>> = pool().into_iter().filter(|(st, e)| e.len() == dim && !stems.contains(st.as_str())).map(|(_, e)| e).collect();
-            let want = self.refs.len().max(6).saturating_sub(data.iter().filter(|d| d.1 < 0.5).count());
+            let want = refs.len().max(6).saturating_sub(data.iter().filter(|d| d.1 < 0.5).count());
             if !others.is_empty() && want > 0 {
                 let step = (others.len() as f32 / want as f32).max(1.0);
                 let mut i = 0f32;
-                while (i as usize) < others.len() && data.iter().filter(|d| d.1 < 0.5).count() < self.refs.len().max(6) {
+                while (i as usize) < others.len() && data.iter().filter(|d| d.1 < 0.5).count() < refs.len().max(6) {
                     data.push((others[i as usize].clone(), 0.0));
                     i += step;
                 }
             }
         }
-        data.extend(self.imported.iter().map(|e| (e.emb.clone(), if e.keep { 1.0 } else { 0.0 })));
-        // Photos analysed by different models have embeddings of different sizes; train on the most common size only.
-        let mut sizes: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
-        data.iter().for_each(|d| *sizes.entry(d.0.len()).or_default() += 1);
-        let dim = sizes.into_iter().max_by_key(|(_, n)| *n).map(|(d, _)| d).unwrap_or(0);
-        let data: Vec<(Vec<f32>, f32)> = data.into_iter().filter(|d| d.0.len() == dim).collect();
+        data.extend(self.imported.iter().filter(|e| e.emb.len() == dim).map(|e| (e.emb.clone(), if e.keep { 1.0 } else { 0.0 })));
         let pos = data.iter().filter(|d| d.1 > 0.5).count();
         let neg = data.len() - pos;
         if pos < MIN_PER_CLASS || neg < MIN_PER_CLASS {
@@ -392,7 +422,7 @@ mod tests {
             store.insert(format!("p{i}"), unit(v));
             p.labels.insert(format!("p{i}"), keep);
         }
-        p.retrain(|k| store.get(k).cloned(), Vec::new);
+        p.retrain(0, |k| store.get(k).cloned(), Vec::new);
         assert!(p.active());
         let mut keep_probe = vec![0.1f32; 16];
         keep_probe[0] = 1.0;
@@ -409,7 +439,7 @@ mod tests {
         for i in 0..10 {
             p.labels.insert(format!("p{i}"), true);
         }
-        p.retrain(|_| Some(vec![0.5; 4]), Vec::new);
+        p.retrain(0, |_| Some(vec![0.5; 4]), Vec::new);
         assert!(!p.active());
     }
 }
@@ -454,7 +484,7 @@ mod style_tests {
             other[3 + (i % 4)] += 0.1 * i as f32;
             pool.push((format!("shot{i}"), unit(other)));
         }
-        p.retrain(|_| None, || pool.clone());
+        p.retrain(0, |_| None, || pool.clone());
         assert!(p.active(), "20 references and the analysed photos are enough to start");
         let mut like = vec![0.1f32; 12];
         like[0] = 1.0;
@@ -462,6 +492,44 @@ mod style_tests {
         unlike[1] = 1.0;
         assert!(p.predict(&unit(like)).unwrap() > 0.65);
         assert!(p.predict(&unit(unlike)).unwrap() < 0.35);
+    }
+
+    /// 导入了一大份别的模型（别的维度）的判断，本机的学习不能因此失效：按当前模型的维度训练，别的维度留着、计数。
+    #[test]
+    fn imported_examples_of_another_model_do_not_switch_off_the_local_taste() {
+        let mut p = Prefs::default();
+        let mut store: HashMap<String, Vec<f32>> = HashMap::new();
+        for i in 0..8 {
+            let keep = i % 2 == 0;
+            let mut v = vec![0.1f32; 6];
+            v[if keep { 0 } else { 1 }] = 1.0;
+            v[2 + i % 4] += 0.05 * i as f32;
+            store.insert(format!("p{i}"), unit(v));
+            p.labels.insert(format!("p{i}"), keep);
+        }
+        // 另一台设备的 30 条判断，向量长度 10：比本机的多
+        for i in 0..30 {
+            let mut v = vec![0.1f32; 10];
+            v[i % 10] = 1.0;
+            p.imported.push(Example { emb: unit(v), keep: i % 3 == 0 });
+        }
+        let mut keep_probe = vec![0.1f32; 6];
+        keep_probe[0] = 1.0;
+        // 当前模型是 6 维：照它训练
+        p.retrain(6, |k| store.get(k).cloned(), Vec::new);
+        assert!(p.active());
+        assert_eq!((p.dim, p.other_dim, p.n), (6, 30, 8));
+        assert_eq!(p.info().other_dim, 30);
+        assert!(p.predict(&unit(keep_probe.clone())).is_some(), "本机的向量能用上学到的喜好");
+        // 还不知道当前模型（0）时，也按本机自己的样本定维度，不按导入的多数
+        p.retrain(0, |k| store.get(k).cloned(), Vec::new);
+        assert_eq!((p.dim, p.other_dim), (6, 30));
+        assert!(p.predict(&unit(keep_probe)).is_some());
+        // 换到 10 维的模型：用导入的那些训练，本机 8 条留着、计数
+        p.retrain(10, |k| store.get(k).cloned(), Vec::new);
+        assert_eq!((p.dim, p.other_dim), (10, 8));
+        assert!(p.active());
+        assert_eq!(p.imported.len(), 30, "样本一条都没丢");
     }
 
     #[test]
@@ -472,7 +540,7 @@ mod style_tests {
         }
         // the whole pool is the same files as the references: nothing is left to serve as "not chosen"
         let pool: Vec<(String, Vec<f32>)> = (0..8).map(|i| (format!("a{i}"), vec![1.0, 0.0])).collect();
-        p.retrain(|_| None, || pool.clone());
+        p.retrain(0, |_| None, || pool.clone());
         assert!(!p.active());
     }
 
@@ -525,7 +593,7 @@ mod style_tests {
         let mut p = Prefs::default();
         for t in teach { p.refs.push(Reference { stem: t.0.clone(), emb: t.1.clone() }); }
         let pool: Vec<(String, Vec<f32>)> = all.iter().map(|x| (x.0.clone(), x.1.clone())).collect();
-        p.retrain(|_| None, || pool.clone());
+        p.retrain(0, |_| None, || pool.clone());
         println!("active: {} (trained on {})", p.active(), p.n);
         assert!(p.active());
         let held_avg = held.iter().filter_map(|h| p.predict(&h.1)).sum::<f32>() / held.len() as f32;

@@ -317,8 +317,14 @@ fn dispatch(e: &Arc<Engine>, method: &str, a: &Value) -> Result<Value, String> {
         "nas_set_enabled" => out(e.nas_set_enabled(&s(a, "id")?, b(a, "enabled"))?),
         "nas_ensure" => out(e.nas_ensure(&dirs())),
         "nas_browse" => out(e.nas_browse(&s(a, "id")?, &os(a, "path").unwrap_or_default())?),
+        "nas_mirror_usage" => out(e.nas_mirror_usage()),
+        "nas_mirror_clear" => out(e.nas_mirror_clear(&s(a, "id")?)?),
         // 整理
         "export_photos" => out(e.export_photos(&strings(a, "paths"), &s(a, "dest")?)?),
+        "export_cancel" => {
+            e.export_cancel();
+            Ok(Value::Null)
+        }
         "trash_photos" => out(e.trash_photos(strings(a, "paths"))),
         // 查看器
         "preview_thumbs" => out(e.preview_thumbs(&strings(a, "paths"))),
@@ -359,6 +365,9 @@ fn dispatch(e: &Arc<Engine>, method: &str, a: &Value) -> Result<Value, String> {
         // 缓存
         "cache_size" => out(e.cache_size()),
         "clear_cache" => out(e.clear_cache()?),
+        // 诊断
+        "diagnostics_export" => out(e.diagnostics_export(&s(a, "out")?)?),
+        "diagnostics_dir" => out(e.diagnostics_dir()),
         other => Err(format!("unknown method `{other}`")),
     }
 }

@@ -191,8 +191,10 @@ pub fn gpu_clip() -> Option<&'static dyn GpuClipFactory> {
 }
 
 /// 一行诊断信息（性能数字、加速器的选择）：Android 上写进系统日志（tag "FleetingGleam"，`adb logcat -s FleetingGleam`），
-/// 别处写 stderr。Android 的 stderr 没人看，以前那些 eprintln 在手机上全丢了。
+/// 别处写 stderr。Android 的 stderr 没人看，以前那些 eprintln 在手机上全丢了。同时追加到数据目录的 `logs/app.log`（见 diagnostics.rs），
+/// "导出诊断信息"带上它。
 pub fn log(msg: &str) {
+    crate::diagnostics::append(msg);
     #[cfg(target_os = "android")]
     {
         extern "C" {

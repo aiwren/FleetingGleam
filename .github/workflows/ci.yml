@@ -51,8 +51,43 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # Tauri 编译时要读取 frontendDist，所以必须先构建前端
       - run: pnpm --filter @fleetinggleam/desktop build
-      # 根目录是 Cargo 工作区：默认成员是核心库与桌面端（Android 绑定 crate 只在 cargo-ndk 构建时编）
+      # 根目录是 Cargo 工作区：默认成员是核心库与桌面端（Android 绑定 crate 的安卓目标在下面的 android 任务里编）
       - name: cargo check
         run: cargo check --locked
       - name: cargo test
         run: cargo test --locked --lib
+      # Android 绑定 crate 在宿主上的测试：按方法名调引擎、两端互导喜好、两端一致性的固定用例
+      - name: cargo test（Android 绑定，宿主上）
+        run: cargo test --locked --lib -p fleetinggleam-android
+
+  android:
+    name: Android（安卓目标的 Rust 检查 + Gradle 编译）
+    runs-on: ubuntu-latest
+    # 核心库按 release（LTO）交叉编译一遍，再 R8 压缩，冷缓存要二三十分钟
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # versionCode 是提交数：浅克隆数不对，Gradle 会拒绝构建
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: .
+          key: android
+      - name: 安装 cargo-ndk
+        run: cargo install cargo-ndk --locked
+      # 运行器自带 Android SDK 与 NDK；cargo-ndk 认 ANDROID_NDK_HOME
+      - name: 选 NDK
+        run: echo "ANDROID_NDK_HOME=${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}" >> "$GITHUB_ENV"
+      - name: cargo check（aarch64-linux-android）
+        run: cargo ndk -t arm64-v8a -P 31 check --locked -p fleetinggleam-android
+      # 和发版一样的 release 包（没有签名配置时用调试密钥签，只为确认能编出来）
+      - name: Gradle 编译
+        run: apps/android/gradlew -p apps/android assembleRelease --no-daemon --stacktrace

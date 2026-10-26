@@ -5,9 +5,14 @@ use std::path::{Path, PathBuf};
 use rayon::prelude::*;
 use walkdir::WalkDir;
 
-/// 从来不是用户照片的名字：隐藏文件（覆盖 macOS 的 `._IMG.jpg` 资源叉和 `.DS_Store`），以及系统或 NAS 放在真内容旁边的文件夹。
+/// 系统或 NAS 放在真内容旁边的文件夹与文件（不分大小写）：群晖的缩略图 `@eaDir`、回收站 `#recycle`、快照 `#snapshot`；
+/// 威联通的回收站 `@Recycle`、快照 `@Recently-Snapshot`、缩略图 `@__thumb`；Windows 的回收站与卷信息。
+const JUNK: [&str; 12] = ["__MACOSX", "@eaDir", "#recycle", "#snapshot", "@Recycle", "@Recently-Snapshot", "@__thumb", "$RECYCLE.BIN", "System Volume Information", "Thumbs.db", "desktop.ini", "lost+found"];
+
+/// 从来不是用户照片的名字：隐藏文件（覆盖 macOS 的 `._IMG.jpg` 资源叉和 `.DS_Store`），以及 `JUNK` 里那些。
+/// 回收站和快照里是用户删掉的或旧版本的照片，当成照片会让一个项目凭空多出成百上千张。
 pub fn is_junk(name: &str) -> bool {
-    name.starts_with('.') || matches!(name, "__MACOSX" | "@eaDir" | "$RECYCLE.BIN" | "System Volume Information" | "Thumbs.db" | "desktop.ini")
+    name.starts_with('.') || JUNK.iter().any(|j| j.eq_ignore_ascii_case(name))
 }
 
 /// 比这小的是图标或缩略图，不是照片。
@@ -158,10 +163,10 @@ mod tests {
 
     #[test]
     fn hidden_and_system_names_are_junk() {
-        for n in [".DS_Store", "._IMG_0001.jpg", ".Trashes", "__MACOSX", "@eaDir", "Thumbs.db"] {
+        for n in [".DS_Store", "._IMG_0001.jpg", ".Trashes", "__MACOSX", "@eaDir", "Thumbs.db", "#recycle", "#Recycle", "#snapshot", "@Recycle", "@Recently-Snapshot", "@__thumb", "$RECYCLE.BIN"] {
             assert!(is_junk(n), "{n}");
         }
-        for n in ["IMG_0001.jpg", "Trip 2026", "DSCF2586.JPG"] {
+        for n in ["IMG_0001.jpg", "Trip 2026", "DSCF2586.JPG", "recycle", "snapshot 2024", "#1 pick.jpg"] {
             assert!(!is_junk(n), "{n}");
         }
     }
@@ -171,9 +176,13 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("fg-filter-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join(".hidden")).unwrap();
+        std::fs::create_dir_all(dir.join("#recycle")).unwrap();
+        std::fs::create_dir_all(dir.join("@Recently-Snapshot/GMT+08_2026-10-01")).unwrap();
         let img = image::RgbImage::from_fn(400, 300, |x, y| image::Rgb([(x % 256) as u8, (y % 256) as u8, ((x * y) % 256) as u8]));
         img.save(dir.join("good.jpg")).unwrap();
         img.save(dir.join(".hidden").join("inside.jpg")).unwrap();
+        img.save(dir.join("#recycle").join("deleted.jpg")).unwrap();
+        img.save(dir.join("@Recently-Snapshot/GMT+08_2026-10-01").join("good.jpg")).unwrap();
         img.save(dir.join("._good.jpg")).unwrap();
         std::fs::write(dir.join("fake.jpg"), vec![7u8; 20_000]).unwrap(); // 不是图片
         std::fs::write(dir.join("tiny.jpg"), b"x").unwrap();

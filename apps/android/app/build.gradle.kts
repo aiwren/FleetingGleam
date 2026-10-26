@@ -10,10 +10,20 @@ plugins {
 // 仓库根目录（Cargo 工作区的根）
 val repoRoot = rootProject.projectDir.parentFile.parentFile
 val rustCrate = "fleetinggleam-android"
-// 内部版本号（build）：仓库的提交次数，每提交一次加一。系统的 versionCode 用它（覆盖安装要求递增），关于页显示成"0.1.0 (105)"
-val buildNumber: Int = runCatching {
-    providers.exec { commandLine("git", "-C", repoRoot.absolutePath, "rev-list", "--count", "HEAD") }.standardOutput.asText.get().trim().toInt()
-}.getOrDefault(1)
+// 版本号只有一处：根 Cargo.toml 的 [workspace.package] version（核心库、桌面端也用它；发版时改那一处，见 docs/RELEASING.md）
+val appVersion: String = Regex("""(?m)^version\s*=\s*"([^"]+)"""").find(File(repoRoot, "Cargo.toml").readText())?.groupValues?.get(1)
+    ?: throw GradleException("读不到根目录 Cargo.toml 里 [workspace.package] 的 version")
+// 内部版本号（build）：仓库的提交次数，每提交一次加一。系统的 versionCode 用它（覆盖安装要求递增），关于页显示成"0.1.0 (105)"。
+// 取不到（没有 git、浅克隆）就构建失败：以前退回 1，装出来的包比手机上已有的旧，覆盖安装会被系统拒绝。
+// 没有 git 历史时（源码包）用 -PFG_BUILD_NUMBER=<数字> 明确给出。
+val buildNumber: Int = (findProperty("FG_BUILD_NUMBER") as String?)?.toIntOrNull() ?: run {
+    fun git(vararg args: String): String? = runCatching { providers.exec { commandLine("git", "-C", repoRoot.absolutePath, *args) }.standardOutput.asText.get().trim() }.getOrNull()
+    if (git("rev-parse", "--is-shallow-repository") == "true") {
+        throw GradleException("浅克隆的提交数不是真正的版本号：拉完整历史（git fetch --unshallow，CI 里 fetch-depth: 0），或用 -PFG_BUILD_NUMBER 给出")
+    }
+    git("rev-list", "--count", "HEAD")?.toIntOrNull()
+        ?: throw GradleException("取不到提交数作 versionCode（不在 git 仓库里？）：用 -PFG_BUILD_NUMBER=<数字> 给出")
+}
 val jniLibs = layout.projectDirectory.dir("src/main/jniLibs")
 val uniffiOut = layout.buildDirectory.dir("generated/uniffi/kotlin")
 // cargo 与 cargo-ndk 在 ~/.cargo/bin；Android Studio 启动的 Gradle 不一定带这个 PATH
@@ -30,7 +40,7 @@ android {
         minSdk = 31
         targetSdk = 36
         versionCode = buildNumber
-        versionName = "0.1.0"
+        versionName = appVersion
         ndk { abiFilters += listOf("arm64-v8a") }
     }
 

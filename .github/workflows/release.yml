@@ -25,7 +25,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 校验标签与三处版本号一致
+      # 版本号写在三处：tauri.conf.json、apps/desktop/package.json、根 Cargo.toml 的 [workspace.package]（核心库与 Android 绑定 crate 继承它）。
+      # Android 的 versionName 由 Gradle 从根 Cargo.toml 读，这里确认它没有被改回写死的值。
+      - name: 校验标签与各处版本号一致（含 Android）
         run: |
           tag="${GITHUB_REF_NAME#v}"
           app=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
@@ -34,6 +36,16 @@ jobs:
           for v in "$app" "$pkg" "$crate"; do
             if [ "$tag" != "$v" ]; then
               echo "::error::标签 $GITHUB_REF_NAME 与版本号不一致：tauri.conf.json=$app package.json=$pkg Cargo.toml=$crate。请先把三处改成同一个版本再打标签。"
+              exit 1
+            fi
+          done
+          if ! grep -q '^ *versionName = appVersion$' apps/android/app/build.gradle.kts; then
+            echo "::error::apps/android/app/build.gradle.kts 的 versionName 不是取自根 Cargo.toml（appVersion）：Android 的版本号会和标签对不上。"
+            exit 1
+          fi
+          for c in packages/core/Cargo.toml apps/desktop/src-tauri/Cargo.toml apps/android/rust/Cargo.toml; do
+            if ! grep -q '^version.workspace = true$' "$c"; then
+              echo "::error::$c 没有继承工作区的版本号（version.workspace = true）。"
               exit 1
             fi
           done

@@ -37,7 +37,7 @@ fn yes() -> bool {
 }
 
 /// 设置页看到的一台 NAS。
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ShareStatus {
     pub id: String,
     pub name: String,
@@ -47,6 +47,9 @@ pub struct ShareStatus {
     /// 镜像文件夹：从这台 NAS 新建的项目，文件夹都在它下面。
     pub local: String,
     pub connected: bool,
+    /// 没连上时最后一次连接的错误（带 `errors` 约定的前缀：`auth:` 密码不对、`net:` 连不上、`denied:` 没权限）；连着时为 null。
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 /// 浏览共享时的一项：只有文件夹和照片，别的都不列。
@@ -131,6 +134,11 @@ pub fn local_dir(data_dir: &Path, id: &str) -> PathBuf {
     data_dir.join("nas").join(id)
 }
 
+/// 一台 NAS 的镜像在本机占多少字节。
+pub fn mirror_bytes(data_dir: &Path, id: &str) -> u64 {
+    walkdir::WalkDir::new(local_dir(data_dir, id)).into_iter().filter_map(Result::ok).filter_map(|e| e.metadata().ok()).filter(|m| m.is_file()).map(|m| m.len()).sum()
+}
+
 /// 本地路径落在哪台 NAS 的镜像里：那台 NAS，以及从共享名起的路径（`/` 分隔，根是空串）。
 pub fn share_of_path<'a>(data_dir: &Path, shares: &'a [Share], path: &Path) -> Option<(&'a Share, String)> {
     shares.iter().find_map(|s| {
@@ -203,7 +211,16 @@ enum Op {
     Browse { id: String, rel: String, reply: mpsc::Sender<Result<Vec<Entry>, String>> },
     Sync { id: String, rel: String, local_root: PathBuf, progress: Box<dyn Fn(SyncProgress) + Send>, cancel: Box<dyn Fn() -> bool + Send>, reply: mpsc::Sender<Result<(), String>> },
     Recycle { id: String, rels: Vec<String>, reply: mpsc::Sender<Vec<Result<String, String>>> },
-    Upload { id: String, dir: String, files: Vec<PathBuf>, progress: Box<dyn Fn(usize) + Send>, reply: mpsc::Sender<Vec<Result<String, String>>> },
+    Upload { id: String, dir: String, files: Vec<PathBuf>, progress: Box<dyn Fn(usize) + Send>, cancel: Box<dyn Fn() -> bool + Send>, reply: mpsc::Sender<Vec<Result<Sent, String>>> },
+}
+
+/// 上传一张的结果。
+#[derive(Clone, Debug, PartialEq)]
+pub enum Sent {
+    /// 传上去了，在 NAS 上的位置（`共享/路径`）。
+    Uploaded(String),
+    /// NAS 上已有同名、同大小、同修改时间的：以前导出过，没再传。
+    Same(String),
 }
 
 /// 所有共享的连接，住在一条自己的线程里；这里是同步的门面。
@@ -270,20 +287,23 @@ impl Pool {
         self.ask(|reply| Op::Recycle { id: id.to_string(), rels, reply }).unwrap_or_else(|e| vec![Err(e); n])
     }
 
-    /// 把本机的这些文件上传到 NAS 上的文件夹 `dir`（`共享/路径`，没有就建）；重名的加序号，从不覆盖。
-    /// 每张返回它在 NAS 上的位置；`progress(n)` 是已经处理完几张。
-    pub fn upload(&self, id: &str, dir: &str, files: Vec<PathBuf>, progress: impl Fn(usize) + Send + 'static) -> Vec<Result<String, String>> {
+    /// 把本机的这些文件上传到 NAS 上的文件夹 `dir`（`共享/路径`，没有就建）；重名的加序号，从不覆盖；同名同大小同修改时间的不再传。
+    /// 每张返回它在 NAS 上的位置；`progress(n)` 是已经处理完几张。`cancel()` 为真就在当前这张之后停：返回的比 `files` 少。
+    pub fn upload(&self, id: &str, dir: &str, files: Vec<PathBuf>, progress: impl Fn(usize) + Send + 'static, cancel: impl Fn() -> bool + Send + 'static) -> Vec<Result<Sent, String>> {
         let n = files.len();
-        self.ask(|reply| Op::Upload { id: id.to_string(), dir: dir.to_string(), files, progress: Box::new(progress), reply }).unwrap_or_else(|e| vec![Err(e); n])
+        self.ask(|reply| Op::Upload { id: id.to_string(), dir: dir.to_string(), files, progress: Box::new(progress), cancel: Box::new(cancel), reply }).unwrap_or_else(|e| vec![Err(e); n])
     }
 }
 
-/// 把客户端的错误说成人话；连接层面的错误同时让调用方知道该把这个共享当作断开。
+/// 把客户端的错误说成人话，前缀按 `errors` 的约定：`auth:` 是账号密码被拒，`denied:` 是登录成功但这个共享或文件夹没权限
+/// （以前也说成"密码错误"，用户改了密码还是不行），`net:` 是连不上。连接层面的错误同时让调用方知道该把这个共享当作断开。
 fn explain(e: &smb2::Error) -> String {
     match e.kind() {
-        ErrorKind::AccessDenied | ErrorKind::AuthRequired | ErrorKind::GuestSessionRefused | ErrorKind::SignatureInvalid => "wrong user name or password".to_string(),
+        ErrorKind::AuthRequired | ErrorKind::GuestSessionRefused | ErrorKind::SignatureInvalid => "auth:wrong user name or password".to_string(),
+        ErrorKind::AccessDenied => format!("denied:this account has no access to that share or folder ({e})"),
         ErrorKind::NotFound => "no such share or folder on that server".to_string(),
-        ErrorKind::ConnectionLost | ErrorKind::TimedOut | ErrorKind::Io | ErrorKind::SessionExpired => format!("the server cannot be reached ({e})"),
+        ErrorKind::ConnectionLost | ErrorKind::TimedOut | ErrorKind::Io | ErrorKind::SessionExpired => format!("net:the server cannot be reached ({e})"),
+        ErrorKind::Cancelled => crate::errors::CANCELLED.to_string(),
         _ => e.to_string(),
     }
 }
@@ -343,10 +363,10 @@ async fn handle(conns: &mut HashMap<String, Conn>, connected: &Mutex<HashSet<Str
             .unwrap_or_else(|e| vec![Err(e); n]);
             let _ = reply.send(r);
         }
-        Op::Upload { id, dir, files, progress, reply } => {
+        Op::Upload { id, dir, files, progress, cancel, reply } => {
             let n = files.len();
             let r = match conns.remove(&id) {
-                Some(mut c) => { let r = upload(&mut c, &dir, &files, &*progress).await; settle(conns, connected, &id, c, r) }
+                Some(mut c) => { let r = upload(&mut c, &dir, &files, &*progress, &*cancel).await; settle(conns, connected, &id, c, r) }
                 None => Err("not connected".to_string()),
             }
             .unwrap_or_else(|e| vec![Err(e); n]);
@@ -427,21 +447,46 @@ struct Remote {
     modified: SystemTime,
 }
 
+/// 列一个目录：值得看的条目（见 `wanted`）和各自的修改时间。真的是 SMB 的树，测试里是假的。
+trait Dirs {
+    async fn list(&mut self, dir: &str) -> Result<Vec<(Entry, SystemTime)>, smb2::Error>;
+}
+
+/// 一个共享的树，连同用来发请求的客户端。
+struct SmbDirs<'a> {
+    client: &'a mut SmbClient,
+    tree: &'a mut Tree,
+}
+
+impl Dirs for SmbDirs<'_> {
+    async fn list(&mut self, dir: &str) -> Result<Vec<(Entry, SystemTime)>, smb2::Error> {
+        Ok(self.client.list_directory(self.tree, dir).await?.iter().filter_map(|e| wanted(e).map(|w| (w, e.modified.to_system_time().unwrap_or(UNIX_EPOCH)))).collect())
+    }
+}
+
 /// 共享里一个文件夹下的全部照片，连同子文件夹；路径相对共享根。
-async fn walk(client: &mut SmbClient, tree: &mut Tree, rel: &str, cancel: &dyn Fn() -> bool) -> Result<Vec<Remote>, smb2::Error> {
+async fn walk(dirs: &mut impl Dirs, rel: &str, cancel: &dyn Fn() -> bool) -> Result<Vec<Remote>, smb2::Error> {
     let mut stack = vec![rel.to_string()];
     let mut out = Vec::new();
     while let Some(dir) = stack.pop() {
         if cancel() {
             return Err(smb2::Error::Cancelled);
         }
-        for e in client.list_directory(tree, &dir).await? {
-            let Some(w) = wanted(&e) else { continue };
+        let entries = match dirs.list(&dir).await {
+            Ok(v) => v,
+            // 里面某个文件夹没权限（NAS 上别人的私人文件夹、系统目录）：跳过它、记一笔，不让整次同步失败；选的那个文件夹本身没权限照旧报错
+            Err(e) if e.kind() == ErrorKind::AccessDenied && dir != rel => {
+                crate::platform::log(&format!("NAS：没有权限打开 {dir}，跳过（{e}）"));
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
+        for (w, modified) in entries {
             let rel = join_rel(&dir, &w.name);
             if w.dir {
                 stack.push(rel);
             } else {
-                out.push(Remote { rel, size: w.size, modified: e.modified.to_system_time().unwrap_or(UNIX_EPOCH) });
+                out.push(Remote { rel, size: w.size, modified });
             }
         }
     }
@@ -465,7 +510,7 @@ async fn sync(c: &mut Conn, rel: &str, local_root: &Path, progress: &dyn Fn(Sync
     // 镜像里这个共享自己的一格
     let local_root = local_root.join(&share);
     let local_root = local_root.as_path();
-    let remote = walk(client, tree, path, cancel).await?;
+    let remote = walk(&mut SmbDirs { client, tree }, path, cancel).await?;
     let need: Vec<&Remote> = remote.iter().filter(|r| !mirrored(&local_root.join(&r.rel), r)).collect();
     let total = need.len();
     let bytes_total: u64 = need.iter().map(|r| r.size).sum();
@@ -484,8 +529,17 @@ async fn sync(c: &mut Conn, rel: &str, local_root: &Path, progress: &dyn Fn(Sync
         // 先写到旁边的临时文件，整张到齐、时间戳对上之后才换成正式的名字：镜像里永远没有半张照片
         let name = local.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let tmp = local.with_file_name(format!(".{name}.part"));
+        let mut download = match client.download(tree, &r.rel).await {
+            Ok(d) => d,
+            // 单张没权限读：跳过、记一笔，别的照常拉
+            Err(e) if e.kind() == ErrorKind::AccessDenied => {
+                crate::platform::log(&format!("NAS：没有权限读取 {}，跳过（{e}）", r.rel));
+                report(i + 1, bytes_done);
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
         let mut file = std::fs::File::create(&tmp)?;
-        let mut download = client.download(tree, &r.rel).await?;
         while let Some(chunk) = download.next_chunk().await {
             let bytes = chunk?;
             file.write_all(&bytes)?;
@@ -584,7 +638,7 @@ fn stem_ext(name: &str) -> (String, String) {
 
 /// 上传：先写到目标文件夹里的 `.名字.part`，整张写完、修改时间改成原文件的之后才改成正式名字（同名的加序号），
 /// 所以 NAS 上永远没有半张照片，别的设备看到的是完整的文件。原文件不动。
-async fn upload(c: &mut Conn, dir: &str, files: &[PathBuf], progress: &dyn Fn(usize)) -> Result<Vec<Result<String, String>>, smb2::Error> {
+async fn upload(c: &mut Conn, dir: &str, files: &[PathBuf], progress: &dyn Fn(usize), cancel: &dyn Fn() -> bool) -> Result<Vec<Result<Sent, String>>, smb2::Error> {
     let (share, path) = split_share(dir);
     let share = share.to_string();
     let Conn { client, trees } = c;
@@ -597,9 +651,21 @@ async fn upload(c: &mut Conn, dir: &str, files: &[PathBuf], progress: &dyn Fn(us
     }
     let mut out = Vec::with_capacity(files.len());
     for (i, f) in files.iter().enumerate() {
+        if cancel() {
+            break;
+        }
         let name = f.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let (stem, ext) = stem_ext(&name);
         let mut target = join_rel(path, &name);
+        // 同名、同大小、同修改时间的已经在 NAS 上（以前导出过；上传时修改时间设成了原图的）：不再传一份 "(1)"
+        if let (Ok(there), Ok(m)) = (client.stat(tree, &target).await, std::fs::metadata(f)) {
+            let here = m.modified().ok().map(secs);
+            if !there.is_directory && there.size == m.len() && here.is_some() && there.modified.to_system_time().map(secs) == here {
+                out.push(Ok(Sent::Same(format!("{share}/{target}"))));
+                progress(i + 1);
+                continue;
+            }
+        }
         let mut n = 1;
         while client.stat(tree, &target).await.is_ok() {
             target = join_rel(path, &format!("{stem} ({n}){ext}"));
@@ -626,7 +692,7 @@ async fn upload(c: &mut Conn, dir: &str, files: &[PathBuf], progress: &dyn Fn(us
         }
         .await;
         match r {
-            Ok(()) => out.push(Ok(format!("{share}/{target}"))),
+            Ok(()) => out.push(Ok(Sent::Uploaded(format!("{share}/{target}")))),
             Err(e) if lost(&e) => return Err(e),
             Err(e) => {
                 let _ = client.delete_file(tree, &tmp).await;
@@ -693,6 +759,34 @@ mod tests {
         assert_eq!(recycle_url(&shares[0], "photos"), "smb://nas/photos/.FleetingGleam Recycle Bin");
     }
 
+    /// 假的 NAS 目录：没列出的目录没权限。
+    struct FakeDirs(HashMap<String, Vec<(Entry, SystemTime)>>);
+
+    impl Dirs for FakeDirs {
+        async fn list(&mut self, dir: &str) -> Result<Vec<(Entry, SystemTime)>, smb2::Error> {
+            self.0.get(dir).cloned().ok_or(smb2::Error::Protocol { status: smb2::types::status::NtStatus::ACCESS_DENIED, command: smb2::types::Command::QueryDirectory })
+        }
+    }
+
+    #[test]
+    fn a_folder_without_permission_is_skipped_not_fatal() {
+        let file = |n: &str| (Entry { name: n.into(), dir: false, size: 20_000 }, UNIX_EPOCH);
+        let dir = |n: &str| (Entry { name: n.into(), dir: true, size: 0 }, UNIX_EPOCH);
+        let mut fake = FakeDirs(HashMap::from([
+            ("photos".to_string(), vec![file("a.jpg"), dir("trip"), dir("private")]),
+            ("photos/trip".to_string(), vec![file("b.jpg")]),
+        ]));
+        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let found = rt.block_on(walk(&mut fake, "photos", &|| false)).expect("the private folder is skipped");
+        let mut names: Vec<String> = found.into_iter().map(|r| r.rel).collect();
+        names.sort();
+        assert_eq!(names, vec!["photos/a.jpg", "photos/trip/b.jpg"]);
+        // 选的那个文件夹本身没权限：照旧报错，说成没权限，不说密码错
+        let e = rt.block_on(walk(&mut fake, "photos/private", &|| false)).err().expect("the chosen folder itself is refused");
+        assert_eq!(e.kind(), ErrorKind::AccessDenied);
+        assert!(explain(&e).starts_with("denied:"), "{}", explain(&e));
+    }
+
     /// 排错用：直接连一次，把错误的完整样子打出来。
     #[test]
     #[ignore]
@@ -741,11 +835,14 @@ mod tests {
             let target = format!("{dir}/.fg-upload-test");
             let done = Arc::new(Mutex::new(0usize));
             let seen = done.clone();
-            let r = pool.upload("t1", &target, vec![img.clone(), img.clone()], move |n| *seen.lock().unwrap() = n);
+            let r = pool.upload("t1", &target, vec![img.clone(), img.clone()], move |n| *seen.lock().unwrap() = n, || false);
             println!("uploaded: {r:?}");
-            let up: Vec<String> = r.into_iter().map(|x| x.expect("uploaded")).collect();
+            let r: Vec<Sent> = r.into_iter().map(|x| x.expect("uploaded")).collect();
             assert_eq!(*done.lock().unwrap(), 2);
-            assert!(up[0].ends_with("/fg-upload.jpg") && up[1].ends_with("/fg-upload (1).jpg"), "{up:?}");
+            // 第二张同名同大小同时间：认出是导出过的，不再传一份 "(1)"
+            let up: Vec<String> = r.iter().map(|s| match s { Sent::Uploaded(p) | Sent::Same(p) => p.clone() }).collect();
+            assert!(matches!(&r[0], Sent::Uploaded(p) if p.ends_with("/fg-upload.jpg")) && matches!(&r[1], Sent::Same(_)), "{r:?}");
+            let up = vec![up[0].clone()];
             let listed: Vec<(String, u64)> = pool.browse("t1", &target).expect("list the upload folder").into_iter().map(|e| (e.name, e.size)).collect();
             let size = std::fs::metadata(&img).unwrap().len();
             assert!(listed.iter().any(|(n, s)| n == "fg-upload.jpg" && *s == size), "{listed:?}");

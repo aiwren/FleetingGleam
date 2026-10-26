@@ -112,9 +112,17 @@ pub fn pack(styles: &Styles, settings: serde_json::Value, app_version: &str, dev
     (Pack { format: FORMAT.to_string(), exported_at, app_version: app_version.to_string(), device: device.to_string(), platform: platform.to_string(), settings, styles: out }, sum)
 }
 
+/// 一个向量的指纹：逐位相同才算同一个（文件里的向量是按 f32 原样打包的，往返不变）。
+fn fingerprint(emb: &[f32]) -> Vec<u32> {
+    emb.iter().map(|x| x.to_bits()).collect()
+}
+
 /// Merges the file into the styles: a style with the same name takes the examples and references in (without duplicates); a new
 /// name becomes a new style. Nothing already here is removed. Weights are not copied: every touched style is retrained by the caller.
-pub fn unpack(styles: &mut Styles, pack: &Pack) -> Result<(Summary, Vec<String>), String> {
+///
+/// `emb_of` 给本机标注过的照片的向量：包里和本机某条标注向量相同的判断（恢复自己的备份时全是这种）不再导入一份，本机的那条优先；
+/// 以前恢复过、已经重复进来的，也顺手去掉。
+pub fn unpack(styles: &mut Styles, pack: &Pack, emb_of: impl Fn(&str) -> Option<Vec<f32>>) -> Result<(Summary, Vec<String>), String> {
     if pack.format != FORMAT {
         return Err(format!("not a FleetingGleam taste file ({})", pack.format));
     }
@@ -129,8 +137,15 @@ pub fn unpack(styles: &mut Styles, pack: &Pack) -> Result<(Summary, Vec<String>)
             }
         };
         let p: &mut Prefs = &mut styles.get_mut(Some(&id)).prefs;
+        let local: std::collections::HashSet<Vec<u32>> = p.labels.keys().filter_map(|k| emb_of(k)).map(|e| fingerprint(&e)).collect();
+        p.imported.retain(|x| !local.contains(&fingerprint(&x.emb)));
+        let mut seen: std::collections::HashSet<(bool, Vec<u32>)> = p.imported.iter().map(|x| (x.keep, fingerprint(&x.emb))).collect();
         for e in &ps.examples {
-            if e.emb.is_empty() || p.imported.iter().any(|x| x.keep == e.keep && x.emb == e.emb) {
+            if e.emb.is_empty() {
+                continue;
+            }
+            let f = fingerprint(&e.emb);
+            if local.contains(&f) || !seen.insert((e.keep, f)) {
                 continue;
             }
             p.imported.push(Example { emb: e.emb.clone(), keep: e.keep });
@@ -178,7 +193,7 @@ mod tests {
             here.get_mut(None).prefs.labels.insert(path.clone(), *keep);
         }
         let emb_of = |k: &str| photos.iter().find(|(p, _, _)| p == k).map(|(_, e, _)| e.clone());
-        here.get_mut(None).prefs.retrain(emb_of, Vec::new);
+        here.get_mut(None).prefs.retrain(0, emb_of, Vec::new);
         assert!(here.get(None).prefs.active());
 
         let (pack, sum) = pack(&here, serde_json::json!({ "theme": "dark" }), "0.1.0", "test box", "mac", emb_of);
@@ -191,18 +206,45 @@ mod tests {
         std::fs::create_dir_all(&there_dir).unwrap();
         let mut there = Styles::load(&there_dir);
         let pack2: Pack = serde_json::from_str(&text).unwrap();
-        let (sum2, touched) = unpack(&mut there, &pack2).unwrap();
+        let (sum2, touched) = unpack(&mut there, &pack2, |_| None).unwrap();
         assert_eq!((sum2.styles, sum2.examples), (0, 12), "the nameless default style merges into the default style here");
         for id in &touched {
-            there.get_mut(Some(id)).prefs.retrain(|_| None, Vec::new);
+            there.get_mut(Some(id)).prefs.retrain(0, |_| None, Vec::new);
         }
         let p = there.get(None).prefs.clone();
         assert!(p.active(), "trained from the imported examples alone, with no photo analysed here");
         assert!(p.predict(&vec_at(20, true)).unwrap() > p.predict(&vec_at(21, false)).unwrap());
         assert_eq!(p.info().imported, 12);
 
-        let (sum3, _) = unpack(&mut there, &pack2).unwrap();
+        let (sum3, _) = unpack(&mut there, &pack2, |_| None).unwrap();
         assert_eq!(sum3.examples, 0, "importing the same file twice adds nothing");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 恢复自己的备份：包里的判断就是本机的标注，不再重复一份；以前重复进来的也清掉；别的设备的照常导入。
+    #[test]
+    fn restoring_my_own_backup_does_not_double_my_labels() {
+        let dir = std::env::temp_dir().join(format!("fg_taste_own_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut here = Styles::load(&dir);
+        let photos: Vec<(String, Vec<f32>, bool)> = (0..10).map(|i| (format!("/p/img{i}.jpg"), vec_at(i, i % 2 == 0), i % 2 == 0)).collect();
+        for (path, _, keep) in &photos {
+            here.get_mut(None).prefs.labels.insert(path.clone(), *keep);
+        }
+        let emb_of = |k: &str| photos.iter().find(|(p, _, _)| p == k).map(|(_, e, _)| e.clone());
+        // 老版本恢复过一次，留下了 10 条重复的
+        let (old, _) = pack(&here, serde_json::Value::Null, "0.1.0", "me", "mac", emb_of);
+        unpack(&mut here, &old, |_| None).unwrap();
+        assert_eq!(here.get(None).prefs.imported.len(), 10);
+        // 包里再加一条别的设备的判断
+        let (mut mine, _) = pack(&here, serde_json::Value::Null, "0.1.0", "me", "mac", emb_of);
+        mine.styles[0].examples.push(PackedExample { model: "unknown".into(), emb: vec_at(40, true), keep: true });
+        let (sum, _) = unpack(&mut here, &mine, emb_of).unwrap();
+        assert_eq!(sum.examples, 1, "只有那条别的设备的是新的");
+        let p = &here.get(None).prefs;
+        assert_eq!(p.imported.len(), 1, "和本机标注相同的重复判断都去掉了");
+        assert_eq!(p.labels.len(), 10, "本机的标注一条不少");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -210,6 +252,6 @@ mod tests {
     fn a_file_of_another_kind_is_refused() {
         let pack = Pack { format: "something-else/9".into(), exported_at: 0, app_version: String::new(), device: String::new(), platform: String::new(), settings: serde_json::Value::Null, styles: Vec::new() };
         let mut s = Styles::load(&std::env::temp_dir().join("fg_taste_refuse"));
-        assert!(unpack(&mut s, &pack).is_err());
+        assert!(unpack(&mut s, &pack, |_| None).is_err());
     }
 }
