@@ -76,6 +76,7 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
     val error by Session.error.collectAsState()
     val nasOff by Session.nasOff.collectAsState()
     val offline by Session.offline.collectAsState()
+    val nasFailure by Session.nasFailure.collectAsState()
     val eta by Session.etaSeconds.collectAsState()
     val previews by Session.previews.collectAsState()
     val celebrate by Session.celebrate.collectAsState()
@@ -122,9 +123,13 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
             val plainTop = phase != Phase.Scanning && phase != Phase.Done
             if (plainTop) androidx.compose.foundation.layout.Spacer(Modifier.height(topPad))
             msgs.forEach { Text(it, style = Type.small.copy(color = c.ink), modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) }
+            // 连不上分开说：密码不对 → 去设置；没权限；连不上 → 重试（审查第 33 条）
             if (error == "cull.nasOffline" || error == "cull.nasDisabled") Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(t(error!!, "name" to nasOff), style = Type.small.copy(color = c.ink), modifier = Modifier.weight(1f))
-                FgButton(t("cull.nasRetry"), { Session.reload() }, small = true)
+                val why = if (error == "cull.nasOffline") nasFailure else "net"
+                val text = when (why) { "auth" -> t("android.nas.authError", "name" to nasOff); "denied" -> t("android.nas.deniedError", "name" to nasOff); else -> t(error!!, "name" to nasOff) }
+                Text(text, style = Type.small.copy(color = c.ink), modifier = Modifier.weight(1f))
+                if (why == "auth") FgButton(t("android.nas.toSettings"), { com.fleetinggleam.android.core.Nav.openSettings("nas") }, small = true)
+                else FgButton(t("cull.nasRetry"), { Session.reload() }, small = true)
             }
             // 系统文件夹的读权限失效：重新在系统选择器里选一次原来那个文件夹
             if (error == "cull.safExpired") Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -201,8 +206,9 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
                 if (phase == Phase.Done && !scene) StatusStrip(cull, data)
                 // NAS 没连上、照片是上次同步的：顶栏里一行灰字加"重试"（审查第 30 条）
                 if (offline && error == null && phase != Phase.Scanning && !scene) Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(t("android.cull.offline", "name" to nasOff), style = Type.rowDesc.copy(color = c.ash), modifier = Modifier.weight(1f))
-                    FgButton(t("cull.nasRetry"), { Session.reload() }, small = true)
+                    Text(t(if (nasFailure == "auth") "android.nas.authOffline" else "android.cull.offline", "name" to nasOff), style = Type.rowDesc.copy(color = c.ash), modifier = Modifier.weight(1f))
+                    if (nasFailure == "auth") FgButton(t("android.nas.toSettings"), { com.fleetinggleam.android.core.Nav.openSettings("nas") }, small = true)
+                    else FgButton(t("cull.nasRetry"), { Session.reload() }, small = true)
                 }
                 AnimatedVisibility(phase == Phase.Scanning && cull.scanCardGone, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
                     ScanPill(progress) { scope.launch { cull.scanBackToTop?.invoke() } }

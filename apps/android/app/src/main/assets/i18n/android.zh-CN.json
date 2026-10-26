@@ -147,6 +147,16 @@
    "net": "连不上下载地址，检查网络或代理后重试。",
    "auth": "用户名或密码不对，去设置里重新输入。",
    "denied": "没有访问权限。"
+  },
+  "nas": {
+   "wrongPassword": "密码不对",
+   "unreachable": "连不上",
+   "denied": "没有访问权限",
+   "toSettings": "去设置",
+   "reenter": "重新输入密码",
+   "authOffline": "NAS「{{name}}」的用户名或密码不对，显示上次同步的照片",
+   "authError": "这个项目在 NAS「{{name}}」上，用户名或密码不对，去设置里重新输入。",
+   "deniedError": "这个项目在 NAS「{{name}}」上，这个账号没有访问权限。"
   }
  },
  "models": {

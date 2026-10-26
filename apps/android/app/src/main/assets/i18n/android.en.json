@@ -147,6 +147,16 @@
    "net": "Could not reach the download address. Check the network or proxy and try again.",
    "auth": "The user name or password is wrong. Enter it again in Settings.",
    "denied": "Access is not allowed."
+  },
+  "nas": {
+   "wrongPassword": "Wrong password",
+   "unreachable": "Unreachable",
+   "denied": "Access denied",
+   "toSettings": "Settings",
+   "reenter": "Enter the password again",
+   "authOffline": "The user name or password for NAS “{{name}}” is wrong; showing the photos from the last sync",
+   "authError": "This project is on NAS “{{name}}” and its user name or password is wrong. Enter it again in Settings.",
+   "deniedError": "This project is on NAS “{{name}}”, and this account is not allowed to access it."
   }
  },
  "models": {

@@ -369,8 +369,22 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                 shares.forEach { sh ->
                     SettingRow(sh.name, "${sh.host} · ${sh.user.ifEmpty { t("settings.nasGuest") }}" + (nasMsg?.takeIf { it.first == sh.id }?.let { " · ${it.second}" } ?: ""), below = {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            StateDot(if (!sh.enabled) t("settings.nasDisabled") else if (sh.connected) t("settings.nasConnected") else if (nasBusy == sh.id) t("settings.nasConnecting") else t("settings.nasOffline"), sh.enabled && sh.connected)
+                            // 没连上分开说：密码不对 → 重新输入；没权限；连不上 → 重试（审查第 33 条）
+                            val why = sh.failure
+                            StateDot(when {
+                                !sh.enabled -> t("settings.nasDisabled")
+                                sh.connected -> t("settings.nasConnected")
+                                nasBusy == sh.id -> t("settings.nasConnecting")
+                                why == "auth" -> t("android.nas.wrongPassword")
+                                why == "denied" -> t("android.nas.denied")
+                                sh.error != null -> t("android.nas.unreachable")
+                                else -> t("settings.nasOffline")
+                            }, sh.enabled && sh.connected)
                             Spacer(Modifier.weight(1f))
+                            if (sh.enabled && !sh.connected && nasBusy != sh.id) {
+                                if (why == "auth") FgButton(t("android.nas.reenter"), { nasForm = NasForm(sh.id, sh.name, sh.host, sh.user, "", true, editingUser = sh.user, editingHost = sh.host) }, small = true)
+                                else FgButton(t("cull.nasRetry"), { scope.launch { nasBusy = sh.id; nasMsg = null; runCatching { Nas.connect(sh.id) }.onFailure { nasMsg = sh.id to (com.fleetinggleam.android.core.Errors.explain(it.message) ?: it.message ?: "") }; nasBusy = null } }, small = true)
+                            }
                             FgButton(t("settings.nasNewProject"), { scope.launch { if (Actions.newProjectFromDialog(sh.id)) Toasts.show(t("android.settings.projectMade")) } }, small = true, enabled = sh.enabled)
                             // 行内图标钮没有灰圆盘（设计审查 A13.4）
                             IconBtn(Icons.EDIT, t("settings.nasEdit"), { nasForm = NasForm(sh.id, sh.name, sh.host, sh.user, "", true, editingUser = sh.user, editingHost = sh.host) }, enabled = nasBusy != sh.id, plain = true, size = 32.dp, tint = c.ash)

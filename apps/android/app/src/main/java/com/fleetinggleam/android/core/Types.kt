@@ -98,7 +98,11 @@ data class Decision(val state: String, val manual: Boolean = false, val reasons:
 @Serializable data class ScanInfo(val cpuOnly: Boolean = false, val clip: String? = null, val model: String? = null, val vision: Boolean = false, val cores: Int = 1)
 
 /** 应用自己连接的一台 NAS。 */
-@Serializable data class Share(val id: String, val name: String, val host: String, val user: String = "", val enabled: Boolean = true, val local: String = "", val connected: Boolean = false)
+/** `error`：没连上时最后一次的原因，带约定的前缀（`auth:` 密码不对、`net:` 连不上、`denied:` 没权限）；连上时为 null（第 33 条）。 */
+@Serializable data class Share(val id: String, val name: String, val host: String, val user: String = "", val enabled: Boolean = true, val local: String = "", val connected: Boolean = false, val error: String? = null) {
+    /** 没连上的原因归成三类："auth" / "denied" / "net"（老核心没有 error 时按连不上算）。 */
+    val failure: String? get() = if (connected) null else Errors.parse(error)?.kind?.takeIf { it == "auth" || it == "denied" } ?: "net"
+}
 @Serializable data class NasEntry(val name: String, val dir: Boolean, val size: Long = 0)
 @Serializable data class Listing(val path: String, val local: String, val entries: List<NasEntry> = emptyList())
 @Serializable data class NasProgress(val share: String, val done: Int, val total: Int, val bytesDone: Long = 0, val bytesTotal: Long = 0)

@@ -50,6 +50,8 @@ object Session {
     val nasOff = MutableStateFlow("")
     /** 项目所在的 NAS 没连上，照片是本机镜像里上次同步的：顶上提示一句，NAS 上的整理操作置灰（`nasOff` 是那台的名字）。 */
     val offline = MutableStateFlow(false)
+    /** 没连上的那台为什么没连上："auth"（密码不对 → 去设置）、"denied"、"net"（连不上 → 重试）。 */
+    val nasFailure = MutableStateFlow("net")
     /** 读权限失效的那个系统文件夹镜像（`cull.safExpired` 时界面拿它去"重新授权"）。 */
     @Volatile var expired: Media.Mirror? = null; private set
     val etaSeconds = MutableStateFlow<Int?>(null)
@@ -213,7 +215,7 @@ object Session {
                 if (disabled.isNotEmpty()) { photos.value = emptyList(); files.value = emptyList(); phase.value = Phase.Idle; nasOff.value = disabled.joinToString(", ") { it.name }; error.value = "cull.nasDisabled"; return@launch }
                 // NAS 没连上：不再清空照片、整个打不开——核心跳过同步、用本机镜像（`Probe.offline`），这里只提示"显示上次同步的照片"（审查第 30 条）
                 val off = shares.filter { !it.connected }
-                if (off.isNotEmpty()) nasOff.value = off.joinToString(", ") { it.name }
+                if (off.isNotEmpty()) { nasOff.value = off.joinToString(", ") { it.name }; nasFailure.value = off.firstNotNullOfOrNull { s -> s.failure?.takeIf { it != "net" } } ?: "net" }
                 // a folder picked through the system picker that has no path: bring its new photos into the mirror first
                 Media.syncMirrors(app, project.folders, { done, total, name -> nasProg.value = if (done >= total) null else NasProgress(name, done, total) }, { tok != token })
                 nasProg.value = null
