@@ -45,6 +45,11 @@ fun ModelGate() {
             "ask" -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(t("models.body.${gate.id}", "size" to fmtBytes(gate.bytes)), style = Type.body.copy(color = c.ink))
                 gate.note?.let { Text(t(it), style = Type.rowDesc.copy(color = c.ash)) }
+                // 移动数据 / 热点：先说一声要用多少流量（审查第 26 条）
+                val metered = androidx.compose.runtime.remember(gate.resolve) {
+                    runCatching { ctx.getSystemService(android.net.ConnectivityManager::class.java).isActiveNetworkMetered }.getOrDefault(false)
+                }
+                if (metered) Text(t("android.models.metered", "size" to fmtBytes(gate.bytes)), style = Type.rowDesc.copy(color = c.ink))
                 // 列表行 36dp 高、行间细线（设计审查 A15.3）
                 Column { gate.ids?.forEachIndexed { i, id ->
                     if (i > 0) androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().height(0.5.dp).background(c.line))
@@ -66,8 +71,9 @@ fun ModelGate() {
                 Text("${fmtBytes(gate.done)} / ${fmtBytes(gate.total)} · $pct%", style = Type.mono.copy(color = c.ash))
             }
             else -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(t("models.error"), style = Type.body.copy(color = c.ash))
-                Text(gate.error ?: "", style = Type.monoSmall.copy(color = c.ash))
+                // 按错误前缀说清楚是空间、校验还是网络（审查第 26 条）；认不出的照旧说"检查网络"
+                Text(com.fleetinggleam.android.core.Errors.explain(gate.error) ?: t("models.error"), style = Type.body.copy(color = c.ash))
+                com.fleetinggleam.android.core.Errors.detail(gate.error).takeIf { it.isNotEmpty() }?.let { Text(it, style = Type.monoSmall.copy(color = c.ash)) }
                 if (gate.failed != null && gate.failed in gate.optional) Text(t("android.models.skipBody"), style = Type.rowDesc.copy(color = c.ash), modifier = Modifier.padding(top = 6.dp))
             }
         }

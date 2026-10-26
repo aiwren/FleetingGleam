@@ -82,7 +82,8 @@
    "skipBody": "The analysis runs without it — no closed-eye check or people for now. You can download it later in Settings → Models & storage.",
    "useStandard": "Use the standard model for now ({{size}})",
    "useStandardDesc": "Smaller and quicker; you can switch to a better one later under Settings → Analysis.",
-   "sampleNote": "The sample photos need an analysis model too, so this is the smallest one; once it is here, your own photos need no further download."
+   "sampleNote": "The sample photos need an analysis model too, so this is the smallest one; once it is here, your own photos need no further download.",
+   "metered": "You are on a metered network (mobile data or a hotspot); this uses about {{size}} of data."
   },
   "organize": {
    "toAlbum": "Export keepers to an album",
@@ -136,6 +137,14 @@
    "resetTitle": "Clear “{{name}}”?",
    "resetBody": "The {{labels}} choices and {{refs}} reference photos it learned from are erased for good; the style itself and the projects using it stay.",
    "resetAction": "Clear"
+  },
+  "err": {
+   "space": "Not enough space: {{need}} is needed and only {{avail}} is free. Free up some space and try again.",
+   "spaceShort": "The phone is out of space. Free up some and try again.",
+   "verify": "The downloaded file is incomplete. Try again.",
+   "net": "Could not reach the download address. Check the network or proxy and try again.",
+   "auth": "The user name or password is wrong. Enter it again in Settings.",
+   "denied": "Access is not allowed."
   }
  },
  "models": {

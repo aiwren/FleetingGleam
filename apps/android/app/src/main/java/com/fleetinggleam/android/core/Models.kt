@@ -176,7 +176,7 @@ object Models {
                 g.resolve.complete(Answer.Downloaded)
             } catch (e: Exception) {
                 base = 0
-                if (e.message?.contains("cancelled") == true) {
+                if (Errors.isCancelled(e.message) || e.message?.contains("cancelled") == true) {
                     clear(g)
                     g.resolve.complete(Answer.Cancelled)
                 } else {
