@@ -14,12 +14,25 @@ export function errKind(e: unknown): ErrKind {
   return s === "cancelled" || s.endsWith("cancelled") ? "cancelled" : "other";
 }
 
-/** 冒号后的细节（`space:` 的两个数字不算细节）。 */
+/**
+ * `space:` 的两个数字（需要、可用）。核心给错误加上下文时前缀仍在最前：`space:<上下文>: <需要>:<可用>`，所以取最后两个数。
+ * 太大的数（比如"需要"是 u64::MAX）当作不知道。
+ */
+function spaceNumbers(s: string): { need: number; free: number; ctx: string } | null {
+  const m = s.match(/^space:(.*?)(\d+):(\d+)\s*$/);
+  if (!m) return null;
+  const need = Number(m[2]), free = Number(m[3]);
+  if (!Number.isSafeInteger(need) || !Number.isSafeInteger(free)) return null;
+  return { need, free, ctx: m[1].replace(/:\s*$/, "").trim() };
+}
+
+/** 冒号后的细节（`space:` 的两个数字不算细节，只留上下文）。 */
 export function errDetail(e: unknown): string {
   const s = String(e);
   const k = errKind(e);
   if (k === "other") return s;
-  if (k === "space" || k === "cancelled") return "";
+  if (k === "cancelled") return "";
+  if (k === "space") return spaceNumbers(s)?.ctx ?? "";
   return s.slice(k.length + 1);
 }
 
@@ -29,8 +42,8 @@ export function errText(t: TFunction, lang: string, e: unknown): string {
   if (k === "cancelled") return "";
   if (k === "other") return String(e);
   if (k === "space") {
-    const [, need, free] = String(e).split(":");
-    return t("errors.space", { need: fmtBytes(lang, Number(need) || 0), free: fmtBytes(lang, Number(free) || 0) });
+    const n = spaceNumbers(String(e));
+    return n ? t("errors.space", { need: fmtBytes(lang, n.need), free: fmtBytes(lang, n.free) }) : t("errors.spaceUnknown");
   }
   return t(`errors.${k}`);
 }

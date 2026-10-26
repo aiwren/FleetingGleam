@@ -90,6 +90,7 @@ const en = {
   },
   errors: {
     space: "Not enough disk space: {{need}} is needed and only {{free}} is free. Make some room and try again.",
+    spaceUnknown: "Not enough disk space. Make some room and try again.",
     verify: "The downloaded file was incomplete (it failed its check) and has been removed; trying again should do it.",
     net: "The download address can't be reached. Check the network; if you use a proxy, see Settings › Models & storage › Network proxy.",
     auth: "The NAS user name or password is wrong; enter them again in Settings.",
