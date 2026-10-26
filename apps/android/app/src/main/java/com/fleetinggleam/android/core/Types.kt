@@ -131,7 +131,12 @@ data class Decision(val state: String, val manual: Boolean = false, val reasons:
 )
 
 @Serializable data class TrashResult(val moved: Int = 0, val failed: List<String> = emptyList(), val networkBins: List<String> = emptyList(), val deferred: List<String> = emptyList())
-@Serializable data class ExportResult(val copied: Int = 0, val skipped: Int = 0, val dest: String = "", val remote: Boolean = false)
+/**
+ * 导出的结果（第 35 条）：`skipped` 是目标里已有一模一样的（同名、同大小、同修改时间）；`failed` 列出没导出的与原因（约定的错误前缀串）；
+ * `cancelled` = 用户中途停下了。
+ */
+@Serializable data class ExportResult(val copied: Int = 0, val skipped: Int = 0, val dest: String = "", val remote: Boolean = false, val failed: List<ExportFailure> = emptyList(), val cancelled: Boolean = false)
+@Serializable data class ExportFailure(val path: String, val error: String = "")
 @Serializable data class Machine(val memoryGb: Int = 8, val cores: Int = 4, val accelerator: String = "cpu")
 @Serializable data class SceneText(val id: Int, val text: String)
 

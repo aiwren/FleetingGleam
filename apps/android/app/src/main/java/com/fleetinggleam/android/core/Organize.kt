@@ -40,26 +40,43 @@ object Organize {
         return r
     }
 
-    /** 导出到换算不出路径的文件夹（网盘等）：逐张用 ContentResolver 复制；重名的加序号。 */
+    /** 正在导出到网盘的那次要不要停（"停止"按钮）；核心那边的导出用 `export_cancel`。 */
+    @Volatile var treeCancel = false
+
+    /**
+     * 导出到换算不出路径的文件夹（网盘等）：逐张用 ContentResolver 复制；重名的加序号。点了"停止"就在这一张写完后停下（`cancelled`）；
+     * 一张写失败了删掉写了一半的那个文件，原因记进 `failed`（审查第 35 条）。
+     */
     fun exportToTree(ctx: Context, paths: List<String>, tree: Uri, onProgress: (Int, Int) -> Unit): ExportResult {
-        val dir = DocumentFile.fromTreeUri(ctx, tree) ?: return ExportResult(0, paths.size, tree.toString())
+        treeCancel = false
+        val dir = DocumentFile.fromTreeUri(ctx, tree) ?: return ExportResult(0, 0, tree.toString(), failed = paths.map { ExportFailure(it, "denied:tree") })
         val names = dir.listFiles().mapNotNull { it.name }.toMutableSet()
-        var copied = 0; var skipped = 0
-        paths.forEachIndexed { i, p ->
+        var copied = 0
+        val failed = mutableListOf<ExportFailure>()
+        for ((i, p) in paths.withIndex()) {
+            if (treeCancel) return ExportResult(copied, 0, dir.name ?: tree.toString(), failed = failed, cancelled = true)
             val src = File(p)
-            val ok = runCatching {
+            var out: DocumentFile? = null
+            val r = runCatching {
                 var name = src.name
                 var n = 1
                 while (name in names) { name = "${src.nameWithoutExtension} ($n).${src.extension}"; n++ }
                 val mime = when (src.extension.lowercase()) { "png" -> "image/png"; "webp" -> "image/webp"; "heic", "heif" -> "image/heif"; else -> "image/jpeg" }
-                val out = dir.createFile(mime, name) ?: error("create")
-                ctx.contentResolver.openOutputStream(out.uri)?.use { o -> src.inputStream().use { it.copyTo(o) } } ?: error("open")
+                out = dir.createFile(mime, name) ?: error("denied:create")
+                val written = ctx.contentResolver.openOutputStream(out!!.uri)?.use { o -> src.inputStream().use { it.copyTo(o) } } ?: error("denied:open")
+                if (written != src.length()) error("short write")
                 names.add(name)
-            }.isSuccess
-            if (ok) copied++ else skipped++
+            }
+            if (r.isSuccess) copied++
+            else {
+                runCatching { out?.delete() }
+                val msg = r.exceptionOrNull()?.message.orEmpty()
+                // 写满了多半是空间不够（网盘的提供者给不出可用空间，只能这样猜）
+                failed.add(ExportFailure(p, if (Errors.parse(msg) != null) msg else if ("ENOSPC" in msg || "No space" in msg) "space:" else msg))
+            }
             onProgress(i + 1, paths.size)
         }
-        return ExportResult(copied, skipped, dir.name ?: tree.toString())
+        return ExportResult(copied, 0, dir.name ?: tree.toString(), failed = failed)
     }
 
     /**
