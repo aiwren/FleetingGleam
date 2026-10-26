@@ -213,7 +213,7 @@ pub fn analyze(
         let sys = vision.map(|v| {
             s.spawn(move || if v.takes_pixels() { v.analyze_pixels(work) } else { save_analysis_copy(work, path, cache_dir).and_then(|p| v.analyze(&p)) })
         });
-        let ai = scorer.and_then(|s| s.analyze(&work).map_err(|e| eprintln!("ai: {e}")).ok());
+        let ai = scorer.and_then(|s| s.analyze(&work).map_err(|e| crate::platform::log(&format!("ai: {e}"))).ok());
         on_stage("system", 70, None);
         (ai, sys.and_then(|h| h.join().ok().flatten()))
     });

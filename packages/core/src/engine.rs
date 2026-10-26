@@ -57,6 +57,13 @@ pub struct Progress {
     pub total: usize,
 }
 
+/// 一张分析失败、被跳过的照片（"scan-skip"）。
+#[derive(Serialize)]
+struct Skip<'a> {
+    path: &'a str,
+    error: &'a str,
+}
+
 #[derive(Serialize, Clone)]
 struct Stage<'a> {
     path: &'a str,
@@ -455,7 +462,7 @@ impl Engine {
         if guard.is_none() && mediapipe::available(&self.paths.models) {
             match mediapipe::MediapipeEyes::load(&self.paths.models) {
                 Ok(m) => *guard = Some(Arc::new(m)),
-                Err(e) => eprintln!("MediaPipe eyes disabled: {e}"),
+                Err(e) => crate::platform::log(&format!("MediaPipe eyes disabled: {e}")),
             }
         }
         guard.clone()
@@ -467,7 +474,7 @@ impl Engine {
         if guard.is_none() && faces::available(&self.paths.models) {
             match faces::FaceEmbedder::load(&self.paths.models) {
                 Ok(m) => *guard = Some(Arc::new(m)),
-                Err(e) => eprintln!("face recognition disabled: {e}"),
+                Err(e) => crate::platform::log(&format!("face recognition disabled: {e}")),
             }
         }
         guard.clone()
@@ -494,7 +501,7 @@ impl Engine {
         std::thread::spawn(move || {
             for s in nas::load(&e.paths.data).into_iter().filter(|s| s.enabled) {
                 if let Err(err) = e.nas_connect_saved(&s) {
-                    eprintln!("NAS {}: {err}", s.name);
+                    crate::platform::log(&format!("NAS {}: {err}", s.name));
                 }
             }
             e.emit("nas-changed", &());
@@ -669,7 +676,7 @@ impl Engine {
                 JudgeGuard(j, Some(h))
             });
             // Models are only loaded when there is real work: re-opening a cached project is instant.
-            let scorer = ClipScorer::load(&model_dir, !cpu_only, want).map_err(|e| eprintln!("AI disabled: {e}")).ok();
+            let scorer = ClipScorer::load(&model_dir, !cpu_only, want).map_err(|e| crate::platform::log(&format!("AI disabled: {e}"))).ok();
             let vision = vision_cell.get_or_init(|| self.start_vision(vision_workers(), cpu_only)).as_deref();
             let mp = self.eyes_model_for(eye_method, vision);
             if !quiet {
@@ -758,7 +765,13 @@ impl Engine {
                             save_batch(&batch);
                         }
                     }
-                    r.map_err(|e| eprintln!("skip: {e}")).ok()
+                    // 分析不了的照片（坏文件、这台机器解不了的格式）以前只在 stderr 留一行，界面上它就"消失"了：
+                    // 记进日志（Android 进 logcat），再告诉界面是哪张、为什么
+                    r.map_err(|error| {
+                        crate::platform::log(&format!("分析失败，跳过：{key}：{error}"));
+                        self.emit("scan-skip", &Skip { path: &key, error: &error });
+                    })
+                    .ok()
                 })
                 .collect::<Vec<Photo>>();
             fresh = match &pool {
@@ -1499,7 +1512,7 @@ impl Engine {
                         }
                     }
                     Err(e) => {
-                        eprintln!("recycle on {}: {e}", s.name);
+                        crate::platform::log(&format!("recycle on {}: {e}", s.name));
                         r.failed.push(p);
                     }
                 }
@@ -2197,6 +2210,32 @@ mod tests {
             let img = if i == n - 1 { image::imageops::blur(&img, 6.0) } else { img };
             img.save(dir.join(format!("p{i}.jpg"))).unwrap();
         }
+    }
+
+    /// 分析失败的照片不再悄悄消失：发 "scan-skip"，带路径和原因。
+    #[test]
+    fn a_photo_that_cannot_be_analysed_is_reported() {
+        let (e, root, events) = engine("skip");
+        let dir = root.join("photos");
+        photos(&dir, 2);
+        // 只有文件头、没有图像数据的 JPEG：读得出尺寸，解不出来。塞几段注释让它够大，不被当成小图标跳过
+        let bytes = std::fs::read(dir.join("p0.jpg")).unwrap();
+        let sos = bytes.windows(2).position(|w| w == [0xff, 0xda]).unwrap();
+        let mut broken = bytes[..2].to_vec();
+        for _ in 0..4 {
+            broken.extend_from_slice(&[0xff, 0xfe, 0xff, 0xff]);
+            broken.extend(std::iter::repeat(b'x').take(0xffff - 2));
+        }
+        broken.extend_from_slice(&bytes[2..sos]);
+        std::fs::write(dir.join("broken.jpg"), &broken).unwrap();
+        let out = e.scan_project(ScanArgs { key: "k".into(), dirs: vec![dir.to_string_lossy().into_owned()], ..Default::default() }).unwrap();
+        let broken = dir.join("broken.jpg").to_string_lossy().into_owned();
+        assert_eq!(out.len(), 2);
+        let skips: Vec<serde_json::Value> = events.0.lock().unwrap().iter().filter(|(n, _)| n == "scan-skip").map(|(_, v)| v.clone()).collect();
+        assert_eq!(skips.len(), 1, "{skips:?}");
+        assert_eq!(skips[0]["path"], broken.as_str());
+        assert!(!skips[0]["error"].as_str().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// 探测、分析（第二次走缓存）、取舍、项目文件：桌面端与 Android 走的就是这一条。

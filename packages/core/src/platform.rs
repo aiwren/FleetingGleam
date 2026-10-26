@@ -160,7 +160,7 @@ pub fn http_agent(connect: std::time::Duration, read: std::time::Duration) -> ur
     if let Some(p) = proxy() {
         match ureq::Proxy::new(&p) {
             Ok(px) => b = b.proxy(px),
-            Err(e) => eprintln!("proxy {p} ignored: {e}"),
+            Err(e) => log(&format!("proxy {p} ignored: {e}")),
         }
     }
     b.build()
