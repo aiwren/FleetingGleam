@@ -43,7 +43,6 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInRoot
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -155,7 +154,7 @@ private fun SwipeDecide(p: Photo, d: Decision?, onDecide: (String) -> Unit, onOp
         val kept = d?.state == "keep"
         Box(
             Modifier.size(with(density) { fw.toDp() }, with(density) { fh.toDp() })
-                .onGloballyPositioned { cull.coords[p.path] = it }
+                .trackRect(cull.coords, p.path)
                 .graphicsLayer {
                     translationY = dy.value
                     val s = 1f - 0.08f * abs(k).coerceAtMost(1f)

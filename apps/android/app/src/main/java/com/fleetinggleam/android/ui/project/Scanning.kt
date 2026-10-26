@@ -106,7 +106,7 @@ fun ScanningStage(cull: CullState, data: CullData, progress: Progress, onStop: (
             Wall(items, "grid", state, pad, header = card, thumbOf = { i -> items.getOrNull(i)?.key?.let { k -> Session.results[k]?.thumb } }) { i, w, h ->
                 val path = items[i].key
                 val done = Session.results[path]
-                Box(Modifier.onGloballyPositioned { cull.coords[path] = it }) {
+                Box(Modifier.trackRect(cull.coords, path)) {
                     Tile(path, w, h, done, Session.stages[path], Session.live[path]?.state ?: "", selected = false, reveal = false, dim = false, manual = false, showScore = false,
                         index = i, interactive = done != null, dock = false, stamp = true, onSelect = open, onOpen = open, onDecide = { _, _ -> })
                 }
@@ -118,7 +118,7 @@ fun ScanningStage(cull: CullState, data: CullData, progress: Progress, onStop: (
                 if (items.isEmpty()) Text(t("android.scan.landing"), style = Type.rowDesc.copy(color = c.ash), modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 28.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             }) { i, w, h ->
                 val p = shown[i]
-                Box(Modifier.onGloballyPositioned { cull.coords[p.path] = it }) {
+                Box(Modifier.trackRect(cull.coords, p.path)) {
                     Tile(p.path, w, h, p, null, m, selected = false, reveal = false, dim = false, manual = false, showScore = false,
                         index = i, interactive = true, dock = false, onSelect = open, onOpen = open, onDecide = { _, _ -> })
                 }

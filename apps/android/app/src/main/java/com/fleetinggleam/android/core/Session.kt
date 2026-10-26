@@ -193,6 +193,8 @@ object Session {
         undoStack.clear(); undoCount.value = 0
         error.value = null; celebrate.value = false; dirty.value = 0; nasProg.value = null; peopleProg.value = null; mediaProg.value = null
         if (run == null && pausedProject == null) paused.value = Pause.None
+        // 上一个项目分析中的实时表：没有分析在后台跑就清掉（在跑的那个回来时还要用，留着）
+        if (run == null) { results.clear(); stages.clear(); live.clear(); lastStage = null }
         decisions.value = emptyMap()
         currentKey = project?.let { "${it.id}|${it.folders.joinToString("|")}" } ?: ""
         if (project == null || project.folders.isEmpty()) { phase.value = Phase.Idle; photos.value = emptyList(); files.value = emptyList(); return }
