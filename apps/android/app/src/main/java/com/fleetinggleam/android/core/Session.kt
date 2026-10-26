@@ -259,7 +259,7 @@ object Session {
      * `quiet` = 只是从缓存打开（没有进度事件，不挂前台服务）；否则是一次真正的分析：它属于 `project`，离开那个项目也照跑，
      * 跑完时如果页面还开着它就把结果交给页面，不然只更新项目封面、弹一句"分析完成"。`attach` = 页面现在就显示这次分析。
      */
-    private suspend fun runScan(project: Project, total: Int, quiet: Boolean, tok: Int, force: Boolean = false, attach: Boolean = true) {
+    private suspend fun runScan(project: Project, total: Int, quiet: Boolean, tok: Int, force: Boolean = false, attach: Boolean = true, tier: String? = null) {
         // 诊断：每次分析 / 读取从哪里来（作者 2026-10-23："重新分析"点了没反应）
         android.util.Log.i("FleetingGleam", "runScan ${project.name}：${if (quiet) "安静读取" else "分析"}${if (force) "（强制）" else ""}，来自 ${Throwable().stackTrace.getOrNull(1)?.let { "${it.methodName}:${it.lineNumber}" }}")
         if (quiet) phase.value = Phase.Loading
@@ -276,7 +276,7 @@ object Session {
         fun mine() = if (quiet) tok == token else attached && current()?.id == project.id
         try {
             val res = Core.get<List<Photo>>("scan_project", args(
-                "key" to project.id, "dirs" to project.folders, "compute" to "auto", "quality" to Strategy.currentTier(), "style" to project.style,
+                "key" to project.id, "dirs" to project.folders, "compute" to "auto", "quality" to (tier ?: Strategy.currentTier()), "style" to project.style,
                 "learn" to (Settings.value.learn && project.learn != false), "quiet" to quiet, "force" to force, "eye_method" to Strategy.eyeMethodNow(),
                 // 边分析边判：和分析完的取舍用同一套参数
                 "live" to if (quiet) null else mapOf("keep_ratio" to (project.keepCap ?: 1f), "pick_mode" to (project.pickMode ?: "diverse"), "one_per_group" to (project.onePerGroup ?: false), "overrides" to project.overrides),
@@ -314,18 +314,31 @@ object Session {
         if (paused.value == Pause.None || pausedProject == null) Scans.stopped()
     }
 
-    /** "开始分析"：应用定下模型；它要的（含眼睛与人物）第一次在一个问题里下载。另一个项目还在分析时先问一句。 */
-    fun startScan() {
+    /**
+     * "开始分析"：应用定下模型；它要的（含眼睛与人物）第一次在一个问题里下载，下载成功后才记下这一档（取消了下次照样问）。
+     * 要下的是大模型时询问框里可以"先用标准模型"。另一个项目还在分析时先问一句。
+     * `sample`：示例照片——用不必下载或最小的那档，不记下档位，询问框里说明为什么要下载。
+     */
+    fun startScan(sample: Boolean = false) {
         val project = current() ?: return
         val run = running.value
         if (run != null && run.id != project.id) { conflict.value = run; return }
         val tok = token
+        val demo = sample || Samples.isSample(app, project)
         scope.launch {
-            val tier = Strategy.resolveTier()
-            if (Models.ensurePacks(Strategy.analysisPacks(tier), optional = setOf(PackIds.DETECT, PackIds.EYES, PackIds.FACES)) == Answer.Cancelled) return@launch
+            val extras = setOf(PackIds.DETECT, PackIds.EYES, PackIds.FACES)
+            var tier = if (demo) Strategy.sampleTier() else Strategy.predictTier()
+            val alt = if (tier != "fast") Strategy.analysisPacks("fast") else null
+            var answer = Models.ensurePacks(Strategy.analysisPacks(tier), optional = extras, fallback = alt, note = if (demo) "android.models.sampleNote" else null)
+            if (answer == Answer.Fallback) {
+                tier = "fast"
+                answer = Models.ensurePacks(Strategy.analysisPacks(tier), optional = extras, note = if (demo) "android.models.sampleNote" else null)
+            }
+            if (answer == Answer.Cancelled) return@launch
+            if (!demo) Strategy.settle(tier)
             if (tok != token) return@launch
             paused.value = Pause.None; pausedProject = null
-            runScan(project, files.value.size, quiet = false, tok = tok)
+            runScan(project, files.value.size, quiet = false, tok = tok, tier = tier)
         }
     }
 

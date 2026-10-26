@@ -44,6 +44,7 @@ fun ModelGate() {
         when (gate.phase) {
             "ask" -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(t("models.body.${gate.id}", "size" to fmtBytes(gate.bytes)), style = Type.body.copy(color = c.ink))
+                gate.note?.let { Text(t(it), style = Type.rowDesc.copy(color = c.ash)) }
                 // 列表行 36dp 高、行间细线（设计审查 A15.3）
                 Column { gate.ids?.forEachIndexed { i, id ->
                     if (i > 0) androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().height(0.5.dp).background(c.line))
@@ -52,6 +53,13 @@ fun ModelGate() {
                         Text(fmtBytes(gate.sizes?.getOrNull(i) ?: 0), style = Type.mono.copy(color = c.ash))
                     }
                 } }
+                // 要下的是大模型：也可以先用小的标准模型（审查第 24 条）。放在正文里，底栏一行放不下三个钮
+                gate.fallbackBytes?.let { alt ->
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        FgButton(t("android.models.useStandard", "size" to fmtBytes(alt)), { Models.fallbackGate() })
+                        Text(t("android.models.useStandardDesc"), style = Type.rowDesc.copy(color = c.ash))
+                    }
+                }
             }
             "downloading" -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 LiveBar(pct / 100f, Modifier.padding(top = 6.dp))

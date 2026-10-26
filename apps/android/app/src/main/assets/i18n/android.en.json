@@ -79,7 +79,10 @@
    "bundle": "the analysis models",
    "pill": "Downloading {{pct}}%",
    "skip": "Skip for now",
-   "skipBody": "The analysis runs without it — no closed-eye check or people for now. You can download it later in Settings → Models & storage."
+   "skipBody": "The analysis runs without it — no closed-eye check or people for now. You can download it later in Settings → Models & storage.",
+   "useStandard": "Use the standard model for now ({{size}})",
+   "useStandardDesc": "Smaller and quicker; you can switch to a better one later under Settings → Analysis.",
+   "sampleNote": "The sample photos need an analysis model too, so this is the smallest one; once it is here, your own photos need no further download."
   },
   "organize": {
    "toAlbum": "Export keepers to an album",
