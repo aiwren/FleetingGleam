@@ -39,9 +39,7 @@ import Viewer from "./Viewer";
 type ViewMode = "all" | State;
 type Phase = "idle" | "probing" | "ready" | "scanning" | "loading" | "done";
 type SortBy = "group" | "order" | "time" | "score";
-type Item = { path: string; ratio: number; photo?: Photo };
-
-const MAX_TILES = 100000; // the wall is windowed, so there is no need to cap it
+type Item = { path: string; ratio: number };
 
 function EditableTitle({ value, tip, onCommit }: { value: string; tip: string; onCommit: (v: string) => void }) {
   const [editing, setEditing] = useState(false);
@@ -557,15 +555,16 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     return ends;
   }, [shown, sortBy]);
 
-  // Tiles have their final size from the start: real aspect ratios come from the file headers, not from analysis.
-  const items: Item[] = useMemo(() => {
-    if (phase === "scanning") {
-      // 分析中按眼下的判定筛（"全部"是整个文件夹）
-      return files.slice(0, MAX_TILES).filter((f) => mode === "all" || live.current.get(f.path)?.state === mode).map((f) => ({ path: f.path, ratio: f.width / f.height, photo: results.current.get(f.path) }));
-    }
-    return shown.map((p) => ({ path: p.path, ratio: p.width / p.height, photo: p }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, files, shown, progress.done, mode, tick]);
+  // 分析中按眼下的判定筛（"全部"是整个文件夹）。判定每帧都可能变，可筛出来的还是同一批文件时沿用上一份，墙就不重排
+  const scanRaw = phase !== "scanning" ? null : mode === "all" ? files : files.filter((f) => live.current.get(f.path)?.state === mode);
+  const scanRef = useRef<ProbeFile[]>([]);
+  if (scanRaw && scanRef.current !== scanRaw && (scanRef.current.length !== scanRaw.length || scanRef.current.some((f, k) => f !== scanRaw[k]))) scanRef.current = scanRaw;
+  const scanList = scanRaw ? scanRef.current : null;
+  // 墙的静态部分：哪些格子、宽高比（来自文件头，分析前就有，格子从一开始就是最终大小）、组末间隙，只随文件集与筛选结果变。
+  // 动态部分（照片、进度）在渲染格子时从 ref 读，分析中每帧的 tick 只重画变了的格子，不再每帧重跑整面墙的排版（审查第 14 条）
+  const items: Item[] = useMemo(() => (scanList
+    ? scanList.map((f) => ({ path: f.path, ratio: f.width / f.height }))
+    : shown.map((p) => ({ path: p.path, ratio: p.width / p.height }))), [scanList, shown]);
   // 相似组的末尾多留 6px（M5.8：以前只加了类名没有样式）
   const wallItems = useMemo(() => items.map((it) => ({ key: it.path, ratio: it.ratio, gapAfter: groupEnds.has(it.path) })), [items, groupEnds]);
   const openViewer = useCallback((path: string) => {
@@ -908,14 +907,15 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
           {showWall && !(phase === "done" && sceneView) && !(phase === "done" && (layout === "single" || layout === "compare")) && (
             <Wall ref={wallRef} scrollRef={scrollRef} widthDelta={wallDelta} items={wallItems} selected={phase === "done" ? selected : null} layout={layout === "grid" ? "grid" : "justified"} render={(i, box) => {
               const it = items[i];
+              const photo = scanning ? results.current.get(it.path) : shown[i];
               // 分析中：照片一出结果就按眼下的判定盖章（后来的照片会改变分组和排名，分析完换成正式的）
-              const d = it.photo ? (phase === "scanning" ? live.current.get(it.path) : decisions.get(it.path)) : undefined;
-              const state = !it.photo ? "" : d?.state ?? "";
+              const d = photo ? (scanning ? live.current.get(it.path) : decisions.get(it.path)) : undefined;
+              const state = !photo ? "" : d?.state ?? "";
               return (
-                <Tile key={it.path} path={it.path} ratio={it.ratio} photo={it.photo} stage={stages.current.get(it.path)}
+                <Tile key={it.path} path={it.path} ratio={it.ratio} photo={photo} stage={stages.current.get(it.path)}
                   state={state} reveal={celebrate && phase === "done"} dim={state === "reject" && mode === "all"} stamp={scanning}
                   manual={!!d?.manual} groupEnd={groupEnds.has(it.path)} showScore={sortBy === "score"} index={i}
-                  interactive={phase === "done" && !!it.photo} box={box}
+                  interactive={phase === "done" && !!photo} box={box}
                   onSelect={tileSelect} onOpen={openViewer} onDecide={tileDecide} />
               );
             }} />
