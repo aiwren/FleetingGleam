@@ -124,6 +124,19 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
     catch (e) { const [code, scheme] = String(e).split(":"); setProxyErr(t(`settings.proxyBad.${code}`, { scheme, defaultValue: String(e) })); }
   };
   const proxyDesc = !proxy ? "" : proxy.manual ? t("settings.proxyManual", { url: proxy.manual }) : proxy.system ? t("settings.proxySystem", { url: proxy.system }) : t("settings.proxyDirect");
+  // NAS 副本：每台 NAS 的照片在本机镜像里占多少（不算在缩略图缓存里），可以按 NAS 清掉；分析结果保留
+  type MirrorUsage = { id: string; name: string; bytes: number };
+  const [mirrors, setMirrors] = useState<MirrorUsage[]>([]);
+  const [mirrorAsk, setMirrorAsk] = useState<MirrorUsage | null>(null);
+  const [mirrorMsg, setMirrorMsg] = useState<string | null>(null);
+  const refreshMirrors = () => invoke<MirrorUsage[]>("nas_mirror_usage").then((v) => setMirrors(Array.isArray(v) ? v : [])).catch(() => setMirrors([]));
+  useEffect(() => { if (active) { setMirrorMsg(null); void refreshMirrors(); } }, [active]);
+  const clearMirror = async (m: MirrorUsage) => {
+    setMirrorAsk(null);
+    try { const freed = await invoke<number>("nas_mirror_clear", { id: m.id }); setMirrorMsg(t("settings.mirrorCleared", { name: m.name, size: bytes(freed ?? 0) })); }
+    catch (e) { setMirrorMsg(errText(t, i18n.language, e)); }
+    void refreshMirrors();
+  };
   const clear = async () => {
     try { await invoke("clear_cache"); setCache(0); setCleared(true); bumpCacheRev(); } catch { /* ignore */ }
   };
@@ -305,6 +318,11 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
           <button className="btn danger" autoFocus onClick={resetPrefs}>{t("settings.learnResetAction")}</button></>)}>
         <p>{t("settings.learnResetBody", { labels: prefs?.labels ?? 0, refs: prefs?.refs ?? 0 })}</p>
       </Modal>
+      <Modal open={!!mirrorAsk} onClose={() => setMirrorAsk(null)} title={t("settings.mirrorClearTitle", { name: mirrorAsk?.name ?? "" })}
+        footer={(<><button className="btn" onClick={() => setMirrorAsk(null)}>{t("organize.cancel")}</button>
+          <button className="btn primary" autoFocus onClick={() => mirrorAsk && clearMirror(mirrorAsk)}>{t("settings.mirrorClearAction", { size: bytes(mirrorAsk?.bytes ?? 0) })}</button></>)}>
+        <p>{t("settings.mirrorClearBody")}</p>
+      </Modal>
       <Modal open={proxyOpen} onClose={() => setProxyOpen(false)} title={t("settings.proxy")}
         footer={(<>{proxy?.manual && <button className="btn" onClick={() => proxySave(null)}>{t("settings.proxyUseSystem")}</button>}
           <button className="btn" onClick={() => setProxyOpen(false)}>{t("settings.nasCancel")}</button>
@@ -467,6 +485,15 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
                 <span className="mono ash cachesize">{cache === null ? "—" : bytes(cache)}</span>
                 <button className="btn" onClick={clear} disabled={!cache}>{cleared ? t("settings.cleared") : t("settings.clear")}</button>
               </Row>
+              {mirrors.length > 0 && (
+                <div className="srow-wrap"><div className="srow"><div className="stext"><b>{t("settings.mirror")}</b><p className="ash">{mirrorMsg ?? t("settings.mirrorDesc")}</p></div></div></div>
+              )}
+              {mirrors.map((m) => (
+                <Row key={m.id} label={m.name}>
+                  <span className="mono ash cachesize">{m.bytes ? bytes(m.bytes) : "—"}</span>
+                  <button className="btn" disabled={!m.bytes} onClick={() => setMirrorAsk(m)}>{t("settings.mirrorClear")}</button>
+                </Row>
+              ))}
               <Row label={t("settings.privacy")} desc={t("settings.privacyBody")} />
             </Group>
 

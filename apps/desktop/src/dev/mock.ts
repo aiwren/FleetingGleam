@@ -175,6 +175,7 @@ async function scan(dirs: string[], quiet: boolean, live?: { keep_ratio?: number
 
 let dialogCalls = 0;
 let dlCancel = false;
+const mirrorBytes: Record<string, number> = {};
 let labels = 0, keeps = 0;
 /** The same shape prefs.rs sends: counts, whether the taste is in use, and the marks on the way to its full say. */
 const prefsOf = (labels: number, keeps: number, refs = 0, refs_from = "") => {
@@ -262,6 +263,9 @@ w.__TAURI_INTERNALS__ = {
       case "backup_now": await sleep(900); mockBackup.targets.forEach((x) => { x.last_ok = Math.floor(Date.now() / 1000); x.last_error = null; }); return bkSync();
       case "backup_restore": await sleep(900); return [{ styles: 2, examples: 40, refs: 10, skipped: 0 }, { theme: "system" }];
       case "nas_probe": { await sleep(600); if (String(args.host).includes("bad")) throw "the server cannot be reached"; return ["photos", "backup", "media"]; }
+      // NAS 副本（第 31 条）：Home NAS 的镜像占 12.4 GB，清掉就是 0
+      case "nas_mirror_usage": return mockShares.map((s) => ({ id: s.id, name: s.name, bytes: mirrorBytes[s.id] ?? 12_400_000_000 }));
+      case "nas_mirror_clear": { const freed = mirrorBytes[String(args.id)] ?? 12_400_000_000; mirrorBytes[String(args.id)] = 0; await sleep(400); return freed; }
       case "nas_browse": {
         // 假的共享：根下两个年份文件夹，每个里面有几张照片
         await sleep(300);
