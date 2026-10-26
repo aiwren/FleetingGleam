@@ -260,6 +260,9 @@ const zh = {
     aboutPrivacy: "隐私政策", aboutTerms: "使用条款",
     aboutIssues: "反馈问题", aboutIssuesDesc: "在 GitHub 上提交 bug 或建议",
     aboutVersion: "版本",
+    diag: "导出诊断信息", diagDesc: "遇到问题想反馈时，生成一个本地文件附上；发不发由你决定。", diagBtn: "导出…", diagBusy: "正在生成…",
+    diagInfo: "文件里有应用版本、系统信息、设置（已去掉密码、令牌和 NAS 地址里的用户名）、最近的运行日志和崩溃记录；不含照片本身，但日志里可能有照片的文件路径。只写到你选的位置，不会自动上传，发之前可以先打开看看。",
+    diagDone: "已写到 {{path}}", diagFailed: "没有生成：{{error}}",
     models: "本地模型", modelsBody: "分析所用的模型随应用放在本机，全程离线运行；在 macOS 上另外使用系统自带的图像美学与人脸质量评估。",
   },
   nav2: {

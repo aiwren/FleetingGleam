@@ -294,6 +294,18 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
     if (!ok) setRefFailed(true);
     else invoke<PrefsInfo>("prefs_info").then(setPrefs).catch(() => {});
   };
+  // 诊断信息：版本、系统、去掉密码与令牌的设置、最近的日志和崩溃记录，写成一个本地文本文件，发不发由用户自己决定
+  const [diagBusy, setDiagBusy] = useState(false);
+  const [diagMsg, setDiagMsg] = useState<{ text: string; path?: string } | null>(null);
+  const exportDiagnostics = async () => {
+    const stamp = new Date().toISOString().slice(0, 10);
+    const out = await save({ defaultPath: `fleetinggleam-diagnostics-${stamp}.txt`, filters: [{ name: "Text", extensions: ["txt"] }] });
+    if (!out) return;
+    setDiagBusy(true); setDiagMsg(null);
+    try { const path = await invoke<string>("diagnostics_export", { out }); setDiagMsg({ text: t("settings.diagDone", { path: path || out }), path: path || out }); }
+    catch (e) { setDiagMsg({ text: t("settings.diagFailed", { error: errText(t, i18n.language, e) }) }); }
+    setDiagBusy(false);
+  };
   const clipLabel = !info ? "—" : info.clip === null ? t("settings.off") : info.clip.startsWith("gpu") || info.clip.startsWith("coreml") ? t("settings.clipGpu") : t("settings.clipCpu");
   const learnStatus = !prefs || prefs.labels === 0 ? t("settings.learnNone") : t("settings.learnStatus", { n: prefs.labels, k: prefs.keeps });
 
@@ -577,6 +589,12 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
               })()}
               <Row label={t("settings.aboutVersion")}>
                 <span className="mono ash">{version ? `v${version} (${__BUILD__})` : ""}</span>
+              </Row>
+              <Row label={t("settings.diag")} desc={diagMsg?.text ?? t("settings.diagDesc")} info={<p className="ash">{t("settings.diagInfo")}</p>}>
+                <span className="sctl-pair">
+                  {diagMsg?.path && <button className="btn" onClick={() => invoke("reveal", { path: diagMsg.path }).catch(() => {})}>{t("organize.showInFinder")}</button>}
+                  <button className="btn" disabled={diagBusy} onClick={exportDiagnostics}>{diagBusy ? t("settings.diagBusy") : t("settings.diagBtn")}</button>
+                </span>
               </Row>
             </Group>
           </motion.div>

@@ -262,6 +262,9 @@ const en = {
     aboutPrivacy: "Privacy policy", aboutTerms: "Terms of use",
     aboutIssues: "Report a problem", aboutIssuesDesc: "File a bug or suggestion on GitHub",
     aboutVersion: "Version",
+    diag: "Export diagnostics", diagDesc: "When reporting a problem, make a local file to attach; whether to send it is up to you.", diagBtn: "Export…", diagBusy: "Writing…",
+    diagInfo: "The file holds the app version, system details, the settings (without passwords, tokens or user names in NAS addresses), the recent log and any crash reports; no photos, though the log may mention photo file paths. It is written only where you choose and never uploaded, so you can read it before sending.",
+    diagDone: "Written to {{path}}", diagFailed: "Not written: {{error}}",
     models: "On-device models", modelsBody: "The models used for analysis ship with the app and run entirely offline. On macOS the system's own image aesthetics and face-quality checks are used as well.",
   },
   nav2: {

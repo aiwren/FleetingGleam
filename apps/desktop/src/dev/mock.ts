@@ -413,6 +413,9 @@ w.__TAURI_INTERNALS__ = {
         return { system: "http://127.0.0.1:7890", manual: localStorage.getItem("fg.mock.proxy"), active: localStorage.getItem("fg.mock.proxy") ?? "http://127.0.0.1:7890" };
       }
       case "samples_folder": return "/mock/Samples";
+      case "plugin:dialog|save": return "/Users/me/Desktop/fleetinggleam-diagnostics.txt";
+      case "diagnostics_export": await sleep(500); return String(args.out);
+      case "diagnostics_dir": return "/Users/me/Library/Application Support/com.fleetinggleam.app/logs";
       case "set_locale": return null;
       case "cache_size": return 48_300_000;
       case "clear_cache": return null;
