@@ -2336,6 +2336,8 @@ impl Engine {
         if refs.len() < 6 {
             return Err("at least 6 readable photos are needed to learn from a folder".to_string());
         }
+        // 参考照片用的就是界面当前的分析档：它的向量长度就是当前模型的维度
+        self.model_dim.store(refs[0].emb.len(), Ordering::Relaxed);
         let mut styles = self.prefs.lock().unwrap_or_else(|e| e.into_inner());
         {
             let p = &mut styles.get_mut(style).prefs;
