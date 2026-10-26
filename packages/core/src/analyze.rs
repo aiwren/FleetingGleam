@@ -359,8 +359,9 @@ fn huge_photo_permit(path: &Path) -> HugePermit {
 /// The photo upright, no larger than about `max` on its long side where the decoder can do that cheaply, and its true displayed size.
 /// JPEG / PNG / WebP are decoded in full by the `image` crate; everything else (HEIC, RAW...) by the system decoder, at `max`.
 fn load_with_size(path: &Path, max: u32) -> Result<(DynamicImage, u32, u32), String> {
-    // 系统解码器能直接解到内存（macOS 常驻的 ImageIO 边车）就先走它：按需缩放解码、像素经管道回来，比进程内整张解出来再缩快好几倍，
-    // 也是分析线程原来睡得最多的一段（大块像素缓冲的分配与缺页）。它解不了的照片再按下面的路子来。
+    // 系统解码器能直接解到内存（macOS 常驻的 ImageIO 边车、Android 的 BitmapFactory）就先走它：按需缩放解码、像素直接回来，
+    // 比进程内整张解出来再缩快好几倍，也是分析线程原来睡得最多的一段（大块像素缓冲的分配与缺页）；Android 上还省掉每张一次
+    // JPEG 压缩、写盘、再解回来。它解不了的照片再按下面的路子来。
     if let Some(r) = crate::platform::images().and_then(|s| s.decode(path, max)) {
         return Ok(r);
     }

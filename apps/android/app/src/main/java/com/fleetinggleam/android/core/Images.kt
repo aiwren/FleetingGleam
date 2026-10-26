@@ -8,7 +8,9 @@ import android.graphics.Rect
 import android.os.Build
 import androidx.exifinterface.media.ExifInterface
 import uniffi.fleetinggleam.ImageHelper
+import uniffi.fleetinggleam.Pixels
 import java.io.File
+import java.nio.ByteBuffer
 import kotlin.math.roundToInt
 
 /**
@@ -49,6 +51,31 @@ object AndroidImages : ImageHelper {
         save(bm, out, 88)
         ""
     }.getOrElse { it.toString() }
+
+    /**
+     * 分析用的解码：直接把像素交给核心库（RGBA，ARGB_8888 位图在内存里的原样），不再压 JPEG 写盘、让核心库再解一遍。
+     * 文件头只读一次，原图的显示尺寸跟着像素一起回去（核心库不用再问 `info`）。解不了给 null，核心库退回 `render`。
+     */
+    override fun decode(path: String, max: UInt): Pixels? = runCatching {
+        val b = bounds(path)
+        if (b.outWidth <= 0 || b.outHeight <= 0) return null
+        val rot = rotationOf(path)
+        val opts = BitmapFactory.Options().apply { inSampleSize = sampleFor(maxOf(b.outWidth, b.outHeight), max.toInt()); inPreferredConfig = Bitmap.Config.ARGB_8888 }
+        var bm = BitmapFactory.decodeFile(path, opts) ?: return null
+        bm = shrink(upright(bm, rot), max.toInt())
+        // 16 位的（广色域 PNG、HDR 的 HEIC）解码器可能不听 inPreferredConfig：转成 8 位再拷
+        if (bm.config != Bitmap.Config.ARGB_8888) bm = bm.copy(Bitmap.Config.ARGB_8888, false).also { bm.recycle() } ?: return null
+        try {
+            // 行尾有填充的位图不是紧排的 w*h*4，交回去核心库会读错：让它走老路
+            if (bm.rowBytes != bm.width * 4) return null
+            val rgba = ByteArray(bm.width * bm.height * 4)
+            bm.copyPixelsToBuffer(ByteBuffer.wrap(rgba))
+            val (fw, fh) = if (rot % 180 == 90) b.outHeight to b.outWidth else b.outWidth to b.outHeight
+            Pixels(bm.width.toUInt(), bm.height.toUInt(), fw.toUInt(), fh.toUInt(), rgba)
+        } finally {
+            bm.recycle()
+        }
+    }.getOrNull()
 
     override fun crop(path: String, out: String, x: Double, y: Double, w: Double, h: Double, outW: UInt): String = runCatching {
         val rot = rotationOf(path)

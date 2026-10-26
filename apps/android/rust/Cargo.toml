@@ -19,6 +19,7 @@ path = "src/bin/uniffi-bindgen.rs"
 fleetinggleam-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+image.workspace = true
 base64 = "0.22"
 uniffi = { version = "0.32", features = ["cli"] }
 
@@ -26,6 +27,3 @@ uniffi = { version = "0.32", features = ["cli"] }
 # 打进应用。在 Mac 上跑这个 crate 的单元测试时仍是静态链接的 ONNX Runtime
 [target.'cfg(target_os = "android")'.dependencies]
 fleetinggleam-core = { workspace = true, features = ["qnn"] }
-
-[dev-dependencies]
-image.workspace = true

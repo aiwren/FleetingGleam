@@ -36,7 +36,8 @@ pub trait SystemImages: Send + Sync {
         false
     }
     /// 直接解到内存：照片摆正、缩到长边不超过 `max`、SDR 的像素，连同原图的显示尺寸（宽、高）。有这条路的实现（macOS 常驻的
-    /// ImageIO 边车：JPEG 在 DCT 域缩放，比整张解出来再缩快好几倍）分析优先走它；默认没有（None），调用方按老路子解。
+    /// ImageIO 边车：JPEG 在 DCT 域缩放，比整张解出来再缩快好几倍；Android 的 BitmapFactory：按 2 的幂跳着解，像素经 UniFFI 回来，
+    /// 不再压一张 JPEG 写盘再解回来）分析优先走它；默认没有（None），调用方按老路子解。
     /// 解不了这张（格式不认、文件坏了）也是 None，调用方会再试别的路。
     fn decode(&self, _src: &Path, _max: u32) -> Option<(DynamicImage, u32, u32)> {
         None
