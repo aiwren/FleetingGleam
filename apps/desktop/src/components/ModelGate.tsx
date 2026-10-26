@@ -3,6 +3,7 @@ import { cancelGate, hideGate, startDownload, useGate } from "../models";
 import Modal from "./Modal";
 
 import { fmtBytes } from "../format";
+import { errDetail, errKind, errText } from "../errors";
 
 /**
  * The one dialog for downloading models: says what and how big, shows progress, can be cancelled at any moment.
@@ -34,7 +35,9 @@ export default function ModelGate() {
           <p className="mono ash">{fmtBytes(i18n.language, g.done)} / {fmtBytes(i18n.language, g.total)} · {pct}%</p>
         </div>
       )}
-      {g?.phase === "error" && <p className="ash">{t("models.error")} <span className="mono">{g.error}</span></p>}
+      {/* 按核心的错误前缀说清楚是空间、校验还是网络，不再一律"检查网络"；细节小字放在下面 */}
+      {g?.phase === "error" && <p>{errKind(g.error) === "other" ? t("models.error") : errText(t, i18n.language, g.error)}</p>}
+      {g?.phase === "error" && errDetail(g.error) && <p className="ash small"><span>{t("errors.detail")}</span><span className="mono">{errDetail(g.error)}</span></p>}
     </Modal>
   );
 }
