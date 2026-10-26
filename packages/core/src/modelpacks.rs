@@ -38,6 +38,20 @@ pub fn pack(id: &str) -> Option<&'static Pack> {
     PACKS.iter().find(|p| p.id == id)
 }
 
+/// 一组里一台设备只用一份的文件：standard 包的 CLIP B/32 有 fp16 和 int8 两份（176 MB + 89 MB），以前两份都下。
+/// 用哪份看平台（`scorer::b32_file_for_device`）：有加速器的（Mac 的 CoreML / Metal、Android 的 QNN，QNN 起不来时 CPU 上也是跑 fp16）
+/// 用 fp16，没有加速器的用 int8。已经两份都在的老安装不动；装了另一份的也算装好（`scorer` 两份都会用）。
+const ONE_OF: [&[&str]; 1] = [&[crate::scorer::B32_FP16_FILE, crate::scorer::INT8_FILE]];
+
+fn group_of(f: &str) -> Option<&'static [&'static str]> {
+    ONE_OF.iter().copied().find(|g| g.contains(&f))
+}
+
+/// 这台设备要的那份：不在任何一组里的都要；组里只要这台设备用的那份。
+fn wanted_here(f: &str) -> bool {
+    group_of(f).map_or(true, |_| f == crate::scorer::b32_file_for_device())
+}
+
 #[derive(Serialize)]
 pub struct PackStatus {
     pub id: String,
@@ -50,7 +64,10 @@ pub struct PackStatus {
 }
 
 pub fn installed(dir: &Path, p: &Pack) -> bool {
-    p.files.iter().all(|f| modelfiles::has_model(dir, f))
+    p.files.iter().all(|f| match group_of(f) {
+        Some(g) => g.iter().any(|x| modelfiles::has_model(dir, x)),
+        None => modelfiles::has_model(dir, f),
+    })
 }
 
 /// 整包都随应用带着。
@@ -100,7 +117,8 @@ fn missing<'a>(dir: &Path, p: &'a Pack) -> Result<Vec<(&'a str, &'static FileInf
     let m = manifest();
     p.files
         .iter()
-        .filter(|f| !modelfiles::has_model(dir, f))
+        .filter(|f| wanted_here(f) && !modelfiles::has_model(dir, f))
+        .filter(|f| group_of(f).map_or(true, |g| !g.iter().any(|x| modelfiles::has_model(dir, x))))
         .map(|f| {
             let info = m.get(*f).ok_or_else(|| format!("{f} is not in the model list"))?;
             let url = info.url.as_deref().ok_or_else(|| format!("{f} has no download address"))?;
@@ -109,7 +127,7 @@ fn missing<'a>(dir: &Path, p: &'a Pack) -> Result<Vec<(&'a str, &'static FileInf
         .collect()
 }
 
-/// How many bytes downloading this pack would take (what is already in `dir` is not counted).
+/// How many bytes downloading this pack would take on this device (what is already in `dir` is not counted).
 pub fn manifest_sizes(dir: &Path, id: &str) -> Result<u64, String> {
     let p = pack(id).ok_or("unknown pack")?;
     Ok(missing(dir, p)?.iter().map(|(_, i, _)| i.size).sum())
@@ -217,6 +235,26 @@ mod tests {
         }
         assert_eq!(manifest_sizes(&dir, "search").unwrap(), 0);
         assert!(installed(&dir, pack("search").unwrap()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// standard 包这台设备只下 B/32 的一份；另一份已经在（老安装、或别的平台拷来的）也算装好。
+    #[test]
+    fn the_standard_pack_wants_one_b32_file_per_device() {
+        let m = manifest();
+        let nowhere = Path::new("/nonexistent-model-dir");
+        let here = crate::scorer::b32_file_for_device();
+        let head = "aesthetic_head_vit_b_32.json";
+        let want = m[here].size + if modelfiles::has_model(nowhere, head) { 0 } else { m[head].size };
+        assert_eq!(manifest_sizes(nowhere, "standard").unwrap(), want);
+        let other = if here == crate::scorer::INT8_FILE { crate::scorer::B32_FP16_FILE } else { crate::scorer::INT8_FILE };
+        let dir = std::env::temp_dir().join(format!("fg-packs-one-of-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(other), b"x").unwrap();
+        std::fs::write(dir.join(head), b"x").unwrap();
+        assert!(installed(&dir, pack("standard").unwrap()), "另一份在也能用");
+        assert_eq!(manifest_sizes(&dir, "standard").unwrap(), 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -57,8 +57,14 @@ impl Quality {
     }
 }
 
-const INT8_FILE: &str = "clip_vit_b32_vision_int8.onnx";
-const B32_FP16_FILE: &str = "clip_vit_b32_vision_fp16.onnx";
+pub const INT8_FILE: &str = "clip_vit_b32_vision_int8.onnx";
+pub const B32_FP16_FILE: &str = "clip_vit_b32_vision_fp16.onnx";
+
+/// 这台设备的 B/32 用哪份（standard 包只下这一份）：有加速器的平台（Mac 的 CoreML / Metal、Android 的 QNN；QNN 起不来时
+/// Android 在 CPU 上跑的也是 fp16）用 fp16，没有的用 int8。
+pub fn b32_file_for_device() -> &'static str {
+    if crate::onnx::has_accelerator() { B32_FP16_FILE } else { INT8_FILE }
+}
 const B32_HEAD: &str = "aesthetic_head_vit_b_32.json";
 const L14_FP16_FILE: &str = "clip_vit_l14_vision_fp16.onnx";
 const L14_HEAD: &str = "aesthetic_head_vit_l_14.json";
@@ -347,7 +353,9 @@ impl ClipScorer {
         let (file, head_file, backend, model) = match q {
             Quality::High => (L14_FP16_FILE, L14_HEAD, "cpu-fp16", "ViT-L/14"),
             Quality::Fast | Quality::Ultra => {
-                if accel && modelfiles::has_model(model_dir, B32_FP16_FILE) { (B32_FP16_FILE, B32_HEAD, "cpu-fp16", "ViT-B/32") } else { (INT8_FILE, B32_HEAD, "cpu-int8", "ViT-B/32") }
+                // 有加速器用 fp16；只用 CPU 时 int8 更快，但这台设备只下了 fp16 那份（standard 包按平台只下一份）就也用它
+                let fp16 = modelfiles::has_model(model_dir, B32_FP16_FILE) && (accel || !modelfiles::has_model(model_dir, INT8_FILE));
+                if fp16 { (B32_FP16_FILE, B32_HEAD, "cpu-fp16", "ViT-B/32") } else { (INT8_FILE, B32_HEAD, "cpu-int8", "ViT-B/32") }
             }
         };
         // 模型文件不在（这台机器没下载这个档）就直接说，不去试加速器、不建会话：搜索索引和场景命名在只装了高质量档的手机上
@@ -360,7 +368,7 @@ impl ClipScorer {
         let threads = (std::thread::available_parallelism().map(|c| c.get()).unwrap_or(4) / n).max(2);
         let spec = CpuSpec { dir: model_dir.to_path_buf(), file, copies: n, threads };
         // only the float16 models are built for the GPU (the int8 one is a quantised graph of another kind)
-        let gpu = if backend == "cpu-fp16" { gpu_encoder(model_dir, file, &spec) } else { None };
+        let gpu = if accel && backend == "cpu-fp16" { gpu_encoder(model_dir, file, &spec) } else { None };
         let cpu = std::sync::OnceLock::new();
         let mut backend = backend;
         if gpu.is_none() {
