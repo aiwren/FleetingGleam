@@ -633,8 +633,8 @@ impl Engine {
                             c.put(sz, mt, &tag, p);
                         }
                     }
-                    c.save();
-                });
+                    c.save()
+                }).write();
             }
         }
 
@@ -684,8 +684,8 @@ impl Engine {
                             c.put(sz, mt, &tag, p);
                         }
                     }
-                    c.save();
-                });
+                    c.save()
+                }).write();
             };
             // 自己的线程池（比核数多一半，见 `scan_threads`）；建不出来就用公共的
             let pool = rayon::ThreadPoolBuilder::new().num_threads(scan_threads()).build().ok();
@@ -729,13 +729,13 @@ impl Engine {
                         self.emit("scan-progress", &Progress { done: d, total });
                     }
                     if let Ok(photo) = &r {
-                        // a batch is written once there are 100 and half a minute has passed (writing the file takes longer the bigger the
-                        // project), and in any case once a minute: a small project, or a slow format, must not lose everything on a quit
+                        // 攒够 25 张或过了 10 秒就落一批：落盘现在只是往日志末尾追加这几条（见 cache.rs），不再随项目变大而变慢，
+                        // 所以可以勤一点，中途退出丢得少
                         let batch = {
                             let mut g = pending.lock().unwrap_or_else(|e| e.into_inner());
                             g.0.push(photo.clone());
                             let age = g.1.elapsed();
-                            if (g.0.len() >= 100 && age >= std::time::Duration::from_secs(30)) || age >= std::time::Duration::from_secs(60) {
+                            if g.0.len() >= 25 || age >= std::time::Duration::from_secs(10) {
                                 g.1 = std::time::Instant::now();
                                 Some(std::mem::take(&mut g.0))
                             } else {
@@ -798,8 +798,8 @@ impl Engine {
                                 c.put(sz, mt, &tag, &hits[*i]);
                             }
                         }
-                        c.save();
-                    });
+                        c.save()
+                    }).write();
                 }
             }
         }
@@ -834,8 +834,8 @@ impl Engine {
                                     c.put(sz, mt, &tag, &hits[*i]);
                                 }
                             }
-                            c.save();
-                        });
+                            c.save()
+                        }).write();
                     }
                 }
             }
@@ -869,8 +869,8 @@ impl Engine {
                             c.put(sz, mt, &tag, &hits[*i]);
                         }
                     }
-                    c.save();
-                });
+                    c.save()
+                }).write();
             }
         }
         if cancelled() {
@@ -974,9 +974,11 @@ impl Engine {
                 analyze::apply_rotation(p, deg, &cache_dir)?;
                 p.clone()
             };
-            c.save();
-            Ok::<Photo, String>(out)
+            // 只追加这一条到日志，在锁外写
+            Ok::<(Photo, cache::Pending), String>((out, c.save()))
         })?;
+        let (p, pending) = p;
+        pending.write();
         let mut last = self.last_photos.lock().unwrap_or_else(|e| e.into_inner());
         for (_, list) in last.iter_mut() {
             if let Some(q) = list.iter_mut().find(|q| q.path == path) {
@@ -1697,7 +1699,7 @@ impl Engine {
             done += chunk.len();
             self.emit("search-index-progress", &Progress { done, total });
         }
-        self.with_cache(|c| c.save());
+        self.with_cache(|c| c.save()).write();
         Ok(total)
     }
 
@@ -1872,13 +1874,11 @@ impl Engine {
     /// 清晰块和实况片段。`keep` 是还在的项目（含回收站里的）的文件夹，那里面的照片不动。返回忘掉了几张。
     /// （作者 2026-10-23：删了项目、清空回收站，再用同一个相册建项目，结果还是直接出来——分析结果是按照片存的、不跟项目走。）
     pub fn forget_folders(&self, dirs: &[String], keep: &[String]) -> usize {
-        let gone = self.with_cache(|c| {
+        let (gone, pending) = self.with_cache(|c| {
             let g = c.forget_under(dirs, keep);
-            if !g.is_empty() {
-                c.save();
-            }
-            g
+            (g, c.save())
         });
+        pending.write();
         if gone.is_empty() {
             return 0;
         }
