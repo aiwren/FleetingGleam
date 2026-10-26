@@ -2,7 +2,7 @@ import { PrefsInfo, bumpPrefsRevision, learnFromFolder, refreshStyles } from "..
 import LearnMeter from "../components/LearnMeter";
 import { fmtBytes } from "../format";
 import { pickLocalFolder, baseName } from "../projectActions";
-import { ensurePack, ensurePacks, removePack, usePacks } from "../models";
+import { ensurePack, ensurePacks, removePack, showGate, useGate, usePacks } from "../models";
 import { adopt, release, tierPacks } from "../strategy";
 import RowMenu from "../components/RowMenu";
 import { ReactNode, useEffect, useRef, useState } from "react";
@@ -129,6 +129,10 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
   };
 
   const packs = usePacks();
+  // 正在下的那个包（可能已转到后台）：它那一行显示百分比，点一下把下载对话框叫回来
+  const gate = useGate();
+  const downloading = gate?.phase === "downloading" ? (gate.ids ?? [gate.id]) : [];
+  const gatePct = gate?.total ? Math.min(100, Math.round((gate.done / gate.total) * 100)) : 0;
   // network shares the app connects to itself: added here, then a project is started straight from the share
   const shares = useShares();
   const [nasOpen, setNasOpen] = useState(false);
@@ -433,7 +437,9 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
               </div>
               {packs.map((p) => (
                 <Row key={p.id} label={t(`models.name.${p.id}`)} desc={`${p.bundled ? t("models.bundled") : p.installed ? t("models.have") : t("models.none")} · ${t(`models.desc.${p.id}`)}`}>
-                  {p.bundled ? null : p.installed
+                  {p.bundled ? null : downloading.includes(p.id)
+                    ? <button className="btn mono" onClick={showGate}>{gatePct}%</button>
+                    : p.installed
                     ? <button className="btn" onClick={async () => { await removePack(p.id); release(p.id); }}>{t("models.remove")}</button>
                     : <button className="btn" onClick={async () => { if ((await ensurePack(p.id)) !== "cancelled") adopt(p.id); }}>{t("models.get")}</button>}
                 </Row>

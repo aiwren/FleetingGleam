@@ -170,6 +170,7 @@ async function scan(dirs: string[], quiet: boolean, live?: { keep_ratio?: number
 }
 
 let dialogCalls = 0;
+let dlCancel = false;
 let labels = 0, keeps = 0;
 /** The same shape prefs.rs sends: counts, whether the taste is in use, and the marks on the way to its full say. */
 const prefsOf = (labels: number, keeps: number, refs = 0, refs_from = "") => {
@@ -316,11 +317,19 @@ w.__TAURI_INTERNALS__ = {
       case "packs_status": return (["standard", "high", "ultra", "search", "eyes", "faces", "scenetext"] as const).map((id) => ({ id, installed: packState[id], bytes: 0 }));
       case "pack_size": return { standard: 266_000_000, high: 609_000_000, ultra: 870_000_000, search: 139_000_000, eyes: 7_000_000, faces: 39_000_000, scenetext: 400_000_000 }[String(args.id) as "standard"];
       case "pack_download": {
-        for (let i = 1; i <= 10; i++) { await sleep(150); emit("model-progress", { pack: args.id, file: "x", done: i * 60_900_000, total: 609_000_000 }); }
+        // 约 8 秒下完，可以取消；`window.__mockDlErr = "space:300000000:120000000"`（或 verify: / net:）让它在半路按约定的错误码失败
+        dlCancel = false;
+        for (let i = 1; i <= 40; i++) {
+          await sleep(200);
+          if (dlCancel) throw "cancelled";
+          const err = (window as unknown as { __mockDlErr?: string }).__mockDlErr;
+          if (err && i === (err.startsWith("space:") ? 1 : 20)) throw err;
+          emit("model-progress", { pack: args.id, file: "x", done: i * 15_225_000, total: 609_000_000 });
+        }
         packState[String(args.id) as "standard"] = true;
         return null;
       }
-      case "pack_cancel": return null;
+      case "pack_cancel": dlCancel = true; return null;
       case "pack_remove": packState[String(args.id) as "standard"] = false; return null;
       // Real Tauri IPC always hands back a freshly JSON-deserialized array, so `useSyncExternalStore`'s
       // reference check sees a change on every call; mutating mockStyles in place and returning it directly

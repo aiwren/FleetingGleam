@@ -394,6 +394,9 @@ input[type=range]::-webkit-slider-thumb { appearance: none; width: 14px; height:
 .nav-bottom { list-style: none; padding: 0; margin: auto 0 0; }
 .nav-bottom + .privacy { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
 .sidebar li kbd { margin-left: auto; }
+/* 转到后台的模型下载（DownloadNav） */
+.nav-dl { margin-top: 6px; }
+.nav-dl .nav-text { font-variant-numeric: tabular-nums; }
 
 /* ---------- settings page ---------- */
 .settings-layout { display: flex; justify-content: center; gap: 32px; width: 80%; min-width: 640px; max-width: 1400px; margin: 0 auto; }

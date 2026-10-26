@@ -1,4 +1,5 @@
 import ModelGate from "./components/ModelGate";
+import DownloadNav from "./components/DownloadNav";
 import FolderPicker from "./components/FolderPicker";
 import { ReactNode, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
@@ -105,6 +106,7 @@ export default function App() {
                 </li>
               ))}
             </ul>
+            <DownloadNav />
             <p className="privacy">{t("nav.privacy")}</p>
             <ul className="nav-bottom">
               <li>
