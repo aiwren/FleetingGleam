@@ -48,6 +48,8 @@ object Session {
     /** 出错时的文案键或消息（"cull.emptyFolder"、"cull.nasOffline"……）。 */
     val error = MutableStateFlow<String?>(null)
     val nasOff = MutableStateFlow("")
+    /** 读权限失效的那个系统文件夹镜像（`cull.safExpired` 时界面拿它去"重新授权"）。 */
+    @Volatile var expired: Media.Mirror? = null; private set
     val etaSeconds = MutableStateFlow<Int?>(null)
     /** 开始分析前给确认页用的快速缩略图。 */
     val previews = MutableStateFlow<Map<String, String>>(emptyMap())
@@ -218,10 +220,21 @@ object Session {
                     phase.value = Phase.Ready
                     prepareReady(tok)
                 } else runScan(project, probe.files.size, quiet = true, tok = tok)
+            } catch (e: Media.SafExpired) {
+                // 系统文件夹的读权限没了：和 NAS 连不上一样停在这里，给"重新授权"（镜像里的照片一张没动）
+                if (tok == token) { photos.value = emptyList(); files.value = emptyList(); phase.value = Phase.Idle; expired = e.mirror; nasOff.value = e.mirror.name; error.value = e.message }
             } catch (e: Exception) {
                 if (tok == token && e.message != "cancelled") { error.value = e.message; phase.value = Phase.Idle }
             }
         }
+    }
+
+    /** 重新授权失效的那个文件夹：用户在系统选择器里选的是原来那个就重新进项目，返回 true；选错了返回 false。 */
+    suspend fun reauthorize(uri: android.net.Uri): Boolean {
+        val m = expired ?: return false
+        val ok = kotlinx.coroutines.withContext(Dispatchers.IO) { Media.reauthorize(app, m, uri) }
+        if (ok) { expired = null; enter() }
+        return ok
     }
 
     /** 确认页：预计要多久（应用会用的模型、这台手机的核数），和前几张照片的快速缩略图。 */

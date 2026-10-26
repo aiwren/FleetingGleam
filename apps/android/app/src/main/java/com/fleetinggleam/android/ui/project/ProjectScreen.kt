@@ -115,7 +115,7 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
     Box(Modifier.fillMaxSize().then(if (glassOn) Modifier.layerBackdrop(backdrop) else Modifier)) {
         Column(Modifier.fillMaxSize()) {
             val msgs = buildList {
-                if (error != null && error != "cull.nasOffline" && error != "cull.nasDisabled") add(t(error!!).let { if (it == error) error!! else it })
+                if (error != null && error != "cull.nasOffline" && error != "cull.nasDisabled" && error != "cull.safExpired") add(t(error!!).let { if (it == error) error!! else it })
                 if (status.saveError != null) add(t("cull.saveFailed", "error" to status.saveError))
             }
             val plainTop = phase != Phase.Scanning && phase != Phase.Done
@@ -124,6 +124,16 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
             if (error == "cull.nasOffline" || error == "cull.nasDisabled") Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(t(error!!, "name" to nasOff), style = Type.small.copy(color = c.ink), modifier = Modifier.weight(1f))
                 FgButton(t("cull.nasRetry"), { Session.reload() }, small = true)
+            }
+            // 系统文件夹的读权限失效：重新在系统选择器里选一次原来那个文件夹
+            if (error == "cull.safExpired") Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(t("cull.safExpired", "name" to nasOff), style = Type.small.copy(color = c.ink), modifier = Modifier.weight(1f))
+                FgButton(t("cull.safReauth"), {
+                    scope.launch {
+                        val uri = Pickers.openTree() ?: return@launch
+                        if (!Session.reauthorize(uri)) com.fleetinggleam.android.ui.components.Toasts.show(t("cull.safWrongFolder", "name" to nasOff))
+                    }
+                }, small = true)
             }
             // 读取中：居中一行灰字（设计审查 A5 附注）
             if (phase == Phase.Probing || phase == Phase.Loading) {

@@ -108,7 +108,7 @@ object Media {
         // 读写都要：淘汰的照片在原处移进回收文件夹（拿不到写权限就只读，回收时会说没能移动）
         runCatching { ctx.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
             .onFailure { runCatching { ctx.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } }
-        val id = MessageDigest.getInstance("SHA-1").digest(uri.toString().toByteArray()).joinToString("") { "%02x".format(it) }.take(12)
+        val id = idOf(uri)
         val name = DocumentFile.fromTreeUri(ctx, uri)?.name ?: id
         val list = mirrors(ctx).filter { it.id != id } + Mirror(id, uri.toString(), name)
         saveMirrors(ctx, list)
@@ -117,30 +117,64 @@ object Media {
         return dir.absolutePath
     }
 
+    /** 镜像编号：由原处文件夹的 uri 算出，同一个文件夹重新选一次编号不变。 */
+    private fun idOf(uri: Uri): String = MessageDigest.getInstance("SHA-1").digest(uri.toString().toByteArray()).joinToString("") { "%02x".format(it) }.take(12)
+
+    /** 原处文件夹的读权限没了（系统收回、清了应用数据）：界面认 `cull.safExpired`，给"重新授权"。镜像里已有的照片不动。 */
+    class SafExpired(val mirror: Mirror) : Exception("cull.safExpired")
+
+    /** 这个文件夹的持久读权限还在不在。 */
+    private fun granted(ctx: Context, uri: Uri): Boolean = ctx.contentResolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission }
+
+    /** 重新授权：用户在系统选择器里重新选了原来那个文件夹，重新拿持久权限。选的不是它（编号对不上）返回 false。 */
+    fun reauthorize(ctx: Context, m: Mirror, uri: Uri): Boolean {
+        if (idOf(uri) != m.id) return false
+        adoptTree(ctx, uri)
+        return granted(ctx, uri)
+    }
+
     private val IMAGE_EXT = setOf("jpg", "jpeg", "jpe", "png", "webp")
 
     /**
      * 项目文件夹里落在镜像上的，先从原处同步：拉新增或变了的照片（按大小 + 修改时间比），删掉原处已没有的。进度经 `onProgress(done, total, name)` 报出。
      * `cancelled()` 为真就停。没有镜像的文件夹什么都不做。
+     *
+     * 列举失败绝不能当成"原处空了"：`DocumentFile.listFiles()` 在权限被收回、网盘离线时吞掉异常返回空数组，照着删会把镜像整个清空。所以
+     * 先核对持久权限（没了抛 [SafExpired]）；某一层列出来是空的、镜像里对应那层却有照片，就当这一层没列出来，它下面一张都不删。
      */
     fun syncMirrors(ctx: Context, dirs: List<String>, onProgress: (Int, Int, String) -> Unit, cancelled: () -> Boolean) {
         val all = mirrors(ctx)
         for (d in dirs) {
             val m = all.firstOrNull { d == mirrorDir(ctx, it.id).absolutePath || d.startsWith(mirrorDir(ctx, it.id).absolutePath + "/") } ?: continue
-            val tree = DocumentFile.fromTreeUri(ctx, Uri.parse(m.uri)) ?: continue
+            val uri = Uri.parse(m.uri)
+            if (!granted(ctx, uri)) throw SafExpired(m)
+            val tree = DocumentFile.fromTreeUri(ctx, uri) ?: continue
             val root = mirrorDir(ctx, m.id)
             // 先把原处的照片列全（递归，跳过隐藏的），再比
             data class Src(val doc: DocumentFile, val rel: String)
             val found = mutableListOf<Src>()
+            // 没列出来的那些层（相对路径）：镜像里它们下面的照片保留
+            val unsure = mutableListOf<String>()
+            fun hasImages(dir: File) = dir.isDirectory && dir.walkTopDown().any { it.isFile && it.extension.lowercase() in IMAGE_EXT }
             fun walk(f: DocumentFile, rel: String) {
-                for (c in f.listFiles()) {
+                val kids = runCatching { f.listFiles() }.getOrNull()
+                if (kids.isNullOrEmpty()) {
+                    if (kids == null || hasImages(if (rel.isEmpty()) root else File(root, rel))) unsure.add(rel)
+                    return
+                }
+                for (c in kids) {
                     val name = c.name ?: continue
                     if (name.startsWith(".")) continue
                     if (c.isDirectory) walk(c, if (rel.isEmpty()) name else "$rel/$name")
                     else if (name.substringAfterLast('.', "").lowercase() in IMAGE_EXT && c.length() >= 8 * 1024) found.add(Src(c, if (rel.isEmpty()) name else "$rel/$name"))
                 }
             }
-            walk(tree, "")
+            if (tree.canRead()) walk(tree, "") else unsure.add("")
+            if ("" in unsure) {
+                // 整个文件夹都没列出来（网盘离线之类）：镜像原样留着，照片照常能看
+                android.util.Log.w("FleetingGleam", "镜像 ${m.name}：原处列不出来，跳过同步")
+                continue
+            }
             val keep = found.map { File(root, it.rel).absolutePath }.toHashSet()
             val todo = found.filter { s -> val f = File(root, s.rel); !(f.exists() && f.length() == s.doc.length() && f.lastModified() == s.doc.lastModified()) }
             var done = 0
@@ -155,8 +189,9 @@ object Media {
                 out.setLastModified(s.doc.lastModified())
                 onProgress(++done, todo.size, m.name)
             }
-            // 原处已经没有的，从镜像里删掉
-            root.walkBottomUp().filter { it.isFile && it.absolutePath !in keep && it.extension.lowercase() in IMAGE_EXT }.forEach { it.delete() }
+            // 原处已经没有的，从镜像里删掉（没列出来的那些层除外）
+            val skip = unsure.map { File(root, it).absolutePath + "/" }
+            root.walkBottomUp().filter { f -> f.isFile && f.absolutePath !in keep && f.extension.lowercase() in IMAGE_EXT && skip.none { f.absolutePath.startsWith(it) } }.forEach { it.delete() }
         }
     }
 
