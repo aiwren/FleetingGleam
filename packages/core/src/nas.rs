@@ -211,7 +211,16 @@ enum Op {
     Browse { id: String, rel: String, reply: mpsc::Sender<Result<Vec<Entry>, String>> },
     Sync { id: String, rel: String, local_root: PathBuf, progress: Box<dyn Fn(SyncProgress) + Send>, cancel: Box<dyn Fn() -> bool + Send>, reply: mpsc::Sender<Result<(), String>> },
     Recycle { id: String, rels: Vec<String>, reply: mpsc::Sender<Vec<Result<String, String>>> },
-    Upload { id: String, dir: String, files: Vec<PathBuf>, progress: Box<dyn Fn(usize) + Send>, reply: mpsc::Sender<Vec<Result<String, String>>> },
+    Upload { id: String, dir: String, files: Vec<PathBuf>, progress: Box<dyn Fn(usize) + Send>, cancel: Box<dyn Fn() -> bool + Send>, reply: mpsc::Sender<Vec<Result<Sent, String>>> },
+}
+
+/// 上传一张的结果。
+#[derive(Clone, Debug, PartialEq)]
+pub enum Sent {
+    /// 传上去了，在 NAS 上的位置（`共享/路径`）。
+    Uploaded(String),
+    /// NAS 上已有同名、同大小、同修改时间的：以前导出过，没再传。
+    Same(String),
 }
 
 /// 所有共享的连接，住在一条自己的线程里；这里是同步的门面。
@@ -278,11 +287,11 @@ impl Pool {
         self.ask(|reply| Op::Recycle { id: id.to_string(), rels, reply }).unwrap_or_else(|e| vec![Err(e); n])
     }
 
-    /// 把本机的这些文件上传到 NAS 上的文件夹 `dir`（`共享/路径`，没有就建）；重名的加序号，从不覆盖。
-    /// 每张返回它在 NAS 上的位置；`progress(n)` 是已经处理完几张。
-    pub fn upload(&self, id: &str, dir: &str, files: Vec<PathBuf>, progress: impl Fn(usize) + Send + 'static) -> Vec<Result<String, String>> {
+    /// 把本机的这些文件上传到 NAS 上的文件夹 `dir`（`共享/路径`，没有就建）；重名的加序号，从不覆盖；同名同大小同修改时间的不再传。
+    /// 每张返回它在 NAS 上的位置；`progress(n)` 是已经处理完几张。`cancel()` 为真就在当前这张之后停：返回的比 `files` 少。
+    pub fn upload(&self, id: &str, dir: &str, files: Vec<PathBuf>, progress: impl Fn(usize) + Send + 'static, cancel: impl Fn() -> bool + Send + 'static) -> Vec<Result<Sent, String>> {
         let n = files.len();
-        self.ask(|reply| Op::Upload { id: id.to_string(), dir: dir.to_string(), files, progress: Box::new(progress), reply }).unwrap_or_else(|e| vec![Err(e); n])
+        self.ask(|reply| Op::Upload { id: id.to_string(), dir: dir.to_string(), files, progress: Box::new(progress), cancel: Box::new(cancel), reply }).unwrap_or_else(|e| vec![Err(e); n])
     }
 }
 
@@ -354,10 +363,10 @@ async fn handle(conns: &mut HashMap<String, Conn>, connected: &Mutex<HashSet<Str
             .unwrap_or_else(|e| vec![Err(e); n]);
             let _ = reply.send(r);
         }
-        Op::Upload { id, dir, files, progress, reply } => {
+        Op::Upload { id, dir, files, progress, cancel, reply } => {
             let n = files.len();
             let r = match conns.remove(&id) {
-                Some(mut c) => { let r = upload(&mut c, &dir, &files, &*progress).await; settle(conns, connected, &id, c, r) }
+                Some(mut c) => { let r = upload(&mut c, &dir, &files, &*progress, &*cancel).await; settle(conns, connected, &id, c, r) }
                 None => Err("not connected".to_string()),
             }
             .unwrap_or_else(|e| vec![Err(e); n]);
@@ -629,7 +638,7 @@ fn stem_ext(name: &str) -> (String, String) {
 
 /// 上传：先写到目标文件夹里的 `.名字.part`，整张写完、修改时间改成原文件的之后才改成正式名字（同名的加序号），
 /// 所以 NAS 上永远没有半张照片，别的设备看到的是完整的文件。原文件不动。
-async fn upload(c: &mut Conn, dir: &str, files: &[PathBuf], progress: &dyn Fn(usize)) -> Result<Vec<Result<String, String>>, smb2::Error> {
+async fn upload(c: &mut Conn, dir: &str, files: &[PathBuf], progress: &dyn Fn(usize), cancel: &dyn Fn() -> bool) -> Result<Vec<Result<Sent, String>>, smb2::Error> {
     let (share, path) = split_share(dir);
     let share = share.to_string();
     let Conn { client, trees } = c;
@@ -642,9 +651,21 @@ async fn upload(c: &mut Conn, dir: &str, files: &[PathBuf], progress: &dyn Fn(us
     }
     let mut out = Vec::with_capacity(files.len());
     for (i, f) in files.iter().enumerate() {
+        if cancel() {
+            break;
+        }
         let name = f.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let (stem, ext) = stem_ext(&name);
         let mut target = join_rel(path, &name);
+        // 同名、同大小、同修改时间的已经在 NAS 上（以前导出过；上传时修改时间设成了原图的）：不再传一份 "(1)"
+        if let (Ok(there), Ok(m)) = (client.stat(tree, &target).await, std::fs::metadata(f)) {
+            let here = m.modified().ok().map(secs);
+            if !there.is_directory && there.size == m.len() && here.is_some() && there.modified.to_system_time().map(secs) == here {
+                out.push(Ok(Sent::Same(format!("{share}/{target}"))));
+                progress(i + 1);
+                continue;
+            }
+        }
         let mut n = 1;
         while client.stat(tree, &target).await.is_ok() {
             target = join_rel(path, &format!("{stem} ({n}){ext}"));
@@ -671,7 +692,7 @@ async fn upload(c: &mut Conn, dir: &str, files: &[PathBuf], progress: &dyn Fn(us
         }
         .await;
         match r {
-            Ok(()) => out.push(Ok(format!("{share}/{target}"))),
+            Ok(()) => out.push(Ok(Sent::Uploaded(format!("{share}/{target}")))),
             Err(e) if lost(&e) => return Err(e),
             Err(e) => {
                 let _ = client.delete_file(tree, &tmp).await;
@@ -814,11 +835,14 @@ mod tests {
             let target = format!("{dir}/.fg-upload-test");
             let done = Arc::new(Mutex::new(0usize));
             let seen = done.clone();
-            let r = pool.upload("t1", &target, vec![img.clone(), img.clone()], move |n| *seen.lock().unwrap() = n);
+            let r = pool.upload("t1", &target, vec![img.clone(), img.clone()], move |n| *seen.lock().unwrap() = n, || false);
             println!("uploaded: {r:?}");
-            let up: Vec<String> = r.into_iter().map(|x| x.expect("uploaded")).collect();
+            let r: Vec<Sent> = r.into_iter().map(|x| x.expect("uploaded")).collect();
             assert_eq!(*done.lock().unwrap(), 2);
-            assert!(up[0].ends_with("/fg-upload.jpg") && up[1].ends_with("/fg-upload (1).jpg"), "{up:?}");
+            // 第二张同名同大小同时间：认出是导出过的，不再传一份 "(1)"
+            let up: Vec<String> = r.iter().map(|s| match s { Sent::Uploaded(p) | Sent::Same(p) => p.clone() }).collect();
+            assert!(matches!(&r[0], Sent::Uploaded(p) if p.ends_with("/fg-upload.jpg")) && matches!(&r[1], Sent::Same(_)), "{r:?}");
+            let up = vec![up[0].clone()];
             let listed: Vec<(String, u64)> = pool.browse("t1", &target).expect("list the upload folder").into_iter().map(|e| (e.name, e.size)).collect();
             let size = std::fs::metadata(&img).unwrap().len();
             assert!(listed.iter().any(|(n, s)| n == "fg-upload.jpg" && *s == size), "{listed:?}");

@@ -321,6 +321,10 @@ fn dispatch(e: &Arc<Engine>, method: &str, a: &Value) -> Result<Value, String> {
         "nas_mirror_clear" => out(e.nas_mirror_clear(&s(a, "id")?)?),
         // 整理
         "export_photos" => out(e.export_photos(&strings(a, "paths"), &s(a, "dest")?)?),
+        "export_cancel" => {
+            e.export_cancel();
+            Ok(Value::Null)
+        }
         "trash_photos" => out(e.trash_photos(strings(a, "paths"))),
         // 查看器
         "preview_thumbs" => out(e.preview_thumbs(&strings(a, "paths"))),

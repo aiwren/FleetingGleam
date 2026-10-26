@@ -267,11 +267,24 @@ pub struct Listing {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ExportResult {
     pub copied: usize,
+    /// 没复制的：不是照片的，以及目标里已有同名、同大小、同修改时间的（以前导出过）。
     pub skipped: usize,
     pub dest: String,
     /// 导出到了 NAS 上（`dest` 是 smb:// 地址，本机没有这个文件夹）。
     #[serde(default)]
     pub remote: bool,
+    /// 复制失败的照片和原因（原因带 `errors` 约定的前缀，比如 `space:` 磁盘满了）；写了一半的目标文件已经删掉。
+    #[serde(default)]
+    pub failed: Vec<ExportFailure>,
+    /// `export_cancel` 让它在那一张之后停下了。
+    #[serde(default)]
+    pub cancelled: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ExportFailure {
+    pub path: String,
+    pub error: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -387,6 +400,8 @@ pub struct Engine {
     /// 每台 NAS 最后一次连接失败的原因（带前缀），连上就清掉；`ShareStatus.error` 给界面分开说"密码不对"和"连不上"。
     nas_errors: Mutex<HashMap<String, String>>,
     downloads: Downloads,
+    /// `export_cancel` 设上：正在进行的导出做完当前这张就停。
+    export_stop: Arc<AtomicBool>,
     /// Writes of `projects.json` are serialised and go through a temporary file and a rename.
     projects_write: Mutex<()>,
     /// 这台设备的名字（备份里记下来，另一端恢复前能看到是谁做的）；应用启动时告诉引擎，没告诉就用平台名。
@@ -442,6 +457,7 @@ impl Engine {
             nas: nas::Pool::start(),
             nas_errors: Mutex::new(HashMap::new()),
             downloads: Downloads::default(),
+            export_stop: Arc::new(AtomicBool::new(false)),
             projects_write: Mutex::new(()),
             device: Mutex::new(String::new()),
         })
@@ -1526,7 +1542,12 @@ impl Engine {
 
     /// Copies the given photos into `dest`. Originals are never touched and nothing is overwritten.
     /// `dest` 落在某台 NAS 的镜像里（文件夹选择器选 NAS 上的文件夹时给的就是镜像路径）：直接上传到 NAS 上那个文件夹。
+    ///
+    /// 目标里已有同名、同大小、同修改时间的视为导出过，计入 `skipped`（复制时把修改时间设成原图的，再导出一次就全是这种）。
+    /// 开始前看空间，不够就 `space:` 错误、一张都不复制。每张先写到旁边的 `.名字.part`，写完才改名，失败就删掉它：目标里永远没有半张照片；
+    /// 失败的和原因进 `failed`，中途磁盘满了后面的都不再试。`export_cancel` 让它做完当前这张就停（`cancelled`）。
     pub fn export_photos(self: &Arc<Self>, paths: &[String], dest: &str) -> Result<ExportResult, String> {
+        self.export_stop.store(false, Ordering::Relaxed);
         let shares = nas::load(&self.paths.data);
         if let Some((s, rel)) = nas::share_of_path(&self.paths.data, &shares, Path::new(dest)) {
             if rel.is_empty() {
@@ -1535,40 +1556,73 @@ impl Engine {
             return self.export_to_nas(s, &rel, paths);
         }
         let dest_dir = PathBuf::from(dest);
-        std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&dest_dir).map_err(|e| crate::errors::io(&e, &dest_dir, 0))?;
         let total = paths.len();
-        let (mut copied, mut skipped) = (0usize, 0usize);
-        for (i, p) in paths.iter().enumerate() {
+        let mut skipped = 0usize;
+        let mut todo: Vec<(&str, u64)> = Vec::new();
+        for p in paths {
             let src = Path::new(p);
-            if analyze::is_image(src) && src.is_file() {
-                let target = unique_path(&dest_dir, src.file_name().unwrap_or_default());
-                match std::fs::copy(src, &target) {
-                    Ok(_) => copied += 1,
-                    Err(_) => skipped += 1,
+            match std::fs::metadata(src) {
+                Ok(m) if m.is_file() && analyze::is_image(src) => {
+                    if same_file_at(&dest_dir, src, &m) {
+                        skipped += 1;
+                    } else {
+                        todo.push((p, m.len()));
+                    }
                 }
-            } else {
-                skipped += 1;
+                _ => skipped += 1,
             }
-            self.emit("export-progress", &Progress { done: i + 1, total });
         }
-        Ok(ExportResult { copied, skipped, dest: dest.to_string(), remote: false })
+        crate::errors::check_space(&dest_dir, todo.iter().map(|(_, n)| n).sum())?;
+        let (mut copied, mut failed, mut cancelled) = (0usize, Vec::new(), false);
+        self.emit("export-progress", &Progress { done: skipped, total });
+        for (i, &(p, size)) in todo.iter().enumerate() {
+            if self.export_stop.load(Ordering::Relaxed) {
+                cancelled = true;
+                break;
+            }
+            match copy_into(Path::new(p), &dest_dir, size) {
+                Ok(()) => copied += 1,
+                Err(e) => {
+                    let full = e.starts_with("space:");
+                    failed.push(ExportFailure { path: p.to_string(), error: e.clone() });
+                    if full {
+                        // 磁盘满了：后面的一样写不进去，不再一张张试
+                        failed.extend(todo[i + 1..].iter().map(|(q, _)| ExportFailure { path: q.to_string(), error: e.clone() }));
+                        break;
+                    }
+                }
+            }
+            self.emit("export-progress", &Progress { done: skipped + i + 1, total });
+        }
+        Ok(ExportResult { copied, skipped, dest: dest.to_string(), remote: false, failed, cancelled })
+    }
+
+    /// 让正在进行的导出做完当前这张就停（返回的 `ExportResult.cancelled` 为真）。
+    pub fn export_cancel(&self) {
+        self.export_stop.store(true, Ordering::Relaxed);
     }
 
     /// 上传到 NAS 上的文件夹（`共享/路径`）：连上（用记住的密码），逐张写过去，进度照样发 "export-progress"。
+    /// NAS 上已有同名、同大小、同修改时间的视为导出过；`export_cancel` 同样做完当前这张就停。
     fn export_to_nas(self: &Arc<Self>, s: &nas::Share, rel: &str, paths: &[String]) -> Result<ExportResult, String> {
         self.nas_connect_saved(s)?;
         let files: Vec<PathBuf> = paths.iter().map(PathBuf::from).filter(|p| analyze::is_image(p) && p.is_file()).collect();
         let not_photos = paths.len() - files.len();
         let total = paths.len();
         let emit = self.clone();
-        let results = self.nas.upload(&s.id, rel, files, move |done| emit.emit("export-progress", &Progress { done: done + not_photos, total }));
-        let copied = results.iter().filter(|r| r.is_ok()).count();
-        if copied == 0 {
-            if let Some(Err(e)) = results.iter().find(|r| r.is_err()) {
-                return Err(crate::errors::context(&s.name, e));
+        let stop = self.export_stop.clone();
+        let results = self.nas.upload(&s.id, rel, files.clone(), move |done| emit.emit("export-progress", &Progress { done: done + not_photos, total }), move || stop.load(Ordering::Relaxed));
+        let copied = results.iter().filter(|r| matches!(r, Ok(nas::Sent::Uploaded(_)))).count();
+        let same = results.iter().filter(|r| matches!(r, Ok(nas::Sent::Same(_)))).count();
+        let failed: Vec<ExportFailure> = files.iter().zip(&results).filter_map(|(f, r)| r.as_ref().err().map(|e| ExportFailure { path: f.to_string_lossy().into_owned(), error: e.clone() })).collect();
+        if copied == 0 && same == 0 {
+            if let Some(f) = failed.first() {
+                return Err(crate::errors::context(&s.name, &f.error));
             }
         }
-        Ok(ExportResult { copied, skipped: total - copied, dest: nas::share_url(s, rel), remote: true })
+        let cancelled = results.len() < files.len();
+        Ok(ExportResult { copied, skipped: not_photos + same, dest: nas::share_url(s, rel), remote: true, failed, cancelled })
     }
 
     /// Moves photos to the trash (recoverable). Only image files are accepted, so this can never be used to trash anything else.
@@ -2307,6 +2361,29 @@ impl Engine {
     }
 }
 
+/// `dir` 里已有和 `src` 同名、同大小、同修改时间（秒）的文件：导出过了。
+fn same_file_at(dir: &Path, src: &Path, m: &std::fs::Metadata) -> bool {
+    let secs = |t: std::io::Result<std::time::SystemTime>| t.ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs());
+    let Some(name) = src.file_name() else { return false };
+    std::fs::metadata(dir.join(name)).map_or(false, |d| d.is_file() && d.len() == m.len() && secs(d.modified()).is_some() && secs(d.modified()) == secs(m.modified()))
+}
+
+/// 把一张照片复制进 `dir`：先写到 `.名字.part`，修改时间设成原图的（下次导出认得出），再改成不重名的正式名字。失败就删掉 `.part`。
+fn copy_into(src: &Path, dir: &Path, size: u64) -> Result<(), String> {
+    let name = src.file_name().unwrap_or_default();
+    let tmp = dir.join(format!(".{}.part", name.to_string_lossy()));
+    let r = (|| -> std::io::Result<()> {
+        std::fs::copy(src, &tmp)?;
+        let modified = std::fs::metadata(src)?.modified()?;
+        std::fs::OpenOptions::new().write(true).open(&tmp)?.set_modified(modified)?;
+        std::fs::rename(&tmp, unique_path(dir, name))
+    })();
+    r.map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        crate::errors::io(&e, src, size)
+    })
+}
+
 /// 没有系统解码器时的局部：`image` crate 解出摆正的原图，裁出那一块，宽不超过 `out_w`。
 fn crop_native(src: &Path, out: &Path, f: [f64; 4], out_w: u32) -> Result<(), String> {
     let img = analyze::load_oriented(src)?;
@@ -2497,6 +2574,73 @@ mod tests {
         let out = root.join("out");
         let r = e.export_photos(&paths, &out.to_string_lossy()).unwrap();
         assert_eq!((r.copied, r.skipped, r.remote), (2, 0, false));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 再导出一次：同名同大小同时间的算导出过；读不了的那张进 failed，目标里不留半截文件。
+    #[test]
+    fn exporting_again_skips_what_is_there_and_a_failure_leaves_nothing_behind() {
+        use std::os::unix::fs::PermissionsExt;
+        let (e, root, _) = engine("export-again");
+        let dir = root.join("photos");
+        photos(&dir, 3);
+        let paths: Vec<String> = ["p0.jpg", "p1.jpg"].iter().map(|n| dir.join(n).to_string_lossy().into_owned()).collect();
+        let out = root.join("out");
+        let r = e.export_photos(&paths, &out.to_string_lossy()).unwrap();
+        assert_eq!((r.copied, r.skipped, r.failed.len(), r.cancelled), (2, 0, 0, false));
+        let r = e.export_photos(&paths, &out.to_string_lossy()).unwrap();
+        assert_eq!((r.copied, r.skipped), (0, 2), "导出过的不再复制一份 (2)");
+        assert_eq!(std::fs::read_dir(&out).unwrap().count(), 2);
+        // 原图改过（大小变了）：照常复制，不覆盖，另起名字
+        std::fs::write(dir.join("p0.jpg"), std::fs::read(dir.join("p2.jpg")).unwrap()).unwrap();
+        let r = e.export_photos(&paths[..1], &out.to_string_lossy()).unwrap();
+        assert_eq!(r.copied, 1);
+        assert!(out.join("p0 (2).jpg").exists());
+        // 读不了的一张：进 failed，目标里没有它的半截文件
+        let bad = dir.join("p1.jpg");
+        std::fs::set_permissions(&bad, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let out2 = root.join("out2");
+        let r = e.export_photos(&[bad.to_string_lossy().into_owned(), dir.join("p2.jpg").to_string_lossy().into_owned()], &out2.to_string_lossy()).unwrap();
+        std::fs::set_permissions(&bad, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(r.copied, 1);
+        assert_eq!(r.failed.len(), 1);
+        assert_eq!(r.failed[0].path, bad.to_string_lossy());
+        assert!(r.failed[0].error.starts_with("denied:"), "{}", r.failed[0].error);
+        let left: Vec<String> = std::fs::read_dir(&out2).unwrap().map(|x| x.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(left, vec!["p2.jpg"], "没有半截的 .part");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 导出时取消：做完当前这张就停，返回 cancelled。
+    #[test]
+    fn an_export_can_be_cancelled() {
+        struct StopOnFirst(std::sync::OnceLock<std::sync::Weak<Engine>>, AtomicBool);
+        impl Events for Arc<StopOnFirst> {
+            fn emit(&self, ev: &str, v: serde_json::Value) {
+                if ev == "export-progress" && v["done"].as_u64() == Some(1) && !self.1.swap(true, Ordering::Relaxed) {
+                    if let Some(e) = self.0.get().and_then(|w| w.upgrade()) {
+                        e.export_cancel();
+                    }
+                }
+            }
+        }
+        let root = std::env::temp_dir().join(format!("fg-engine-export-cancel-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let hook = Arc::new(StopOnFirst(std::sync::OnceLock::new(), AtomicBool::new(false)));
+        let paths = Paths { data: root.join("data"), thumbs: root.join("thumbs"), models: root.join("models"), downloads: root.join("models") };
+        let e = Engine::new(paths, Box::new(hook.clone()), "0.0.0-test");
+        let _ = hook.0.set(Arc::downgrade(&e));
+        let dir = root.join("photos");
+        photos(&dir, 4);
+        let paths: Vec<String> = (0..4).map(|i| dir.join(format!("p{i}.jpg")).to_string_lossy().into_owned()).collect();
+        let r = e.export_photos(&paths, &root.join("out").to_string_lossy()).unwrap();
+        assert!(r.cancelled);
+        assert_eq!(r.copied, 1);
+        // 下一次导出不受上一次取消的影响
+        let r = e.export_photos(&paths, &root.join("out").to_string_lossy()).unwrap();
+        assert!(!r.cancelled);
+        assert_eq!((r.copied, r.skipped), (3, 1));
+        drop(e);
         let _ = std::fs::remove_dir_all(&root);
     }
 
