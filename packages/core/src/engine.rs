@@ -104,6 +104,13 @@ pub struct Probe {
     pub offline: bool,
 }
 
+/// 一台 NAS 的本机副本占多少（设置里"NAS / 网盘副本"那一栏）。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct MirrorUsage {
+    pub id: String,
+    pub name: String,
+    pub bytes: u64,
+}
 
 /// 分析一个项目要的参数（和桌面端 `scan_project` 命令的参数一样）。
 #[derive(Deserialize, Clone, Default, Debug)]
@@ -1356,6 +1363,27 @@ impl Engine {
         Ok(offline)
     }
 
+    /// 每台 NAS 的本机副本（镜像）占多少字节。
+    pub fn nas_mirror_usage(&self) -> Vec<MirrorUsage> {
+        let dir = &self.paths.data;
+        nas::load(dir).into_iter().map(|s| MirrorUsage { bytes: nas::mirror_bytes(dir, &s.id), id: s.id, name: s.name }).collect()
+    }
+
+    /// 清掉一台 NAS 的本机副本，返回释放的字节数。分析结果（按文件大小与修改时间记的）留着：下次打开项目重新拉照片，
+    /// 拉下来的文件大小与修改时间和原来一样，不用重新分析。
+    pub fn nas_mirror_clear(&self, id: &str) -> Result<u64, String> {
+        let dir = &self.paths.data;
+        if !nas::load(dir).iter().any(|s| s.id == id) {
+            return Err("unknown NAS".to_string());
+        }
+        let bytes = nas::mirror_bytes(dir, id);
+        let local = nas::local_dir(dir, id);
+        if local.exists() {
+            std::fs::remove_dir_all(&local).map_err(|e| crate::errors::io(&e, &local, 0))?;
+        }
+        Ok(bytes)
+    }
+
     /// 添加或编辑 NAS 时的"测试连接"：连上这台服务器，返回它的共享名；什么都不记。编辑时密码留空就用记住的。
     pub fn nas_probe(&self, host: &str, user: &str, password: &str, id: Option<&str>) -> Result<Vec<String>, String> {
         let password = match (password.is_empty(), id) {
@@ -1976,7 +2004,10 @@ impl Engine {
     /// 彻底删除项目（清空回收站、回收站过期）时调用：忘掉这些文件夹里照片的分析结果，删掉它们的缩略图、分析副本、大图预览、
     /// 清晰块和实况片段。`keep` 是还在的项目（含回收站里的）的文件夹，那里面的照片不动。返回忘掉了几张。
     /// （作者 2026-10-23：删了项目、清空回收站，再用同一个相册建项目，结果还是直接出来——分析结果是按照片存的、不跟项目走。）
+    ///
+    /// `dirs` 里落在 NAS 镜像里的文件夹，本机副本也删掉（NAS 上的照片不动）；还被 `keep` 里的项目用着的部分留着。
     pub fn forget_folders(&self, dirs: &[String], keep: &[String]) -> usize {
+        self.forget_mirrors(dirs, keep);
         let (gone, pending) = self.with_cache(|c| {
             let g = c.forget_under(dirs, keep);
             (g, c.save())
@@ -1999,6 +2030,39 @@ impl Engine {
         self.last_photos.lock().unwrap_or_else(|e| e.into_inner()).retain(|(_, ps)| !ps.iter().any(|p| gone.contains(&p.path)));
         crate::platform::log(&format!("忘掉了 {} 张照片的分析结果（彻底删除的项目）", gone.len()));
         gone.len()
+    }
+
+    /// 彻底删除的项目在 NAS 镜像里的文件夹：删掉本机副本。文件夹本身在某个还在的项目文件夹里面（或就是它）的不动；
+    /// 还在的项目文件夹在它里面的，只删那些之外的文件。不在镜像里的文件夹（本机相册）从来不碰。
+    fn forget_mirrors(&self, dirs: &[String], keep: &[String]) {
+        let data = &self.paths.data;
+        let shares = nas::load(data);
+        for d in dirs {
+            let dp = Path::new(d);
+            // 至少要在某个共享里面：整台 NAS 的镜像根不是项目文件夹
+            if !nas::share_of_path(data, &shares, dp).map_or(false, |(_, rel)| !rel.is_empty()) || !dp.is_dir() {
+                continue;
+            }
+            if keep.iter().any(|k| dp.starts_with(k)) {
+                continue;
+            }
+            let inner: Vec<&Path> = keep.iter().map(Path::new).filter(|k| k.starts_with(dp)).collect();
+            if inner.is_empty() {
+                let _ = std::fs::remove_dir_all(dp);
+            } else {
+                for e in WalkDir::new(dp).contents_first(true).into_iter().filter_map(Result::ok) {
+                    if inner.iter().any(|k| e.path().starts_with(k)) {
+                        continue;
+                    }
+                    if e.file_type().is_dir() {
+                        let _ = std::fs::remove_dir(e.path()); // 空了才删得掉
+                    } else {
+                        let _ = std::fs::remove_file(e.path());
+                    }
+                }
+            }
+            crate::platform::log(&format!("删掉了彻底删除的项目在 NAS 镜像里的本机副本：{d}"));
+        }
     }
 
     /// 诊断：在这台机器的加速器上单独加载一个 CLIP 模型、算 5 张，结果写进诊断日志并返回（调试开关用，界面上没有入口）。
@@ -2463,6 +2527,38 @@ mod tests {
 
     fn photos_in(dir: &Path) {
         photos(dir, 2);
+    }
+
+    /// 镜像占多少、清掉；彻底删除项目时删它独占的本机副本，还被别的项目用着的留下，本机相册从来不碰。
+    #[test]
+    fn nas_mirrors_are_counted_cleared_and_forgotten_with_their_projects() {
+        let (e, root, _) = engine("nas-mirror");
+        let share = nas::Share { id: "n1".into(), name: "Home NAS".into(), host: "127.0.0.1".into(), user: String::new(), enabled: false };
+        nas::save(&e.paths.data, std::slice::from_ref(&share)).unwrap();
+        let m = nas::local_dir(&e.paths.data, "n1").join("photos");
+        let s = |p: &Path| p.to_string_lossy().into_owned();
+        for (d, n) in [("a", 1), ("a/kept", 1), ("b", 2)] {
+            photos(&m.join(d), n);
+        }
+        let local = root.join("local");
+        photos(&local, 1);
+        let usage = e.nas_mirror_usage();
+        assert_eq!(usage.len(), 1);
+        assert_eq!(usage[0].name, "Home NAS");
+        assert!(usage[0].bytes > 4 * 8 * 1024, "{}", usage[0].bytes);
+        e.forget_folders(&[s(&m.join("a")), s(&m.join("b")), s(&local)], &[s(&m.join("a/kept"))]);
+        assert!(!m.join("b").exists(), "只属于删掉的项目的副本删掉了");
+        assert!(!m.join("a/p0.jpg").exists());
+        assert!(m.join("a/kept/p0.jpg").exists(), "还在的项目的照片留着");
+        assert!(local.join("p0.jpg").exists(), "本机相册不碰");
+        // 文件夹在一个还在的项目里面：不动
+        e.forget_folders(&[s(&m.join("a/kept"))], &[s(&m.join("a"))]);
+        assert!(m.join("a/kept/p0.jpg").exists());
+        let before = e.nas_mirror_usage()[0].bytes;
+        assert_eq!(e.nas_mirror_clear("n1").unwrap(), before);
+        assert_eq!(e.nas_mirror_usage()[0].bytes, 0);
+        assert!(e.nas_mirror_clear("nope").is_err());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// 手机上的整条分析流水线（交叉编译成 arm64 测试程序推到手机上跑，调并行度用）：

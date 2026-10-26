@@ -134,6 +134,11 @@ pub fn local_dir(data_dir: &Path, id: &str) -> PathBuf {
     data_dir.join("nas").join(id)
 }
 
+/// 一台 NAS 的镜像在本机占多少字节。
+pub fn mirror_bytes(data_dir: &Path, id: &str) -> u64 {
+    walkdir::WalkDir::new(local_dir(data_dir, id)).into_iter().filter_map(Result::ok).filter_map(|e| e.metadata().ok()).filter(|m| m.is_file()).map(|m| m.len()).sum()
+}
+
 /// 本地路径落在哪台 NAS 的镜像里：那台 NAS，以及从共享名起的路径（`/` 分隔，根是空串）。
 pub fn share_of_path<'a>(data_dir: &Path, shares: &'a [Share], path: &Path) -> Option<(&'a Share, String)> {
     shares.iter().find_map(|s| {

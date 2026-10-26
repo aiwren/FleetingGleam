@@ -317,6 +317,8 @@ fn dispatch(e: &Arc<Engine>, method: &str, a: &Value) -> Result<Value, String> {
         "nas_set_enabled" => out(e.nas_set_enabled(&s(a, "id")?, b(a, "enabled"))?),
         "nas_ensure" => out(e.nas_ensure(&dirs())),
         "nas_browse" => out(e.nas_browse(&s(a, "id")?, &os(a, "path").unwrap_or_default())?),
+        "nas_mirror_usage" => out(e.nas_mirror_usage()),
+        "nas_mirror_clear" => out(e.nas_mirror_clear(&s(a, "id")?)?),
         // 整理
         "export_photos" => out(e.export_photos(&strings(a, "paths"), &s(a, "dest")?)?),
         "trash_photos" => out(e.trash_photos(strings(a, "paths"))),
