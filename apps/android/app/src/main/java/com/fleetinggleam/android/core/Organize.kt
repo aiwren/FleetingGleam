@@ -104,14 +104,28 @@ object Organize {
         val ok = runCatching {
             // 能直接移动的提供者（大多数本地与网盘）就移动；不支持的复制过去再删
             DocumentsContract.moveDocument(ctx.contentResolver, doc.uri, parent.uri, bin.uri) != null
-        }.getOrDefault(false) || runCatching {
-            val out = bin.createFile(doc.type ?: "image/jpeg", doc.name ?: parts.last()) ?: return@runCatching false
-            ctx.contentResolver.openInputStream(doc.uri)?.use { i -> ctx.contentResolver.openOutputStream(out.uri)?.use { i.copyTo(it) } }
-            doc.delete()
-        }.getOrDefault(false)
+        }.getOrDefault(false) || copyThenDelete(ctx, doc, bin, parts.last())
         if (!ok) return null
         File(path).delete()
         return "${m.name}/$RECYCLE/$day"
+    }
+
+    /**
+     * 不支持直接移动的提供者：复制进回收文件夹，**确认写进去的字节数等于原图大小**才删原图。输入 / 输出流打不开、
+     * 复制到一半出错或字节数对不上，都删掉回收夹里那份残缺的、原图不动，算失败（以前流是 null 也照删原图，原图就没了）。
+     */
+    private fun copyThenDelete(ctx: Context, doc: DocumentFile, bin: DocumentFile, fallbackName: String): Boolean {
+        val out = runCatching { bin.createFile(doc.type ?: "image/jpeg", doc.name ?: fallbackName) }.getOrNull() ?: return false
+        val expected = doc.length()
+        val written = runCatching {
+            ctx.contentResolver.openInputStream(doc.uri)?.use { i -> ctx.contentResolver.openOutputStream(out.uri)?.use { o -> i.copyTo(o) } }
+        }.getOrNull()
+        // length() 取不到时是 0：这时只要求确实写进了东西
+        val ok = written != null && written > 0 && (expected <= 0 || written == expected)
+        if (!ok) { runCatching { out.delete() }; return false }
+        // 原图删不掉：回收夹里那份也撤掉，免得同一张出现两份
+        if (!runCatching { doc.delete() }.getOrDefault(false)) { runCatching { out.delete() }; return false }
+        return true
     }
 
     /** 照片已不在了：从项目的改判里忘掉（和桌面端一样）。 */
