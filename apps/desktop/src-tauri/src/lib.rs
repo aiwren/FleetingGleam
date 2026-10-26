@@ -542,6 +542,19 @@ fn set_locale(app: AppHandle, locale: String) -> Result<(), String> {
     app.set_menu(menu).map(|_| ()).map_err(|e| e.to_string())
 }
 
+/// 导出诊断信息（版本、系统、设置、日志、崩溃记录，去掉一切密码令牌）到 `out`，返回写出的路径。
+#[tauri::command]
+async fn diagnostics_export(app: AppHandle, out: String) -> Result<String, String> {
+    let e = engine(&app);
+    blocking(move || e.diagnostics_export(&out)).await?
+}
+
+/// 日志与崩溃记录的目录。
+#[tauri::command]
+fn diagnostics_dir(app: AppHandle) -> String {
+    engine(&app).diagnostics_dir()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -568,7 +581,7 @@ pub fn run() {
         .on_menu_event(|app, event| {
             let _ = app.emit("menu", event.id().0.clone());
         })
-        .invoke_handler(tauri::generate_handler![forget_folders, probe_folder, scan_project, scan_cancel, decide_photos, projects_load, projects_save, projects_quarantine, taste_export, taste_import, nas_list, nas_add, nas_remove, nas_connect, nas_disconnect, nas_ensure, nas_browse, nas_probe, nas_update, nas_set_enabled, nas_mirror_usage, nas_mirror_clear, backup_status, backup_save_target, backup_remove_target, backup_set_options, backup_now, backup_restore, backup_peek, set_rotation, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, export_cancel, trash_photos, reveal, preview_thumbs, photo_info, large_preview, motion_clip, hdrview::hdr_overlay_supported, hdrview::hdr_overlay_show, hdrview::hdr_overlay_move, hdrview::hdr_overlay_hide, hdrview::hdr_overlay_detail, hdrview::hdr_overlay_detail_hide, photo_detail, machine_info, search_status, search_index, search_photos, scene_text, packs_status, pack_size, pack_download, pack_cancel, pack_remove])
+        .invoke_handler(tauri::generate_handler![forget_folders, probe_folder, scan_project, scan_cancel, decide_photos, projects_load, projects_save, projects_quarantine, taste_export, taste_import, nas_list, nas_add, nas_remove, nas_connect, nas_disconnect, nas_ensure, nas_browse, nas_probe, nas_update, nas_set_enabled, nas_mirror_usage, nas_mirror_clear, backup_status, backup_save_target, backup_remove_target, backup_set_options, backup_now, backup_restore, backup_peek, set_rotation, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, export_cancel, trash_photos, reveal, preview_thumbs, photo_info, large_preview, motion_clip, hdrview::hdr_overlay_supported, hdrview::hdr_overlay_show, hdrview::hdr_overlay_move, hdrview::hdr_overlay_hide, hdrview::hdr_overlay_detail, hdrview::hdr_overlay_detail_hide, photo_detail, machine_info, search_status, search_index, search_photos, scene_text, packs_status, pack_size, pack_download, pack_cancel, pack_remove, diagnostics_export, diagnostics_dir])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

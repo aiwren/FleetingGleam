@@ -433,6 +433,8 @@ pub struct BackupMeta {
 impl Engine {
     pub fn new(paths: Paths, events: Box<dyn Events>, app_version: &str) -> Arc<Engine> {
         let _ = std::fs::create_dir_all(&paths.data);
+        // 日志同时写进 data/logs/app.log；核心崩溃写 data/logs/crash-*.txt
+        crate::diagnostics::init(&paths.data);
         let _ = std::fs::create_dir_all(&paths.thumbs);
         let prefs = prefs::Styles::load(&paths.data);
         Arc::new(Engine {
@@ -2345,6 +2347,75 @@ impl Engine {
         Ok(styles.get(style).prefs.info())
     }
 
+    // ------------------------------------------------------------ 诊断
+
+    /// 日志与崩溃记录的目录（`<数据目录>/logs`）。Android 的 Kotlin 未捕获异常与 `ApplicationExitInfo` 也写到这里。
+    pub fn diagnostics_dir(&self) -> String {
+        let dir = crate::diagnostics::logs_dir(&self.paths.data);
+        let _ = std::fs::create_dir_all(&dir);
+        dir.to_string_lossy().into_owned()
+    }
+
+    /// "导出诊断信息"：版本、系统、设置、最近的 app.log、全部崩溃 / 退出记录，写成一个文本文件 `out`，返回它的路径。纯本地，不联网。
+    /// 一切密码、令牌、NAS 用户名、备份的 Access Key 与账户、地址里的账号都抹掉（`diagnostics::redact`）。
+    pub fn diagnostics_export(&self, out: &str) -> Result<String, String> {
+        let data = &self.paths.data;
+        let mut secrets = crate::secrets::all_values(data);
+        let shares = nas::load(data);
+        secrets.extend(shares.iter().map(|s| s.user.clone()).filter(|u| !u.is_empty()));
+        let backup = r2::load(data);
+        secrets.extend(backup.targets.iter().flat_map(|t| [t.access_key.clone(), t.account.clone()]).filter(|x| !x.is_empty()));
+        let m = self.machine_info();
+        let mut h = String::new();
+        h.push_str(&format!("FleetingGleam 诊断信息
+生成于 {}
+
+", crate::diagnostics::generated_at()));
+        h.push_str(&format!("应用版本：{}（核心 {}）
+平台：{PLATFORM}
+设备：{}
+系统：{}
+内存：{} GB，{} 核，加速器：{}
+", self.app_version, crate::VERSION, self.device_name(), crate::diagnostics::os_info(), m.memory_gb, m.cores, m.accelerator));
+        h.push_str(&format!("代理：{}
+", crate::platform::proxy().unwrap_or_else(|| "无".into())));
+        h.push_str("
+模型包：
+");
+        for p in self.packs_status(false) {
+            h.push_str(&format!("  {}：{}
+", p.id, if p.installed { "已装" } else { "未装" }));
+        }
+        h.push_str("
+NAS：
+");
+        for s in self.nas_list() {
+            h.push_str(&format!("  {}（{}）：{}，{}，账号：{}{}
+", s.name, s.host, if s.enabled { "启用" } else { "停用" }, if s.connected { "已连接" } else { "未连接" }, if s.user.is_empty() { "访客" } else { "有（不显示）" }, s.error.map(|e| format!("，最后的错误：{e}")).unwrap_or_default()));
+        }
+        h.push_str(&format!("
+云备份：{}，保留 {} 份
+", if backup.enabled { "自动" } else { "手动" }, backup.keep()));
+        for t in &backup.targets {
+            h.push_str(&format!("  {}（{}）：桶 {}，密钥{}，上次成功 {}{}
+", t.name, t.kind, t.bucket, if r2::saved_secret(data, &t.id).is_some() { "已存" } else { "未存" }, t.last_ok, t.last_error.as_ref().map(|e| format!("，最后的错误：{e}")).unwrap_or_default()));
+        }
+        h.push_str("
+喜好与风格：
+");
+        for s in self.styles_list() {
+            h.push_str(&format!("  {}{}：标注 {}（保留 {}），参考照片 {}，导入 {}，其他模型 {}，训练 {}
+", if s.name.is_empty() { "默认" } else { &s.name }, if s.is_default { "（默认）" } else { "" }, s.info.labels, s.info.keeps, s.info.refs, s.info.imported, s.info.other_dim, s.info.trained));
+        }
+        let text = crate::diagnostics::report(&crate::diagnostics::logs_dir(data), &h, &secrets);
+        let out = PathBuf::from(out);
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| crate::errors::io(&e, parent, 0))?;
+        }
+        std::fs::write(&out, text.as_bytes()).map_err(|e| crate::errors::io(&e, &out, text.len() as u64))?;
+        Ok(out.to_string_lossy().into_owned())
+    }
+
     // ------------------------------------------------------------ 缓存
 
     /// Walks tens of thousands of thumbnails on a big install.
@@ -2641,6 +2712,35 @@ mod tests {
         assert!(!r.cancelled);
         assert_eq!((r.copied, r.skipped), (3, 1));
         drop(e);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 诊断文件：有版本、日志和崩溃记录，没有任何密码、令牌、NAS 用户名、Access Key。
+    #[test]
+    fn diagnostics_never_carry_passwords_or_tokens() {
+        let (e, root, _) = engine("diag");
+        let data = e.paths.data.clone();
+        let share = nas::Share { id: "n1".into(), name: "Home NAS".into(), host: "nas.local".into(), user: "alice-nas-user".into(), enabled: false };
+        nas::save(&data, std::slice::from_ref(&share)).unwrap();
+        nas::remember_password(&data, &share, "hunter2-nas-pw").unwrap();
+        let mut cfg = r2::load(&data);
+        cfg.targets.push(r2::Target { id: "t1".into(), name: "My R2".into(), kind: "r2".into(), account: "acct-0123456789".into(), bucket: "photos-taste".into(), access_key: "AKIA-ACCESS-KEY-ID".into(), ..Default::default() });
+        r2::save(&data, &cfg).unwrap();
+        r2::remember_secret(&data, "t1", "s3cr3t-r2-token").unwrap();
+        let logs = PathBuf::from(e.diagnostics_dir());
+        assert_eq!(logs, data.join("logs"));
+        std::fs::write(logs.join("app.log"), "2026-10-26 connect smb://alice-nas-user@nas.local with hunter2-nas-pw\nproxy http://bob:pa55@proxy:8080\n").unwrap();
+        std::fs::write(logs.join("crash-20261026-010203.txt"), "panicked at engine.rs: token s3cr3t-r2-token key AKIA-ACCESS-KEY-ID").unwrap();
+        std::fs::write(logs.join("exit-20261026-010203.txt"), "REASON_LOW_MEMORY").unwrap();
+        let out = root.join("export").join("diag.txt");
+        assert_eq!(e.diagnostics_export(&out.to_string_lossy()).unwrap(), out.to_string_lossy());
+        let text = std::fs::read_to_string(&out).unwrap();
+        for bad in ["hunter2-nas-pw", "alice-nas-user", "s3cr3t-r2-token", "AKIA-ACCESS-KEY-ID", "acct-0123456789", "pa55", "bob:"] {
+            assert!(!text.contains(bad), "诊断里出现了 {bad}：\n{text}");
+        }
+        for good in ["0.0.0-test", "Home NAS", "photos-taste", "panicked at engine.rs", "REASON_LOW_MEMORY", "===== app.log ====="] {
+            assert!(text.contains(good), "诊断里应该有 {good}：\n{text}");
+        }
         let _ = std::fs::remove_dir_all(&root);
     }
 

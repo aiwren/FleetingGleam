@@ -11,6 +11,7 @@ pub mod cache;
 pub mod colorsig;
 pub mod consistency;
 pub mod decide;
+pub mod diagnostics;
 pub mod engine;
 pub mod errors;
 pub mod facepipe;

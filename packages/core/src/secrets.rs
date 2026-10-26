@@ -81,6 +81,11 @@ pub fn get(dir: &Path, id: &str) -> Option<String> {
     String::from_utf8(plain).ok()
 }
 
+/// 仓库里存的全部秘密的明文。只给诊断用：导出诊断信息前把它们从文字里抹掉。
+pub fn all_values(dir: &Path) -> Vec<String> {
+    load(dir).keys().filter_map(|id| get(dir, id)).collect()
+}
+
 pub fn delete(dir: &Path, id: &str) {
     let mut map = load(dir);
     if map.remove(id).is_some() {

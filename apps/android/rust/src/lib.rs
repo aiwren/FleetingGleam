@@ -365,6 +365,9 @@ fn dispatch(e: &Arc<Engine>, method: &str, a: &Value) -> Result<Value, String> {
         // 缓存
         "cache_size" => out(e.cache_size()),
         "clear_cache" => out(e.clear_cache()?),
+        // 诊断
+        "diagnostics_export" => out(e.diagnostics_export(&s(a, "out")?)?),
+        "diagnostics_dir" => out(e.diagnostics_dir()),
         other => Err(format!("unknown method `{other}`")),
     }
 }
