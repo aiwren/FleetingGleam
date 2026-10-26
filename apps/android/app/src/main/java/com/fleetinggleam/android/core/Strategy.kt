@@ -36,11 +36,20 @@ object Strategy {
         return if (capableOfHigh(machine())) "high" else "fast"
     }
 
-    /** The analysis for this app, settled on (and remembered) the first time it is needed. */
-    suspend fun resolveTier(): String {
-        val tier = predictTier()
+    /**
+     * 记下这台手机定下的模型——只在它要的包**下载成功（或本来就在）之后**调。以前下载前就写，下载一取消档位就锁死在没装的那档（审查第 24 条）。
+     */
+    fun settle(tier: String) {
         if (Settings.value.tier == null) Settings.set { it.copy(tier = tier) }
-        return tier
+    }
+
+    /**
+     * 示例照片用哪一档：已经定下的、或手机上已经有的那档（不用下载）；都没有就用最小的标准模型。不记下来——示例只是看一眼效果。
+     */
+    suspend fun sampleTier(): String {
+        Settings.value.tier?.let { return it }
+        Models.refresh()
+        return if (Models.installed(PackIds.HIGH) && !Models.installed(PackIds.STANDARD)) "high" else "fast"
     }
 
     /** The tier to analyse with right now, without waiting: what was settled on, or the quick one while nothing is. */

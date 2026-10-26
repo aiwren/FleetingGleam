@@ -51,7 +51,19 @@
    "tierInstalled": "已安装",
    "tierHint": "换档位后，正在看的项目会重新评估一遍。",
    "glass": "液态玻璃",
-   "glassDesc": "标签栏和浮动控件折射后面的内容。关掉后换成普通磨砂，老机器上更流畅。"
+   "glassDesc": "标签栏和浮动控件折射后面的内容。关掉后换成普通磨砂，老机器上更流畅。",
+   "learnResetTitle": "重置已学习的偏好？",
+   "learnResetBody": "学到的 {{labels}} 次判断和 {{refs}} 张参考照片会被清除，无法恢复。想留一份，先到「备份」里导出喜好。",
+   "learnResetAction": "重置",
+   "mirrors": "NAS / 网盘副本",
+   "mirrorsDesc": "从 NAS、网盘选的文件夹，照片会复制一份在手机上。清掉后下次打开项目重新拉，分析结果保留。",
+   "mirrorNas": "NAS · {{name}}",
+   "mirrorSaf": "网盘 · {{name}}",
+   "diagnostics": "导出诊断信息",
+   "diagnosticsDesc": "版本、系统、设置（不含密码和令牌）、最近的日志与崩溃记录，存成一个文本文件。只存在你选的位置，发不发给开发者由你决定。",
+   "diagnosticsBtn": "导出",
+   "diagnosticsDone": "已存好",
+   "diagnosticsFailed": "没能导出：{{error}}"
   },
   "cull": {
    "hint": "点一张照片选中，底栏可以保留、淘汰或放大查看；单张模式里上推留下、下拉淘汰。",
@@ -66,7 +78,8 @@
    "bgDone": "「{{name}}」分析完成",
    "bgFailed": "「{{name}}」分析出错：{{error}}",
    "open": "打开",
-   "reevalDone": "已按新喜好重排"
+   "reevalDone": "已按新喜好重排",
+   "offline": "NAS「{{name}}」没连上，显示上次同步的照片"
   },
   "models": {
    "background": "后台下载",
@@ -76,12 +89,23 @@
    "bundle": "分析所需的模型",
    "pill": "下载中 {{pct}}%",
    "skip": "先跳过",
-   "skipBody": "跳过后照常分析，只是暂时没有闭眼检测和人物识别；以后在设置 → 模型与存储里可以再下载。"
+   "skipBody": "跳过后照常分析，只是暂时没有闭眼检测和人物识别；以后在设置 → 模型与存储里可以再下载。",
+   "useStandard": "先用标准模型（{{size}}）",
+   "useStandardDesc": "更小、更快；以后可以在 设置 → 分析 里换成更好的那档。",
+   "sampleNote": "示例照片也得先有分析模型才能看效果，这里挑的是最小的一档；下好之后分析你自己的照片不用再下。",
+   "metered": "现在连的是按流量计费的网络（移动数据或热点），这次要用掉约 {{size}} 流量。",
+   "useStandardHere": "先用手机上已有的标准模型"
   },
   "organize": {
    "toAlbum": "导出保留的照片到相册",
    "toAlbumDesc": "复制 {{count}} 张到相册「{{where}}」，原图不动",
-   "toFolder": "导出到一个文件夹…"
+   "toFolder": "导出到一个文件夹…",
+   "offline": "NAS 没连上，连上后才能做这一步",
+   "stop": "停止",
+   "stopping": "正在停下…",
+   "exportCancelled": "已停下：导出了 {{count}} 张，剩下的没动。",
+   "exportedSame": "{{n}} 张目标文件夹里已有一模一样的，跳过了",
+   "exportFailedN": "{{n}} 张没导出："
   },
   "tab": {
    "photos": "照片"
@@ -114,11 +138,40 @@
    "resume": "已分析 {{done}} 张，这次只分析剩下的。"
   },
   "scan": {
-   "landing": "分析出结果的照片会陆续落到这里"
+   "landing": "分析出结果的照片会陆续落到这里",
+   "timeoutTitle": "分析先停在这里了",
+   "timeoutBody": "已分析 {{done}} 张（共 {{total}} 张）。系统一天只让后台分析跑 6 小时，打开应用就能接着分析，分析过的都还在。",
+   "pausedHot": "手机太热，已暂停（{{done}}/{{total}}）",
+   "pausedBattery": "电量太低，已暂停（{{done}}/{{total}}）",
+   "pausedHotBody": "降温后自动接着分析",
+   "pausedBatteryBody": "充上电后自动接着分析"
   },
   "cmp": {
    "keepNth": "留第 {{n}} 张",
    "groupShort": "第 {{i}} / {{n}} 组"
+  },
+  "styles": {
+   "resetTitle": "清空「{{name}}」？",
+   "resetBody": "它学到的 {{labels}} 次判断和 {{refs}} 张参考照片会被清除，无法恢复；风格本身和在用它的项目不变。",
+   "resetAction": "清空"
+  },
+  "err": {
+   "space": "空间不够：还需要 {{need}}，手机只剩 {{avail}}。先腾点空间再试。",
+   "spaceShort": "手机空间不够，先腾点空间再试。",
+   "verify": "下载的文件不完整，重试一次。",
+   "net": "连不上下载地址，检查网络或代理后重试。",
+   "auth": "用户名或密码不对，去设置里重新输入。",
+   "denied": "没有访问权限。"
+  },
+  "nas": {
+   "wrongPassword": "密码不对",
+   "unreachable": "连不上",
+   "denied": "没有访问权限",
+   "toSettings": "去设置",
+   "reenter": "重新输入密码",
+   "authOffline": "NAS「{{name}}」的用户名或密码不对，显示上次同步的照片",
+   "authError": "这个项目在 NAS「{{name}}」上，用户名或密码不对，去设置里重新输入。",
+   "deniedError": "这个项目在 NAS「{{name}}」上，这个账号没有访问权限。"
   }
  },
  "models": {

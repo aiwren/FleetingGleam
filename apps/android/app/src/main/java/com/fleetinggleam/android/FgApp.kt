@@ -20,11 +20,14 @@ import kotlinx.coroutines.launch
 class FgApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        // 最先装：之后哪一步崩了都有记录
+        com.fleetinggleam.android.core.Diagnostics.init(this, runCatching { packageManager.getPackageInfo(packageName, 0).let { "${it.versionName} (${it.longVersionCode})" } }.getOrDefault("?"))
         I18n.init(this)
         Settings.init(this)
         com.fleetinggleam.android.core.UiPrefs.init(this)
         Core.init(this, packageManager.getPackageInfo(packageName, 0).versionName ?: "0.1.0")
         Models.init(this)
+        com.fleetinggleam.android.core.Media.init(this)
         Nas.init()
         Backup.watch()
         Session.init(this)

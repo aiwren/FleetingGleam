@@ -81,6 +81,8 @@ fun StylesScreen(from: String, onBack: () -> Unit) {
     val query = search.query
     var sort by remember { mutableStateOf("name") }
     var confirming by remember { mutableStateOf<StyleInfo?>(null) }
+    /** 清空一个风格学到的东西前先问一句（和删除同样的确认框，审查第 19 条）。 */
+    var resetting by remember { mutableStateOf<StyleInfo?>(null) }
     var creating by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { Styles.refresh() }
     val projects = store.projects.filter { it.trashed == null }
@@ -158,7 +160,7 @@ fun StylesScreen(from: String, onBack: () -> Unit) {
                     Box(Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).then(Modifier.anchor(anchor)).clickable {
                         overlay.showMenu(anchor.value, buildList {
                             if (!s.isDefault) add(com.fleetinggleam.android.ui.components.MenuItem(t("styles.makeDefault")) { scope.launch { Styles.setDefault(s.id) } })
-                            if (hasData) add(com.fleetinggleam.android.ui.components.MenuItem(t("styles.reset")) { scope.launch { Styles.reset(s.id) } })
+                            if (hasData) add(com.fleetinggleam.android.ui.components.MenuItem(t("styles.reset")) { resetting = s })
                             if (!s.isDefault) add(com.fleetinggleam.android.ui.components.MenuItem(t("styles.delete")) { confirming = s })
                         })
                     }, contentAlignment = Alignment.Center) { FgIcon(Icons.MORE, size = 18.dp, stroke = 1.5f) }
@@ -220,6 +222,14 @@ fun StylesScreen(from: String, onBack: () -> Unit) {
                     FgSwitch(learnNow, { learnNow = it }, t("styles.newLearn"))
                 }
             }
+        }
+    }
+    resetting?.let { s ->
+        FgDialog(true, { resetting = null }, t("android.styles.resetTitle", "name" to s.name.trim().ifEmpty { t("styles.defaultName") }), footer = {
+            FgButton(t("organize.cancel"), { resetting = null })
+            FgButton(t("android.styles.resetAction"), { resetting = null; scope.launch { Styles.reset(s.id) } }, on = true)
+        }) {
+            Text(t("android.styles.resetBody", "labels" to s.info.labels, "refs" to s.info.refs), style = Type.body.copy(color = c.ink))
         }
     }
     confirming?.let { s ->

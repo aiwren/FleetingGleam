@@ -85,14 +85,18 @@ fun OrganizeDialogs(project: Project, open: Boolean, onDismissMenu: () -> Unit) 
     var progress by remember { mutableStateOf(Progress()) }
     var result by remember { mutableStateOf<Triple<Int, Int, List<String>>?>(null) }
     var exportErr by remember { mutableStateOf<String?>(null) }
+    var exportRes by remember { mutableStateOf<ExportResult?>(null) }
+    var stopping by remember { mutableStateOf(false) }
     val nasShares = com.fleetinggleam.android.core.Nas.shares.collectAsState().value.filter { it.enabled }
+    // 项目所在的 NAS 没连上：导出到 NAS、移走淘汰的（进 NAS 的回收文件夹）做不了，先置灰（审查第 30 条）
+    val offline by Session.offline.collectAsState()
     var scopeAll by remember { mutableStateOf(false) }
     val keep = photos.filter { decisions[it.path]?.state == "keep" }
     val rejectAll = photos.filter { decisions[it.path]?.state == "reject" }
     val rejectManual = rejectAll.filter { decisions[it.path]?.manual == true }
     val trashList = if (scopeAll) rejectAll else rejectManual
 
-    fun open(d: Dlg) { result = null; exportErr = null; phase = "confirm"; progress = Progress(); dlg = d; if (d != Dlg.Menu) onDismissMenu() }
+    fun open(d: Dlg) { result = null; exportErr = null; exportRes = null; stopping = false; phase = "confirm"; progress = Progress(); dlg = d; if (d != Dlg.Menu) onDismissMenu() }
     fun close() { val reload = phase == "done"; dlg = null; onDismissMenu(); if (reload) Session.reload() }
 
     androidx.compose.runtime.LaunchedEffect(open) { if (open) open(Dlg.Menu) }
@@ -116,14 +120,14 @@ fun OrganizeDialogs(project: Project, open: Boolean, onDismissMenu: () -> Unit) 
                     }
                 }
                 // 导出到 NAS：选择器只列 NAS；选中的是那个文件夹的镜像路径，核心库认出来就直接传到 NAS 上
-                if (nasShares.isNotEmpty()) OrgItem(Icons.NAS, t("organize.exportNasItem"), if (keep.isEmpty()) t("organize.none") else t("organize.exportNasDesc", "count" to keep.size), keep.isNotEmpty()) {
+                if (nasShares.isNotEmpty()) OrgItem(Icons.NAS, t("organize.exportNasItem"), if (offline) t("android.organize.offline") else if (keep.isEmpty()) t("organize.none") else t("organize.exportNasDesc", "count" to keep.size), keep.isNotEmpty() && !offline) {
                     dlg = null; onDismissMenu()
                     scope.launch {
                         val path = com.fleetinggleam.android.core.Nas.pick(nasShares.singleOrNull()?.id, source = "nas", title = t("organize.exportNasPick"), choose = t("organize.exportHere")) ?: return@launch
                         open(Dlg.Export(Dest.Path(path, com.fleetinggleam.android.core.Nas.label(path))))
                     }
                 }
-                OrgItem(Icons.TRASH, t("organize.trashItem"), if (rejectAll.isEmpty()) t("organize.none") else t("organize.trashDesc", "count" to rejectAll.size), rejectAll.isNotEmpty(), box = 14f) {
+                OrgItem(Icons.TRASH, t("organize.trashItem"), if (offline) t("android.organize.offline") else if (rejectAll.isEmpty()) t("organize.none") else t("organize.trashDesc", "count" to rejectAll.size), rejectAll.isNotEmpty() && !offline, box = 14f) {
                     scopeAll = rejectManual.isEmpty(); open(Dlg.Trash)
                 }
                 }
@@ -140,10 +144,20 @@ fun OrganizeDialogs(project: Project, open: Boolean, onDismissMenu: () -> Unit) 
         val label = when (val x = d.dest) { is Dest.Path -> x.label; is Dest.Tree -> x.label }
         FgDialog(true, { if (phase != "running") close() }, t("organize.exportTitle"), locked = phase == "running", footer = {
             if (phase == "done") FgButton(t("organize.done"), { close() }, primary = true, small = true)
-            else {
-                FgButton(t("organize.cancel"), { close() }, enabled = phase != "running", small = true)
-                FgButton(if (phase == "running") t("organize.exporting", "done" to progress.done, "total" to progress.total) else t("organize.exportGo"), {
-                    phase = "running"; progress = Progress(0, keep.size)
+            else if (phase == "running") {
+                // 导出中可以停：核心那边在当前这张写完后停下，网盘那边同样（审查第 35 条）
+                FgButton(if (stopping) t("android.organize.stopping") else t("android.organize.stop"), {
+                    stopping = true
+                    when (d.dest) {
+                        is Dest.Path -> scope.launch { runCatching { Core.call("export_cancel") } }
+                        is Dest.Tree -> Organize.treeCancel = true
+                    }
+                }, small = true, enabled = !stopping)
+                FgButton(t("organize.exporting", "done" to progress.done, "total" to progress.total), {}, primary = true, small = true, enabled = false)
+            } else {
+                FgButton(t("organize.cancel"), { close() }, small = true)
+                FgButton(t("organize.exportGo"), {
+                    phase = "running"; progress = Progress(0, keep.size); stopping = false
                     scope.launch {
                         val paths = keep.map { it.path }
                         val r = runCatching {
@@ -151,17 +165,28 @@ fun OrganizeDialogs(project: Project, open: Boolean, onDismissMenu: () -> Unit) 
                                 is Dest.Path -> Organize.exportTo(ctx, paths, x.path)
                                 is Dest.Tree -> withContext(Dispatchers.IO) { Organize.exportToTree(ctx, paths, x.uri) { a, b -> progress = Progress(a, b) } }
                             }
-                        }.getOrElse { exportErr = it.message; ExportResult(0, paths.size, label) }
-                        result = Triple(r.copied, r.skipped, emptyList()); phase = "done"
+                        }.getOrElse { exportErr = it.message; ExportResult(0, 0, label) }
+                        exportRes = r; phase = "done"
                     }
-                }, primary = true, small = true, enabled = phase != "running")
+                }, primary = true, small = true)
             }
         }) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (phase == "done") {
-                    val r = result
-                    if (exportErr != null) Text(t("organize.exportFailed", "error" to exportErr), style = Type.body.copy(color = c.ink))
-                    else Text(t("organize.exported", "count" to (r?.first ?: 0)) + if ((r?.second ?: 0) > 0) " · ${t("organize.exportedSkipped", "n" to r!!.second)}" else "", style = Type.body.copy(color = c.ink))
+                    val r = exportRes
+                    // 没开始就失败了（空间不够之类）：按错误前缀说清楚
+                    if (exportErr != null) Text(com.fleetinggleam.android.core.Errors.explain(exportErr) ?: t("organize.exportFailed", "error" to exportErr), style = Type.body.copy(color = c.ink))
+                    else if (r != null) {
+                        Text(if (r.cancelled) t("android.organize.exportCancelled", "count" to r.copied) else t("organize.exported", "count" to r.copied), style = Type.body.copy(color = c.ink))
+                        if (r.skipped > 0) Text(t("android.organize.exportedSame", "n" to r.skipped), style = Type.rowDesc.copy(color = c.ash))
+                        // 没导出的：同一个原因的归在一起，各举一张
+                        if (r.failed.isNotEmpty()) {
+                            Text(t("android.organize.exportFailedN", "n" to r.failed.size), style = Type.rowDesc.copy(color = c.ink))
+                            r.failed.groupBy { com.fleetinggleam.android.core.Errors.explain(it.error) ?: com.fleetinggleam.android.core.Errors.detail(it.error).ifEmpty { "?" } }.forEach { (why, list) ->
+                                Text("· $why（${list.size}）${File(list[0].path).name}" + if (list.size > 1) " …" else "", style = Type.rowDesc.copy(color = c.ash), maxLines = 2, overflow = Ellipsis)
+                            }
+                        }
+                    }
                     Text(label, style = Type.monoSmall.copy(color = c.ash))
                 } else {
                     Text(t("organize.exportBody", "count" to keep.size), style = Type.body.copy(color = c.ink))

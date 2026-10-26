@@ -48,6 +48,10 @@ object Session {
     /** 出错时的文案键或消息（"cull.emptyFolder"、"cull.nasOffline"……）。 */
     val error = MutableStateFlow<String?>(null)
     val nasOff = MutableStateFlow("")
+    /** 项目所在的 NAS 没连上，照片是本机镜像里上次同步的：顶上提示一句，NAS 上的整理操作置灰（`nasOff` 是那台的名字）。 */
+    val offline = MutableStateFlow(false)
+    /** 没连上的那台为什么没连上："auth"（密码不对 → 去设置）、"denied"、"net"（连不上 → 重试）。 */
+    val nasFailure = MutableStateFlow("net")
     /** 读权限失效的那个系统文件夹镜像（`cull.safExpired` 时界面拿它去"重新授权"）。 */
     @Volatile var expired: Media.Mirror? = null; private set
     val etaSeconds = MutableStateFlow<Int?>(null)
@@ -192,7 +196,7 @@ object Session {
         // 同样不在调用方的线程上等引擎（"重试"按钮、重新授权会从主线程进来）
         if (left != null && left != run?.id) scope.launch { runCatching { Core.call("scan_cancel", args("key" to left)) } }
         undoStack.clear(); undoCount.value = 0
-        error.value = null; celebrate.value = false; dirty.value = 0; nasProg.value = null; peopleProg.value = null; mediaProg.value = null
+        error.value = null; celebrate.value = false; dirty.value = 0; nasProg.value = null; peopleProg.value = null; mediaProg.value = null; offline.value = false
         if (run == null && pausedProject == null) paused.value = Pause.None
         // 上一个项目分析中的实时表：没有分析在后台跑就清掉（在跑的那个回来时还要用，留着）
         if (run == null) { results.clear(); stages.clear(); live.clear(); lastStage = null }
@@ -209,15 +213,25 @@ object Session {
                 if (tok != token) return@launch
                 val disabled = shares.filter { !it.enabled }
                 if (disabled.isNotEmpty()) { photos.value = emptyList(); files.value = emptyList(); phase.value = Phase.Idle; nasOff.value = disabled.joinToString(", ") { it.name }; error.value = "cull.nasDisabled"; return@launch }
+                // NAS 没连上：不再清空照片、整个打不开——核心跳过同步、用本机镜像（`Probe.offline`），这里只提示"显示上次同步的照片"（审查第 30 条）
                 val off = shares.filter { !it.connected }
-                if (off.isNotEmpty()) { photos.value = emptyList(); files.value = emptyList(); phase.value = Phase.Idle; nasOff.value = off.joinToString(", ") { it.name }; error.value = "cull.nasOffline"; return@launch }
+                if (off.isNotEmpty()) { nasOff.value = off.joinToString(", ") { it.name }; nasFailure.value = off.firstNotNullOfOrNull { s -> s.failure?.takeIf { it != "net" } } ?: "net" }
                 // a folder picked through the system picker that has no path: bring its new photos into the mirror first
                 Media.syncMirrors(app, project.folders, { done, total, name -> nasProg.value = if (done >= total) null else NasProgress(name, done, total) }, { tok != token })
                 nasProg.value = null
-                val probe = Core.get<Probe>("probe_folder", args("dirs" to project.folders, "compute" to "auto", "quality" to Strategy.currentTier()))
+                val probe = try {
+                    Core.get<Probe>("probe_folder", args("dirs" to project.folders, "compute" to "auto", "quality" to Strategy.currentTier()))
+                } catch (e: Exception) {
+                    // 还是老核心（NAS 不通时 probe 报错）：照旧说连不上，给"重试"
+                    if (off.isEmpty() || e.message == "cancelled") throw e
+                    if (tok == token) { photos.value = emptyList(); files.value = emptyList(); phase.value = Phase.Idle; error.value = "cull.nasOffline" }
+                    return@launch
+                }
                 if (tok != token) return@launch
+                offline.value = probe.offline || off.isNotEmpty()
                 files.value = probe.files; bytes.value = probe.bytes; uncached.value = probe.uncached
-                if (probe.files.isEmpty()) { photos.value = emptyList(); phase.value = Phase.Idle; error.value = "cull.emptyFolder"; return@launch }
+                // 没连上、本机也还没有同步过的照片：说连不上，不说"文件夹是空的"
+                if (probe.files.isEmpty()) { photos.value = emptyList(); phase.value = Phase.Idle; error.value = if (offline.value) "cull.nasOffline" else "cull.emptyFolder"; return@launch }
                 if (project.count != probe.files.size) Projects.update(project.id) { it.copy(count = probe.files.size) }
                 if (probe.uncached > 0) {
                     phase.value = Phase.Ready
@@ -259,7 +273,7 @@ object Session {
      * `quiet` = 只是从缓存打开（没有进度事件，不挂前台服务）；否则是一次真正的分析：它属于 `project`，离开那个项目也照跑，
      * 跑完时如果页面还开着它就把结果交给页面，不然只更新项目封面、弹一句"分析完成"。`attach` = 页面现在就显示这次分析。
      */
-    private suspend fun runScan(project: Project, total: Int, quiet: Boolean, tok: Int, force: Boolean = false, attach: Boolean = true) {
+    private suspend fun runScan(project: Project, total: Int, quiet: Boolean, tok: Int, force: Boolean = false, attach: Boolean = true, tier: String? = null) {
         // 诊断：每次分析 / 读取从哪里来（作者 2026-10-23："重新分析"点了没反应）
         android.util.Log.i("FleetingGleam", "runScan ${project.name}：${if (quiet) "安静读取" else "分析"}${if (force) "（强制）" else ""}，来自 ${Throwable().stackTrace.getOrNull(1)?.let { "${it.methodName}:${it.lineNumber}" }}")
         if (quiet) phase.value = Phase.Loading
@@ -276,7 +290,7 @@ object Session {
         fun mine() = if (quiet) tok == token else attached && current()?.id == project.id
         try {
             val res = Core.get<List<Photo>>("scan_project", args(
-                "key" to project.id, "dirs" to project.folders, "compute" to "auto", "quality" to Strategy.currentTier(), "style" to project.style,
+                "key" to project.id, "dirs" to project.folders, "compute" to "auto", "quality" to (tier ?: Strategy.currentTier()), "style" to project.style,
                 "learn" to (Settings.value.learn && project.learn != false), "quiet" to quiet, "force" to force, "eye_method" to Strategy.eyeMethodNow(),
                 // 边分析边判：和分析完的取舍用同一套参数
                 "live" to if (quiet) null else mapOf("keep_ratio" to (project.keepCap ?: 1f), "pick_mode" to (project.pickMode ?: "diverse"), "one_per_group" to (project.onePerGroup ?: false), "overrides" to project.overrides),
@@ -305,24 +319,40 @@ object Session {
         }
     }
 
-    /** 这次分析结束了（完成、停下或出错）：不再算"正在分析"，前台服务撤掉。 */
+    /**
+     * 这次分析结束了（完成、停下或出错）：不再算"正在分析"，前台服务撤掉。因为太热 / 电量低停下的除外：前台服务留着、通知改成"已暂停"，
+     * 好转后接着分析时还用它——那时应用多半在后台，系统不让从后台再启前台服务（审查第 29 条）。
+     */
     private fun finishRunning() {
         running.value = null
-        Scans.stopped()
+        if (paused.value == Pause.None || pausedProject == null) Scans.stopped()
     }
 
-    /** "开始分析"：应用定下模型；它要的（含眼睛与人物）第一次在一个问题里下载。另一个项目还在分析时先问一句。 */
-    fun startScan() {
+    /**
+     * "开始分析"：应用定下模型；它要的（含眼睛与人物）第一次在一个问题里下载，下载成功后才记下这一档（取消了下次照样问）。
+     * 要下的是大模型时询问框里可以"先用标准模型"。另一个项目还在分析时先问一句。
+     * `sample`：示例照片——用不必下载或最小的那档，不记下档位，询问框里说明为什么要下载。
+     */
+    fun startScan(sample: Boolean = false) {
         val project = current() ?: return
         val run = running.value
         if (run != null && run.id != project.id) { conflict.value = run; return }
         val tok = token
+        val demo = sample || Samples.isSample(app, project)
         scope.launch {
-            val tier = Strategy.resolveTier()
-            if (Models.ensurePacks(Strategy.analysisPacks(tier), optional = setOf(PackIds.DETECT, PackIds.EYES, PackIds.FACES)) == Answer.Cancelled) return@launch
+            val extras = setOf(PackIds.DETECT, PackIds.EYES, PackIds.FACES)
+            var tier = if (demo) Strategy.sampleTier() else Strategy.predictTier()
+            val alt = if (tier != "fast") Strategy.analysisPacks("fast") else null
+            var answer = Models.ensurePacks(Strategy.analysisPacks(tier), optional = extras, fallback = alt, note = if (demo) "android.models.sampleNote" else null)
+            if (answer == Answer.Fallback) {
+                tier = "fast"
+                answer = Models.ensurePacks(Strategy.analysisPacks(tier), optional = extras, note = if (demo) "android.models.sampleNote" else null)
+            }
+            if (answer == Answer.Cancelled) return@launch
+            if (!demo) Strategy.settle(tier)
             if (tok != token) return@launch
-            paused.value = Pause.None
-            runScan(project, files.value.size, quiet = false, tok = tok)
+            paused.value = Pause.None; pausedProject = null
+            runScan(project, files.value.size, quiet = false, tok = tok, tier = tier)
         }
     }
 
@@ -353,11 +383,22 @@ object Session {
         stopScan()
     }
 
+    /** 不再等着接着分析（用户点了通知栏的"停止"、前台服务到了时限）：忘掉暂停的那个项目，撤掉为它留着的前台服务。 */
+    fun dropPause() {
+        if (paused.value == Pause.None && pausedProject == null) return
+        pausedProject = null
+        paused.value = Pause.None
+        if (running.value == null) Scans.stopped()
+    }
+
     fun resumeAfterPause() {
         if (paused.value == Pause.None) return
         paused.value = Pause.None
-        val p = pausedProject ?: return
+        val p = pausedProject
         pausedProject = null
+        // 留着的前台服务：接着分析时还用它；没接上（项目没了、下载被取消、页面换了）就撤掉，别一直挂着"已暂停"
+        scope.launch { delay(30_000); if (running.value == null && paused.value == Pause.None) Scans.stopped() }
+        if (p == null) return
         val project = Projects.store.value.projects.firstOrNull { it.id == p.id && it.trashed == null } ?: return
         if (current()?.id == project.id) { if (phase.value == Phase.Ready) startScan(); return }
         // 那个项目已经不在眼前：在后台接着分析（先把文件列表拿回来，回到它时照片墙要用）

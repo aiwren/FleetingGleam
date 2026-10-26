@@ -40,26 +40,43 @@ object Organize {
         return r
     }
 
-    /** 导出到换算不出路径的文件夹（网盘等）：逐张用 ContentResolver 复制；重名的加序号。 */
+    /** 正在导出到网盘的那次要不要停（"停止"按钮）；核心那边的导出用 `export_cancel`。 */
+    @Volatile var treeCancel = false
+
+    /**
+     * 导出到换算不出路径的文件夹（网盘等）：逐张用 ContentResolver 复制；重名的加序号。点了"停止"就在这一张写完后停下（`cancelled`）；
+     * 一张写失败了删掉写了一半的那个文件，原因记进 `failed`（审查第 35 条）。
+     */
     fun exportToTree(ctx: Context, paths: List<String>, tree: Uri, onProgress: (Int, Int) -> Unit): ExportResult {
-        val dir = DocumentFile.fromTreeUri(ctx, tree) ?: return ExportResult(0, paths.size, tree.toString())
+        treeCancel = false
+        val dir = DocumentFile.fromTreeUri(ctx, tree) ?: return ExportResult(0, 0, tree.toString(), failed = paths.map { ExportFailure(it, "denied:tree") })
         val names = dir.listFiles().mapNotNull { it.name }.toMutableSet()
-        var copied = 0; var skipped = 0
-        paths.forEachIndexed { i, p ->
+        var copied = 0
+        val failed = mutableListOf<ExportFailure>()
+        for ((i, p) in paths.withIndex()) {
+            if (treeCancel) return ExportResult(copied, 0, dir.name ?: tree.toString(), failed = failed, cancelled = true)
             val src = File(p)
-            val ok = runCatching {
+            var out: DocumentFile? = null
+            val r = runCatching {
                 var name = src.name
                 var n = 1
                 while (name in names) { name = "${src.nameWithoutExtension} ($n).${src.extension}"; n++ }
                 val mime = when (src.extension.lowercase()) { "png" -> "image/png"; "webp" -> "image/webp"; "heic", "heif" -> "image/heif"; else -> "image/jpeg" }
-                val out = dir.createFile(mime, name) ?: error("create")
-                ctx.contentResolver.openOutputStream(out.uri)?.use { o -> src.inputStream().use { it.copyTo(o) } } ?: error("open")
+                out = dir.createFile(mime, name) ?: error("denied:create")
+                val written = ctx.contentResolver.openOutputStream(out!!.uri)?.use { o -> src.inputStream().use { it.copyTo(o) } } ?: error("denied:open")
+                if (written != src.length()) error("short write")
                 names.add(name)
-            }.isSuccess
-            if (ok) copied++ else skipped++
+            }
+            if (r.isSuccess) copied++
+            else {
+                runCatching { out?.delete() }
+                val msg = r.exceptionOrNull()?.message.orEmpty()
+                // 写满了多半是空间不够（网盘的提供者给不出可用空间，只能这样猜）
+                failed.add(ExportFailure(p, if (Errors.parse(msg) != null) msg else if ("ENOSPC" in msg || "No space" in msg) "space:" else msg))
+            }
             onProgress(i + 1, paths.size)
         }
-        return ExportResult(copied, skipped, dir.name ?: tree.toString())
+        return ExportResult(copied, 0, dir.name ?: tree.toString(), failed = failed)
     }
 
     /**
@@ -104,14 +121,28 @@ object Organize {
         val ok = runCatching {
             // 能直接移动的提供者（大多数本地与网盘）就移动；不支持的复制过去再删
             DocumentsContract.moveDocument(ctx.contentResolver, doc.uri, parent.uri, bin.uri) != null
-        }.getOrDefault(false) || runCatching {
-            val out = bin.createFile(doc.type ?: "image/jpeg", doc.name ?: parts.last()) ?: return@runCatching false
-            ctx.contentResolver.openInputStream(doc.uri)?.use { i -> ctx.contentResolver.openOutputStream(out.uri)?.use { i.copyTo(it) } }
-            doc.delete()
-        }.getOrDefault(false)
+        }.getOrDefault(false) || copyThenDelete(ctx, doc, bin, parts.last())
         if (!ok) return null
         File(path).delete()
         return "${m.name}/$RECYCLE/$day"
+    }
+
+    /**
+     * 不支持直接移动的提供者：复制进回收文件夹，**确认写进去的字节数等于原图大小**才删原图。输入 / 输出流打不开、
+     * 复制到一半出错或字节数对不上，都删掉回收夹里那份残缺的、原图不动，算失败（以前流是 null 也照删原图，原图就没了）。
+     */
+    private fun copyThenDelete(ctx: Context, doc: DocumentFile, bin: DocumentFile, fallbackName: String): Boolean {
+        val out = runCatching { bin.createFile(doc.type ?: "image/jpeg", doc.name ?: fallbackName) }.getOrNull() ?: return false
+        val expected = doc.length()
+        val written = runCatching {
+            ctx.contentResolver.openInputStream(doc.uri)?.use { i -> ctx.contentResolver.openOutputStream(out.uri)?.use { o -> i.copyTo(o) } }
+        }.getOrNull()
+        // length() 取不到时是 0：这时只要求确实写进了东西
+        val ok = written != null && written > 0 && (expected <= 0 || written == expected)
+        if (!ok) { runCatching { out.delete() }; return false }
+        // 原图删不掉：回收夹里那份也撤掉，免得同一张出现两份
+        if (!runCatching { doc.delete() }.getOrDefault(false)) { runCatching { out.delete() }; return false }
+        return true
     }
 
     /** 照片已不在了：从项目的改判里忘掉（和桌面端一样）。 */

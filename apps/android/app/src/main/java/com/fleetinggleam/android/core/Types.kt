@@ -85,7 +85,8 @@ data class Decision(val state: String, val manual: Boolean = false, val reasons:
 }
 
 @Serializable data class ProbeFile(val path: String, val width: Int, val height: Int, val cached: Boolean)
-@Serializable data class Probe(val files: List<ProbeFile> = emptyList(), val bytes: Long = 0, val uncached: Int = 0)
+/** `offline`：NAS 没连上，核心跳过了同步、照片是本机镜像里上次同步的（第二轮约定，第 30 条）。 */
+@Serializable data class Probe(val files: List<ProbeFile> = emptyList(), val bytes: Long = 0, val uncached: Int = 0, val offline: Boolean = false)
 @Serializable data class Progress(val done: Int = 0, val total: Int = 0)
 /** "scan-decide" 里的一条：分析中这张照片眼下的判定。 */
 @Serializable data class Judged(val path: String, val decision: Decision)
@@ -97,7 +98,13 @@ data class Decision(val state: String, val manual: Boolean = false, val reasons:
 @Serializable data class ScanInfo(val cpuOnly: Boolean = false, val clip: String? = null, val model: String? = null, val vision: Boolean = false, val cores: Int = 1)
 
 /** 应用自己连接的一台 NAS。 */
-@Serializable data class Share(val id: String, val name: String, val host: String, val user: String = "", val enabled: Boolean = true, val local: String = "", val connected: Boolean = false)
+/** `error`：没连上时最后一次的原因，带约定的前缀（`auth:` 密码不对、`net:` 连不上、`denied:` 没权限）；连上时为 null（第 33 条）。 */
+@Serializable data class Share(val id: String, val name: String, val host: String, val user: String = "", val enabled: Boolean = true, val local: String = "", val connected: Boolean = false, val error: String? = null) {
+    /** 没连上的原因归成三类："auth" / "denied" / "net"（老核心没有 error 时按连不上算）。 */
+    val failure: String? get() = if (connected) null else Errors.parse(error)?.kind?.takeIf { it == "auth" || it == "denied" } ?: "net"
+}
+/** 一台 NAS 的镜像在本机占多少（`nas_mirror_usage`，第 31 条）。 */
+@Serializable data class MirrorUsage(val id: String, val name: String = "", val bytes: Long = 0)
 @Serializable data class NasEntry(val name: String, val dir: Boolean, val size: Long = 0)
 @Serializable data class Listing(val path: String, val local: String, val entries: List<NasEntry> = emptyList())
 @Serializable data class NasProgress(val share: String, val done: Int, val total: Int, val bytesDone: Long = 0, val bytesTotal: Long = 0)
@@ -124,7 +131,12 @@ data class Decision(val state: String, val manual: Boolean = false, val reasons:
 )
 
 @Serializable data class TrashResult(val moved: Int = 0, val failed: List<String> = emptyList(), val networkBins: List<String> = emptyList(), val deferred: List<String> = emptyList())
-@Serializable data class ExportResult(val copied: Int = 0, val skipped: Int = 0, val dest: String = "", val remote: Boolean = false)
+/**
+ * 导出的结果（第 35 条）：`skipped` 是目标里已有一模一样的（同名、同大小、同修改时间）；`failed` 列出没导出的与原因（约定的错误前缀串）；
+ * `cancelled` = 用户中途停下了。
+ */
+@Serializable data class ExportResult(val copied: Int = 0, val skipped: Int = 0, val dest: String = "", val remote: Boolean = false, val failed: List<ExportFailure> = emptyList(), val cancelled: Boolean = false)
+@Serializable data class ExportFailure(val path: String, val error: String = "")
 @Serializable data class Machine(val memoryGb: Int = 8, val cores: Int = 4, val accelerator: String = "cpu")
 @Serializable data class SceneText(val id: Int, val text: String)
 

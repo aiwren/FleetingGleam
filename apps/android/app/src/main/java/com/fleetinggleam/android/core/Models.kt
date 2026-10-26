@@ -7,6 +7,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import com.fleetinggleam.android.ui.components.Toasts
 
 /** 模型包的名字（和桌面端 src/models.ts 的 PackId 一样，多一个 Android 才用的 "detect"）。 */
@@ -15,8 +17,11 @@ object PackIds {
     const val EYES = "eyes"; const val FACES = "faces"; const val DETECT = "detect"; const val SCENETEXT = "scenetext"
 }
 
-/** `Skipped`：可选的包没下成，用户选了先不用（分析照常，只是少了那部分）。 */
-enum class Answer { Ready, Downloaded, Cancelled, Skipped }
+/**
+ * `Skipped`：可选的包没下成，用户选了先不用（分析照常，只是少了那部分）。
+ * `Fallback`：问要不要下大模型时，用户选了"先用标准模型"（调用方改去要标准模型那一套）。
+ */
+enum class Answer { Ready, Downloaded, Cancelled, Skipped, Fallback }
 
 /** `id` names the dialog's text: a pack, or "bundle" when several are fetched under one question (`ids` says which, `sizes` how big each is). */
 data class Gate(
@@ -35,6 +40,10 @@ data class Gate(
     val optional: Set<String> = emptySet(),
     /** 下载失败的那个包。 */
     val failed: String? = null,
+    /** 询问时可以改用的那一套更小的（"先用标准模型"）要下多少字节；null = 不提供这个选项。 */
+    val fallbackBytes: Long? = null,
+    /** 询问时多说一句（文案键），比如示例照片为什么要下载。 */
+    val note: String? = null,
 )
 
 /**
@@ -73,41 +82,64 @@ object Models {
     /** 这次运行里用户选了"先跳过"的可选包：不再追问（设置 → 模型与存储里随时可以再下）。 */
     private val skipped = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
-    suspend fun ensurePack(id: String, optional: Set<String> = emptySet()): Answer {
+    /**
+     * 同一时间只有一个对话框（核心也只允许一个下载）：后来的排在这里，等前一个答完（下载完、取消或跳过）再问。
+     * 以前直接覆盖 `_gate`，前一个下载完又把新的清掉，等着新的那一方永远卡住（审查第 20 条）。轮到时重新看一遍装没装——前一个可能刚好下了它。
+     */
+    private val turn = Mutex()
+
+    suspend fun ensurePack(id: String, optional: Set<String> = emptySet()): Answer = turn.withLock { ensurePackNow(id, optional) }
+
+    private suspend fun ensurePackNow(id: String, optional: Set<String>, note: String? = null): Answer {
         refresh()
         if (_packs.value.isEmpty() || installed(id)) return Answer.Ready
         if (id in optional && id in skipped) return Answer.Skipped
         val d = CompletableDeferred<Answer>()
         val bytes = try { Core.get<Long>("pack_size", args("id" to id)) } catch (e: Exception) {
             _gate.value = Gate(id = id, phase = "error", bytes = 0, error = e.message, resolve = d, optional = optional, failed = id)
-            return d.await()
+            return answer(d)
         }
-        _gate.value = Gate(id = id, phase = "ask", bytes = bytes, total = bytes, resolve = d, optional = optional)
-        return d.await()
+        _gate.value = Gate(id = id, phase = "ask", bytes = bytes, total = bytes, resolve = d, optional = optional, note = note)
+        return answer(d)
     }
 
     /**
      * Several packs under one question: the person is told the whole size once and agrees once. What is already here is left out; answers "ready"
      * when nothing is missing.
      */
-    suspend fun ensurePacks(ids: List<String>, optional: Set<String> = emptySet()): Answer {
+    suspend fun ensurePacks(ids: List<String>, optional: Set<String> = emptySet(), fallback: List<String>? = null, note: String? = null): Answer =
+        turn.withLock { ensurePacksNow(ids, optional, fallback, note) }
+
+    /** `fallback`：询问框里提供"先用标准模型"时那一套包（还缺的才算大小）；选了它答 `Fallback`。 */
+    private suspend fun ensurePacksNow(ids: List<String>, optional: Set<String>, fallback: List<String>? = null, note: String? = null): Answer {
         refresh()
         if (_packs.value.isEmpty()) return Answer.Ready
         // 必需的先下，可选的放后面：可选的失败时前面的已经到了
         val missing = ids.distinct().filter { !installed(it) && !(it in optional && it in skipped) }.sortedBy { it in optional }
         if (missing.isEmpty()) return if (ids.any { it in skipped && !installed(it) }) Answer.Skipped else Answer.Ready
-        if (missing.size == 1) return ensurePack(missing[0], optional)
+        // 改用的那一套和要下的一样（或者已经都在）就不提供
+        val alt = fallback?.distinct()?.filter { !installed(it) }?.takeIf { f -> f.toSet() != missing.toSet() }
+        val altBytes = alt?.let { f -> runCatching { f.sumOf { Core.get<Long>("pack_size", args("id" to it)) } }.getOrNull() }
+        if (missing.size == 1 && altBytes == null) return ensurePackNow(missing[0], optional, note)
         val d = CompletableDeferred<Answer>()
         val sizes = mutableListOf<Long>()
         for (id in missing) {
             try { sizes.add(Core.get<Long>("pack_size", args("id" to id))) } catch (e: Exception) {
                 _gate.value = Gate(id = "bundle", ids = missing, phase = "error", bytes = 0, error = e.message, resolve = d, optional = optional, failed = id)
-                return d.await()
+                return answer(d)
             }
         }
         val bytes = sizes.sum()
-        _gate.value = Gate(id = "bundle", ids = missing, sizes = sizes, phase = "ask", bytes = bytes, total = bytes, resolve = d, optional = optional)
-        return d.await()
+        _gate.value = Gate(id = "bundle", ids = missing, sizes = sizes, phase = "ask", bytes = bytes, total = bytes, resolve = d, optional = optional, fallbackBytes = altBytes, note = note)
+        return answer(d)
+    }
+
+    /** 询问框里选了"先用标准模型"：这个对话框答 `Fallback`，调用方接着去要标准模型那一套。 */
+    fun fallbackGate() {
+        val g = _gate.value ?: return
+        if (g.phase != "ask" || g.fallbackBytes == null) return
+        _gate.value = null
+        g.resolve.complete(Answer.Fallback)
     }
 
     /** 可选包下载失败后"先跳过"：没下到的可选包这次运行不再问，等着的那件事接着做（少了那部分）。 */
@@ -139,13 +171,13 @@ object Models {
                 base = 0
                 refresh()
                 val wasHidden = _gate.value?.hidden == true
-                _gate.value = null
+                clear(g)
                 if (wasHidden) Toasts.show(t("android.models.done", "name" to t(if (g.ids != null) "android.models.bundle" else "models.name.${g.id}")))
                 g.resolve.complete(Answer.Downloaded)
             } catch (e: Exception) {
                 base = 0
-                if (e.message?.contains("cancelled") == true) {
-                    _gate.value = null
+                if (Errors.isCancelled(e.message) || e.message?.contains("cancelled") == true) {
+                    clear(g)
                     g.resolve.complete(Answer.Cancelled)
                 } else {
                     // 出错了：后台的也把对话框拿回来，说清楚、可以重试
@@ -157,6 +189,18 @@ object Models {
             }
         }
     }
+
+    /**
+     * 等对话框的答复。等的那一方被取消了（比如设置页关掉了）对话框却还开着、下载还在跑：照样等它答完再放开排队的锁，
+     * 否则排在后面的会把它覆盖掉。
+     */
+    private suspend fun answer(d: CompletableDeferred<Answer>): Answer = try { d.await() } catch (e: kotlinx.coroutines.CancellationException) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { d.await() }
+        throw e
+    }
+
+    /** 撤掉这一次的对话框（只在它还是当前那个时）：别把排在后面、刚问上的那个清掉。 */
+    private fun clear(g: Gate) { if (_gate.value?.resolve === g.resolve) _gate.value = null }
 
     /** 下载转到后台（对话框收起）。 */
     fun hideGate() { _gate.value?.let { if (it.phase == "downloading") _gate.value = it.copy(hidden = true) } }

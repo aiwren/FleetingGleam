@@ -51,7 +51,19 @@
    "tierInstalled": "Installed",
    "tierHint": "After switching, the project in view is re-evaluated.",
    "glass": "Liquid glass",
-   "glassDesc": "The tab bar and floating controls refract what is behind them. Off, they are plain frosted panels, smoother on older phones."
+   "glassDesc": "The tab bar and floating controls refract what is behind them. Off, they are plain frosted panels, smoother on older phones.",
+   "learnResetTitle": "Reset the learned taste?",
+   "learnResetBody": "The {{labels}} choices and {{refs}} reference photos it learned from are erased for good. To keep a copy, export your taste under Backup first.",
+   "learnResetAction": "Reset",
+   "mirrors": "NAS and cloud copies",
+   "mirrorsDesc": "Folders picked from a NAS or a cloud drive keep a copy of their photos on the phone. Clear one and it is fetched again the next time the project opens; the analysis is kept.",
+   "mirrorNas": "NAS · {{name}}",
+   "mirrorSaf": "Cloud · {{name}}",
+   "diagnostics": "Export diagnostics",
+   "diagnosticsDesc": "Version, system, settings (no passwords or tokens), recent logs and crash records, saved as one text file where you choose. Whether to send it is up to you.",
+   "diagnosticsBtn": "Export",
+   "diagnosticsDone": "Saved",
+   "diagnosticsFailed": "Could not export: {{error}}"
   },
   "cull": {
    "hint": "Tap a photo to select it; the bar below keeps, rejects or opens it. In single view, push up to keep and pull down to reject.",
@@ -66,7 +78,8 @@
    "bgDone": "“{{name}}” is analysed",
    "bgFailed": "“{{name}}” could not be analysed: {{error}}",
    "open": "Open",
-   "reevalDone": "Re-ranked with your latest taste"
+   "reevalDone": "Re-ranked with your latest taste",
+   "offline": "NAS “{{name}}” is not connected; showing the photos from the last sync"
   },
   "models": {
    "background": "Download in background",
@@ -76,12 +89,23 @@
    "bundle": "the analysis models",
    "pill": "Downloading {{pct}}%",
    "skip": "Skip for now",
-   "skipBody": "The analysis runs without it — no closed-eye check or people for now. You can download it later in Settings → Models & storage."
+   "skipBody": "The analysis runs without it — no closed-eye check or people for now. You can download it later in Settings → Models & storage.",
+   "useStandard": "Use the standard model for now ({{size}})",
+   "useStandardDesc": "Smaller and quicker; you can switch to a better one later under Settings → Analysis.",
+   "sampleNote": "The sample photos need an analysis model too, so this is the smallest one; once it is here, your own photos need no further download.",
+   "metered": "You are on a metered network (mobile data or a hotspot); this uses about {{size}} of data.",
+   "useStandardHere": "Use the standard model already on the phone"
   },
   "organize": {
    "toAlbum": "Export keepers to an album",
    "toAlbumDesc": "Copy {{count}} to the album \"{{where}}\"; originals untouched",
-   "toFolder": "Export to a folder…"
+   "toFolder": "Export to a folder…",
+   "offline": "The NAS is not connected; this needs it",
+   "stop": "Stop",
+   "stopping": "Stopping…",
+   "exportCancelled": "Stopped: {{count}} exported, the rest left as they were.",
+   "exportedSame": "{{n}} were already there, identical, and were skipped",
+   "exportFailedN": "{{n}} were not exported:"
   },
   "tab": {
    "photos": "Photos"
@@ -114,11 +138,40 @@
    "resume": "{{done}} already analysed; only the rest are analysed this time."
   },
   "scan": {
-   "landing": "Photos land here as they are analysed"
+   "landing": "Photos land here as they are analysed",
+   "timeoutTitle": "The analysis has stopped for now",
+   "timeoutBody": "{{done}} of {{total}} photos are analysed. Android lets a background analysis run for only 6 hours a day; open the app to carry on, nothing analysed so far is lost.",
+   "pausedHot": "The phone is too hot, paused ({{done}}/{{total}})",
+   "pausedBattery": "The battery is low, paused ({{done}}/{{total}})",
+   "pausedHotBody": "It carries on by itself once the phone cools down",
+   "pausedBatteryBody": "It carries on by itself once the phone is charging"
   },
   "cmp": {
    "keepNth": "Keep #{{n}}",
    "groupShort": "Group {{i}} / {{n}}"
+  },
+  "styles": {
+   "resetTitle": "Clear “{{name}}”?",
+   "resetBody": "The {{labels}} choices and {{refs}} reference photos it learned from are erased for good; the style itself and the projects using it stay.",
+   "resetAction": "Clear"
+  },
+  "err": {
+   "space": "Not enough space: {{need}} is needed and only {{avail}} is free. Free up some space and try again.",
+   "spaceShort": "The phone is out of space. Free up some and try again.",
+   "verify": "The downloaded file is incomplete. Try again.",
+   "net": "Could not reach the download address. Check the network or proxy and try again.",
+   "auth": "The user name or password is wrong. Enter it again in Settings.",
+   "denied": "Access is not allowed."
+  },
+  "nas": {
+   "wrongPassword": "Wrong password",
+   "unreachable": "Unreachable",
+   "denied": "Access denied",
+   "toSettings": "Settings",
+   "reenter": "Enter the password again",
+   "authOffline": "The user name or password for NAS “{{name}}” is wrong; showing the photos from the last sync",
+   "authError": "This project is on NAS “{{name}}” and its user name or password is wrong. Enter it again in Settings.",
+   "deniedError": "This project is on NAS “{{name}}”, and this account is not allowed to access it."
   }
  },
  "models": {

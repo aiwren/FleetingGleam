@@ -14,6 +14,9 @@ import java.io.File
 object Samples {
     private const val DIR = "samples"
 
+    /** 这是示例项目吗（它的文件夹就是示例照片那个）。 */
+    fun isSample(ctx: Context, p: Project): Boolean = p.folders == listOf(File(ctx.filesDir, DIR).absolutePath)
+
     /** 示例照片所在的文件夹（第一次调用时从 assets 复制出来）。 */
     suspend fun folder(ctx: Context): File = withContext(Dispatchers.IO) {
         val dir = File(ctx.filesDir, DIR)
@@ -38,6 +41,7 @@ object Samples {
         Projects.update(p.id) { it.copy(onePerGroup = true) }
         // 等探测完到了准备页就自动开始
         withTimeoutOrNull(15_000) { Session.phase.first { it == Phase.Ready } }
-        if (Projects.store.value.activeId == p.id && Session.phase.value == Phase.Ready) Session.startScan()
+        // 示例只是看一眼效果：用不必下载或最小的那档，要下载就先在询问框里说清楚为什么、多大（审查第 24 条）
+        if (Projects.store.value.activeId == p.id && Session.phase.value == Phase.Ready) Session.startScan(sample = true)
     }
 }

@@ -62,6 +62,13 @@ class DownloadService : Service() {
             .build()
     }
 
+    /** Android 15 起 dataSync 一天合计最多 6 小时：到点取消下载（`.part` 留着，下次接着下）并撤掉服务，不然系统当应用崩了。 */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        Models.cancelGate()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
     override fun onDestroy() { job?.cancel(); super.onDestroy() }
 
     companion object {

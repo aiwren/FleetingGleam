@@ -113,10 +113,14 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
     var cache by remember { mutableStateOf<Long?>(null) }
     var cleared by remember { mutableStateOf(false) }
     var prefsReset by remember { mutableStateOf(false) }
+    var confirmReset by remember { mutableStateOf<PrefsInfo?>(null) }
     var refBusy by remember { mutableStateOf<Float?>(null) }
     var refFailed by remember { mutableStateOf(false) }
     var tasteBusy by remember { mutableStateOf(false) }
     var tasteMsg by remember { mutableStateOf<String?>(null) }
+    var diagBusy by remember { mutableStateOf(false) }
+    var diagDone by remember { mutableStateOf(false) }
+    var diagMsg by remember { mutableStateOf<String?>(null) }
     // "0.1.0 (105)"：括号里是内部版本号（build，仓库的提交次数），一眼分得清是不是最新的包
     val version = remember {
         runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).let { "${it.versionName} (${it.longVersionCode})" } }.getOrNull() ?: "dev"
@@ -128,6 +132,16 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
     // 别的页面要求打开某个分区（起始屏的"连接 NAS"）
     val wanted by com.fleetinggleam.android.core.Nav.settings.collectAsState()
     LaunchedEffect(wanted) { if (wanted != null) { section = wanted; com.fleetinggleam.android.core.Nav.consumed() } }
+
+    // NAS / 网盘副本各占多少：核心算 NAS 的（还没有这个命令的老核心就当没有），网盘镜像这里自己算
+    var nasUsage by remember { mutableStateOf<List<com.fleetinggleam.android.core.MirrorUsage>?>(null) }
+    var safUsage by remember { mutableStateOf<List<Pair<Media.Mirror, Long>>>(emptyList()) }
+    var mirrorBusy by remember { mutableStateOf<String?>(null) }
+    suspend fun loadMirrors() {
+        nasUsage = runCatching { Core.get<List<com.fleetinggleam.android.core.MirrorUsage>>("nas_mirror_usage") }.getOrNull()?.filter { it.bytes > 0 }
+        safUsage = withContext(Dispatchers.IO) { runCatching { Media.mirrorUsage(ctx).filter { it.second > 0 } }.getOrDefault(emptyList()) }
+    }
+    LaunchedEffect(section) { if (section == "data") loadMirrors() }
 
     LaunchedEffect(Unit) {
         Styles.refresh(); Nas.refresh(); Backup.refresh(); Models.refresh()
@@ -265,9 +279,8 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                 SettingRow(t("styles.title"), t("styles.desc")) { FgButton(t("styles.open"), onOpenStyles, small = true) }
                 prefs?.takeIf { it.labels > 0 || it.refs > 0 }?.let { p ->
                     SettingRow(t("settings.learnReset"), t("settings.learned", "count" to p.labels + p.refs, "n" to p.labels + p.refs)) {
-                        FgButton(if (prefsReset) t("settings.learnResetDone") else t("settings.learnReset"), {
-                            scope.launch { runCatching { prefs = Core.get("prefs_reset"); prefsReset = true; Styles.bumpRevision() } }
-                        }, small = true)
+                        // 一点就清太危险：先问一句，写明要清掉多少（审查第 19 条）
+                        FgButton(if (prefsReset) t("settings.learnResetDone") else t("settings.learnReset"), { confirmReset = p }, small = true)
                     }
                 }
             }
@@ -275,17 +288,18 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
         if (section == "data") item {
             SettingGroup("") {
                 SettingRow(t("models.title"), t("models.titleDesc"), first = true)
+                // 有对话框开着或下载在跑（含转到后台的）：别的包的"下载"、"删除"先置灰，一次只下一个（审查第 20 条）
+                val gate by Models.gate.collectAsState()
                 // 说明只留用途；装没装由右边表达：随应用安装的写一个灰字，装了的是"删除"，没装的是"下载 · 48 MB"（设计审查 A13.8）
                 packs.forEach { p ->
                     SettingRow(t("models.name.${p.id}"), t("models.desc.${p.id}")) {
                         if (p.bundled) Text(t("models.bundled"), style = Type.small.copy(color = c.ash))
-                        else if (p.installed) FgButton(t("models.remove"), { scope.launch { runCatching { Models.remove(p.id) }; Strategy.release(p.id) } }, small = true)
+                        else if (p.installed) FgButton(t("models.remove"), { scope.launch { runCatching { Models.remove(p.id) }; Strategy.release(p.id) } }, small = true, enabled = gate == null)
                         else {
                             // 正在（后台）下载的这一包：显示进度，点一下把下载对话框叫回来
-                            val gate by Models.gate.collectAsState()
                             val g = gate?.takeIf { it.phase == "downloading" && (it.id == p.id || it.ids?.contains(p.id) == true) }
                             if (g != null) FgButton("${if (g.total > 0) Math.round(g.done * 100f / g.total) else 0}%", { Models.showGate() }, small = true)
-                            else FgButton(t("models.get") + if (p.bytes > 0) " · " + fmtBytes(p.bytes) else "", { scope.launch { if (Models.ensurePack(p.id) != Answer.Cancelled) Strategy.adopt(p.id) } }, small = true)
+                            else FgButton(t("models.get") + if (p.bytes > 0) " · " + fmtBytes(p.bytes) else "", { scope.launch { if (Models.ensurePack(p.id) != Answer.Cancelled) Strategy.adopt(p.id) } }, small = true, enabled = gate == null)
                         }
                     }
                 }
@@ -295,6 +309,31 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                         scope.launch { runCatching { Core.call("clear_cache"); cache = 0; cleared = true; Settings.bumpCacheRev() } }
                     }, small = true, enabled = (cache ?: 0) > 0)
                 }
+                // NAS / 网盘的本机副本：单列出来（以前不算进缓存，实际可能几十 GB），一台一台地清（审查第 31 条）
+                val mirrorTotal = (nasUsage?.sumOf { it.bytes } ?: 0L) + safUsage.sumOf { it.second }
+                if (!nasUsage.isNullOrEmpty() || safUsage.isNotEmpty()) SettingRow(t("android.settings.mirrors"), t("android.settings.mirrorsDesc"), below = {
+                    Column {
+                        nasUsage.orEmpty().forEach { u ->
+                            MirrorLine(t("android.settings.mirrorNas", "name" to u.name.ifEmpty { u.id }), u.bytes, mirrorBusy == u.id) {
+                                scope.launch {
+                                    mirrorBusy = u.id
+                                    runCatching { Core.call("nas_mirror_clear", args("id" to u.id)); Settings.bumpCacheRev() }
+                                    loadMirrors(); mirrorBusy = null
+                                }
+                            }
+                        }
+                        safUsage.forEach { (m, bytes) ->
+                            MirrorLine(t("android.settings.mirrorSaf", "name" to m.name), bytes, mirrorBusy == m.id) {
+                                scope.launch {
+                                    mirrorBusy = m.id
+                                    withContext(Dispatchers.IO) { runCatching { Media.clearMirror(ctx, m.id) } }
+                                    Settings.bumpCacheRev()
+                                    loadMirrors(); mirrorBusy = null
+                                }
+                            }
+                        }
+                    }
+                }) { Text(fmtBytes(mirrorTotal), style = Type.mono.copy(color = c.ash)) }
                 SettingRow(t("settings.privacy"), t("android.settings.privacyBody"))
             }
         }
@@ -368,8 +407,22 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                 shares.forEach { sh ->
                     SettingRow(sh.name, "${sh.host} · ${sh.user.ifEmpty { t("settings.nasGuest") }}" + (nasMsg?.takeIf { it.first == sh.id }?.let { " · ${it.second}" } ?: ""), below = {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            StateDot(if (!sh.enabled) t("settings.nasDisabled") else if (sh.connected) t("settings.nasConnected") else if (nasBusy == sh.id) t("settings.nasConnecting") else t("settings.nasOffline"), sh.enabled && sh.connected)
+                            // 没连上分开说：密码不对 → 重新输入；没权限；连不上 → 重试（审查第 33 条）
+                            val why = sh.failure
+                            StateDot(when {
+                                !sh.enabled -> t("settings.nasDisabled")
+                                sh.connected -> t("settings.nasConnected")
+                                nasBusy == sh.id -> t("settings.nasConnecting")
+                                why == "auth" -> t("android.nas.wrongPassword")
+                                why == "denied" -> t("android.nas.denied")
+                                sh.error != null -> t("android.nas.unreachable")
+                                else -> t("settings.nasOffline")
+                            }, sh.enabled && sh.connected)
                             Spacer(Modifier.weight(1f))
+                            if (sh.enabled && !sh.connected && nasBusy != sh.id) {
+                                if (why == "auth") FgButton(t("android.nas.reenter"), { nasForm = NasForm(sh.id, sh.name, sh.host, sh.user, "", true, editingUser = sh.user, editingHost = sh.host) }, small = true)
+                                else FgButton(t("cull.nasRetry"), { scope.launch { nasBusy = sh.id; nasMsg = null; runCatching { Nas.connect(sh.id) }.onFailure { nasMsg = sh.id to (com.fleetinggleam.android.core.Errors.explain(it.message) ?: it.message ?: "") }; nasBusy = null } }, small = true)
+                            }
                             FgButton(t("settings.nasNewProject"), { scope.launch { if (Actions.newProjectFromDialog(sh.id)) Toasts.show(t("android.settings.projectMade")) } }, small = true, enabled = sh.enabled)
                             // 行内图标钮没有灰圆盘（设计审查 A13.4）
                             IconBtn(Icons.EDIT, t("settings.nasEdit"), { nasForm = NasForm(sh.id, sh.name, sh.host, sh.user, "", true, editingUser = sh.user, editingHost = sh.host) }, enabled = nasBusy != sh.id, plain = true, size = 32.dp, tint = c.ash)
@@ -414,6 +467,18 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                 }
                 SettingGroup("") {
                     SettingRow(t("settings.aboutVersion"), null, first = true) { Text("v$version", style = Type.mono.copy(color = c.ash)) }
+                    // 本地的诊断文件（审查第 36 条）：写到用户自己选的位置，不联网
+                    SettingRow(t("android.settings.diagnostics"), diagMsg ?: t("android.settings.diagnosticsDesc")) {
+                        FgButton(if (diagDone) t("android.settings.diagnosticsDone") else t("android.settings.diagnosticsBtn"), {
+                            scope.launch {
+                                val uri = Pickers.createText("fleetinggleam-diagnostics.txt") ?: return@launch
+                                diagBusy = true; diagMsg = null
+                                try { com.fleetinggleam.android.core.Diagnostics.export(ctx, uri); diagDone = true }
+                                catch (e: Exception) { diagMsg = t("android.settings.diagnosticsFailed", "error" to (com.fleetinggleam.android.core.Errors.explain(e.message) ?: e.message)) }
+                                diagBusy = false
+                            }
+                        }, small = true, enabled = !diagBusy)
+                    }
                 }
             }
         }
@@ -427,6 +492,17 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
         }
     }
     }
+    }
+
+    // ---- 重置已学习的偏好：和删除风格同样的确认框
+    confirmReset?.let { p ->
+        FgDialog(true, { confirmReset = null }, t("android.settings.learnResetTitle"), footer = {
+            FgButton(t("organize.cancel"), { confirmReset = null })
+            FgButton(t("android.settings.learnResetAction"), {
+                confirmReset = null
+                scope.launch { runCatching { prefs = Core.get("prefs_reset"); prefsReset = true; Styles.bumpRevision() } }
+            }, on = true)
+        }) { Text(t("android.settings.learnResetBody", "labels" to p.labels, "refs" to p.refs), style = Type.body.copy(color = c.ink)) }
     }
 
     // ---- 备份目标：添加 / 编辑
@@ -542,6 +618,17 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
         FgButton(t("settings.nasCancel"), { nasRemoving = null })
         FgButton(t("settings.nasRemoveConfirm"), { val sh = nasRemoving ?: return@FgButton; nasRemoving = null; scope.launch { nasBusy = sh.id; runCatching { Nas.remove(sh.id) }.onFailure { nasMsg = sh.id to (it.message ?: "") }; nasBusy = null } }, primary = true)
     }) { Text(t("settings.nasRemoveBody"), style = Type.body.copy(color = c.ash)) }
+}
+
+/** 副本列表的一行：名字 · 大小 · 清除。 */
+@Composable
+private fun MirrorLine(name: String, bytes: Long, busy: Boolean, onClear: () -> Unit) {
+    val c = LocalFg.current
+    Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(name, style = Type.rowDesc.copy(color = c.ink), maxLines = 1, overflow = com.fleetinggleam.android.ui.theme.Ellipsis, modifier = Modifier.weight(1f))
+        Text(fmtBytes(bytes), style = Type.monoSmall.copy(color = c.ash))
+        FgButton(t("settings.clear"), onClear, small = true, enabled = !busy)
+    }
 }
 
 private data class BkForm(val id: String? = null, val name: String = "", val account: String = "", val bucket: String = "", val accessKey: String = "", val secret: String = "", val hasSecret: Boolean = false)
