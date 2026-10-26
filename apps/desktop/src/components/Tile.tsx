@@ -31,7 +31,8 @@ type Props = {
   /** 分析中：第一次判出来也播动效。 */
   stamp?: boolean;
   /** Stable functions that take the photo's path, so a tile only re-renders when something about *it* changed. */
-  onSelect: (path: string) => void;
+  /** `range` = Shift 点击（成段多选），`toggle` = ⌘ 点击（加进 / 拿出多选）。 */
+  onSelect: (path: string, how?: "range" | "toggle") => void;
   onOpen: (path: string) => void;
   onDecide: (path: string, s: State | null) => void;
 };
@@ -82,17 +83,18 @@ function Tile({ path, ratio, photo, stage, state, reveal, dim, box, manual, grou
 
   return (
     <motion.div
-      ref={ref} id={`t-${path}`} layout="position" role="button" tabIndex={interactive ? 0 : -1}
+      ref={ref} id={`t-${path}`} role="button" tabIndex={interactive ? 0 : -1}
       className={`tile ${photo ? state : "pending"} ${!photo && stage ? "busy" : ""} ${interactive ? "live" : ""} ${groupEnd ? "gend" : ""} ${showScore ? "showscore" : ""}`}
       style={{ position: "absolute", left: box.left, top: box.top, width: box.width, height: box.height, ["--r" as string]: ratio }}
       initial={firstTime ? { opacity: 0, scale: 0.94 } : false}
-      animate={{ opacity: dim ? 0.62 : 1, scale: 1 }}
+      // 位置由墙的绝对定位给出，不再开 layout 投影（每次渲染每个格子都要量一遍）：只在格子换了位置时让 left / top 滑过去
+      animate={{ opacity: dim ? 0.62 : 1, scale: 1, left: box.left, top: box.top }}
       exit={{ opacity: 0, scale: 0.94 }}
       whileHover={interactive ? { opacity: 1 } : undefined}
       whileTap={interactive ? { scale: 0.985, transition: SPRING.tap } : undefined}
-      transition={{ layout: SPRING.glide, opacity: { duration: DUR.slow, delay: stagger }, scale: { ...SPRING.soft, delay: stagger } }}
+      transition={{ left: SPRING.glide, top: SPRING.glide, opacity: { duration: DUR.slow, delay: stagger }, scale: { ...SPRING.soft, delay: stagger } }}
       onKeyDown={onKey}
-      onClick={() => interactive && onSelect(path)}
+      onClick={(e) => interactive && onSelect(path, e.shiftKey ? "range" : e.metaKey || e.ctrlKey ? "toggle" : undefined)}
       onDoubleClick={() => { if (interactive) { onSelect(path); onOpen(path); } }}
       aria-label={photo?.name ?? path.split("/").pop()}>
       <span className="tile-in">

@@ -105,8 +105,9 @@ export default function Styles({ active, from, onBack }: { active: boolean; from
     });
     const def = list.find((s) => s.is_default);
     return def ? [def, ...rest] : rest;
+    // displayName 每次渲染新建，只随 t 变（换语言时没起名的风格按新名字重新筛、排）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [styles, query, sort, usedBy]);
+  }, [styles, query, sort, usedBy, t]);
 
   const learn = async (s: StyleInfo) => {
     const dir = await pickFolder();

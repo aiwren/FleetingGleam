@@ -39,9 +39,8 @@ import Viewer from "./Viewer";
 type ViewMode = "all" | State;
 type Phase = "idle" | "probing" | "ready" | "scanning" | "loading" | "done";
 type SortBy = "group" | "order" | "time" | "score";
-type Item = { path: string; ratio: number; photo?: Photo };
-
-const MAX_TILES = 100000; // the wall is windowed, so there is no need to cap it
+type Item = { path: string; ratio: number };
+const NONE: ReadonlySet<string> = new Set();
 
 function EditableTitle({ value, tip, onCommit }: { value: string; tip: string; onCommit: (v: string) => void }) {
   const [editing, setEditing] = useState(false);
@@ -111,6 +110,12 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const [panelOpen, setPanelOpen] = useState(() => { try { return localStorage.getItem("fg.filterpanel") !== "0"; } catch { return true; } });
   const togglePanel = () => setPanelOpen((v) => { const n = !v; try { localStorage.setItem("fg.filterpanel", n ? "1" : "0"); } catch { /* storage unavailable */ } return n; });
   const [selected, setSelected] = useState<string | null>(null);
+  /** 多选（⌘ 点击追加、Shift 点击 / Shift+方向键成段）：空集合 = 只有 `selected` 那一张。非空时 `selected` 也在里面，是焦点。 */
+  const [multi, setMulti] = useState<ReadonlySet<string>>(NONE);
+  const multiRef = useRef(multi);
+  multiRef.current = multi;
+  /** 成段多选的起点：最近一次单独点选（或 ⌘ 点击）的那张。 */
+  const anchor = useRef<string | null>(null);
   const [zoomed, setZoomed] = useState(false);
   const [celebrate, setCelebrate] = useState(false);
   const [dirty, setDirty] = useState(0);
@@ -136,7 +141,8 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
   const [searchRev, setSearchRev] = useState(0);
   const [previews, setPreviews] = useState<Record<string, string>>({});
-  const undoStack = useRef<{ path: string; prev: State | undefined }[]>([]);
+  /** 每一步是一批（多选一起改判的那些），撤销一次撤回整批。 */
+  const undoStack = useRef<{ path: string; prev: State | undefined }[][]>([]);
   const [hintUses, setHintUses] = useState(() => { try { return Number(localStorage.getItem("fg.hint.dock") ?? 0); } catch { return 0; } });
   const bumpHint = (n: number) => { setHintUses((u) => { const v = Math.max(u, n === 99 ? 99 : u + 1); try { localStorage.setItem("fg.hint.dock", String(v)); } catch { /* ignore */ } return v; }); };
 
@@ -146,6 +152,8 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const sortBy: SortBy = project?.sort ?? "group";
   const setSortBy = (v: SortBy) => { if (project) updateProject(project.id, { sort: v }); };
   const overrides = useMemo(() => new Map(Object.entries(project?.overrides ?? {})) as Map<string, State>, [project?.overrides]);
+  const overridesRef = useRef(overrides);
+  overridesRef.current = overrides;
 
   // Live scan data lives in refs and is flushed once per frame, so thousands of events stay cheap.
   const results = useRef(new Map<string, Photo>());
@@ -219,7 +227,9 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
         if (!own()) return;
         for (const j of e.payload) live.current.set(j.path, j.decision);
         flush();
-        if (attached.current) requestAnimationFrame(() => flights.current?.judged(e.payload));
+        // 分析中手动改判过的照片以手上的为准，引擎的判定不再飞
+        const fly = e.payload.filter((j) => !overridesRef.current.has(j.path));
+        if (attached.current && fly.length) requestAnimationFrame(() => flights.current?.judged(fly));
       }),
       // the photos that were already analysed arrive in batches
       listen<Photo[]>("scan-photos", (e) => {
@@ -266,7 +276,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     const left = enteredId.current;
     enteredId.current = project?.id ?? null;
     undoStack.current = []; // the marks that could be undone belonged to the project just left
-    setSelected(null); setQuery(""); setZoomed(false); setError(null); setMode("all"); setSceneFilter(null); setPersonFilter(null); setSceneView(false); setCelebrate(false); setDirty(0); setNasProg(null);
+    setSelected(null); setMulti(NONE); anchor.current = null; setQuery(""); setZoomed(false); setError(null); setMode("all"); setSceneFilter(null); setPersonFilter(null); setSceneView(false); setCelebrate(false); setDirty(0); setNasProg(null);
     setBgDone((d) => (d && project && d.id === project.id ? null : d));
     // 回到正在分析的那个项目（文件夹没变）：接上，照片墙和进度都还在，不重来
     if (project && run && run.id === project.id && run.folders.join("|") === project.folders.join("|")) {
@@ -383,14 +393,26 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     decisions.forEach((d) => { c[d.state]++; });
     return c;
   }, [decisions, photos.length]);
-  // 分析中横幅上的保留 / 待复查 / 淘汰数（跟着每帧的 tick 走）
-  const liveCounts = useMemo(() => {
-    if (phase !== "scanning" || live.current.size === 0) return null;
-    const c = { keep: 0, review: 0, reject: 0 };
-    live.current.forEach((d) => { c[d.state]++; });
-    return c;
+  // 分析中眼下的判定：引擎边分析边判的结果，叠上分析中手动改判的（手上的为准；引擎的实时判定只认开始分析时的覆盖表）。
+  // 跟着每帧的 tick 走；分析完换成 decide_photos 的正式判定，那时覆盖表里已经有这些改判，不会被盖掉
+  const liveDecisions = useMemo(() => {
+    if (phase !== "scanning") return new Map<string, Decision>();
+    const m = new Map(live.current);
+    overrides.forEach((st, path) => {
+      if (!results.current.has(path)) return;
+      const cur = m.get(path);
+      m.set(path, { state: st, manual: true, reasons: [{ k: "reason.manual", p: { stateKey: `state.${st}` } }, ...(cur && !cur.manual ? cur.reasons : [])] });
+    });
+    return m;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, tick]);
+  }, [phase, tick, overrides]);
+  // 筛选栏上的保留 / 待复查 / 淘汰数
+  const liveCounts = useMemo(() => {
+    if (liveDecisions.size === 0) return null;
+    const c = { keep: 0, review: 0, reject: 0 };
+    liveDecisions.forEach((d) => { c[d.state]++; });
+    return c;
+  }, [liveDecisions]);
 
   // Scenes are the same loose, look-alike clusters the backend already groups for scene-diverse picks (see decide.rs);
   // this just surfaces them as a filter, in the order they first appear, each with its highest-scoring photo as the cover.
@@ -557,15 +579,22 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     return ends;
   }, [shown, sortBy]);
 
-  // Tiles have their final size from the start: real aspect ratios come from the file headers, not from analysis.
-  const items: Item[] = useMemo(() => {
-    if (phase === "scanning") {
-      // 分析中按眼下的判定筛（"全部"是整个文件夹）
-      return files.slice(0, MAX_TILES).filter((f) => mode === "all" || live.current.get(f.path)?.state === mode).map((f) => ({ path: f.path, ratio: f.width / f.height, photo: results.current.get(f.path) }));
-    }
-    return shown.map((p) => ({ path: p.path, ratio: p.width / p.height, photo: p }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, files, shown, progress.done, mode, tick]);
+  // 分析中按眼下的判定筛（"全部"是整个文件夹）。判定每帧都可能变，可筛出来的还是同一批文件时沿用上一份，墙就不重排
+  const scanRaw = phase !== "scanning" ? null : mode === "all" ? files : files.filter((f) => liveDecisions.get(f.path)?.state === mode);
+  const scanRef = useRef<ProbeFile[]>([]);
+  if (scanRaw && scanRef.current !== scanRaw && (scanRef.current.length !== scanRaw.length || scanRef.current.some((f, k) => f !== scanRaw[k]))) scanRef.current = scanRaw;
+  const scanList = scanRaw ? scanRef.current : null;
+  // 墙的静态部分：哪些格子、宽高比（来自文件头，分析前就有，格子从一开始就是最终大小）、组末间隙，只随文件集与筛选结果变。
+  // 动态部分（照片、进度）在渲染格子时从 ref 读，分析中每帧的 tick 只重画变了的格子，不再每帧重跑整面墙的排版（审查第 14 条）
+  const items: Item[] = useMemo(() => (scanList
+    ? scanList.map((f) => ({ path: f.path, ratio: f.width / f.height }))
+    : shown.map((p) => ({ path: p.path, ratio: p.width / p.height }))), [scanList, shown]);
+  // 眼下能选、能开大图、能改判的照片，按墙上的顺序：分析完是 shown；分析中是墙上已经出结果的那些（新的一张出来才换一份）
+  const scanPhotosRaw = scanList ? scanList.map((f) => results.current.get(f.path)).filter((p): p is Photo => !!p) : null;
+  const scanPhotosRef = useRef<Photo[]>([]);
+  if (scanPhotosRaw && (scanPhotosRef.current.length !== scanPhotosRaw.length || scanPhotosRef.current.some((p, k) => p !== scanPhotosRaw[k]))) scanPhotosRef.current = scanPhotosRaw;
+  const pickable = scanPhotosRaw ? scanPhotosRef.current : shown;
+  const pickDecisions = phase === "scanning" ? liveDecisions : decisions;
   // 相似组的末尾多留 6px（M5.8：以前只加了类名没有样式）
   const wallItems = useMemo(() => items.map((it) => ({ key: it.path, ratio: it.ratio, gapAfter: groupEnds.has(it.path) })), [items, groupEnds]);
   const openViewer = useCallback((path: string) => {
@@ -574,12 +603,12 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     setZoomed(true);
   }, []);
 
-  const selIndex = selected ? shown.findIndex((p) => p.path === selected) : -1;
-  const sel = selIndex >= 0 ? shown[selIndex] : null;
+  const selIndex = selected ? pickable.findIndex((p) => p.path === selected) : -1;
+  const sel = selIndex >= 0 ? pickable[selIndex] : null;
   /** The inspector is there when a photo is selected and not otherwise (Compare has no selection). */
   // The inspector is there while a photo is selected (and the person has not hidden it). Nothing selected, nothing to show: no empty panel.
   // When it appears the wall is laid out at its final width at once and glides there (see `wallDelta`), so the photos do not hop between rows.
-  const showInspector = phase === "done" && !!sel && !inspectorHidden && !!project && layout !== "compare";
+  const showInspector = (phase === "done" || phase === "scanning") && !!sel && !inspectorHidden && !!project && (phase === "scanning" || layout !== "compare");
   const panelShown = (phase === "done" || phase === "scanning") && panelOpen;
   const lastPanels = useRef({ inspector: showInspector, filter: panelShown });
   useLayoutEffect(() => {
@@ -594,12 +623,44 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     const id = window.setTimeout(() => setWallDelta(null), was.inspector !== showInspector ? 2500 : 300);
     return () => window.clearTimeout(id);
   }, [showInspector, panelShown]); // eslint-disable-line react-hooks/exhaustive-deps
-  const groupMates = useMemo(() => (sel ? photos.filter((p) => p.group === sel.group) : []), [sel, photos]);
+  // 分析中分组还没定，不列同组
+  const groupMates = useMemo(() => (sel && phase === "done" ? photos.filter((p) => p.group === sel.group) : []), [sel, photos, phase]);
 
-  const select = useCallback((path: string) => setSelected(path), []);
+  const select = useCallback((path: string) => { anchor.current = path; setMulti(NONE); setSelected(path); }, []);
   // What the tiles get: functions whose identity never changes, so a tile is redrawn only when its own photo, mark or position changed.
   const openSceneView = useCallback(() => setSceneView(true), []);
-  const tileSelect = useCallback((path: string) => { clickedPath.current = path; setSelected(path); }, []);
+  const pickRef = useRef(pickable);
+  pickRef.current = pickable;
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+  /** 从起点到 `path`（含两端），按墙上的顺序。 */
+  const rangeTo = useCallback((path: string) => {
+    const list = pickRef.current;
+    const a = list.findIndex((p) => p.path === (anchor.current ?? path)), b = list.findIndex((p) => p.path === path);
+    if (a < 0 || b < 0) return new Set([path]);
+    return new Set(list.slice(Math.min(a, b), Math.max(a, b) + 1).map((p) => p.path));
+  }, []);
+  /** 选到 `path`；`extend` 时从起点连成一段（Shift）。 */
+  const goTo = useCallback((path: string, extend = false) => {
+    if (!extend) { select(path); return; }
+    if (!anchor.current) anchor.current = selectedRef.current ?? path;
+    setMulti(rangeTo(path));
+    setSelected(path);
+  }, [select, rangeTo]);
+  const tileSelect = useCallback((path: string, how?: "range" | "toggle") => {
+    clickedPath.current = path;
+    if (how === "range") { goTo(path, true); return; }
+    if (how === "toggle") {
+      // ⌘ 点击：加进来或拿出去；拿掉的是焦点那张，焦点落到还选着的最后一张
+      const set = new Set(multiRef.current.size ? multiRef.current : selectedRef.current ? [selectedRef.current] : []);
+      if (set.has(path)) set.delete(path); else set.add(path);
+      anchor.current = path;
+      setMulti(set.size > 1 ? set : NONE);
+      setSelected(set.has(path) ? path : [...set].pop() ?? null);
+      return;
+    }
+    select(path);
+  }, [goTo, select]);
   /** 把一张照片顺时针（dir = 1）或逆时针转 90°：核心库换缩略图与显示尺寸（原文件不动），这里只替换手里那张。 */
   const rotate = useCallback((path: string, dir: 1 | -1) => {
     const cur = photos.find((p) => p.path === path);
@@ -613,63 +674,104 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
       })
       .catch(() => { /* not analysed yet, or not in Tauri */ });
   }, [photos]);
-  const decide = useCallback((path: string, st: State | null, fromUndo = false) => {
+  /** 改判一批照片：`changes` 里每张各自的新状态（null = 交还系统建议）；`fromUndo` 时不进撤销栈。 */
+  const mark = useCallback((changes: { path: string; state: State | null }[], fromUndo = false) => {
     // only photos of the project in view: a stale key press or undo must not write another project's path into this one
-    if (!project || !photos.some((p) => p.path === path)) return;
-    const prev = project.overrides[path];
+    // （分析中是已经出结果的那些）
+    const scanningNow = phase === "scanning";
+    const list = changes.filter((c) => (scanningNow ? results.current.has(c.path) : byPath.has(c.path)));
+    if (!project || list.length === 0) return;
     const next = { ...project.overrides };
-    if (st === null) delete next[path]; else next[path] = st;
-    localPatch.current = st !== null && project.keepCap === undefined && !project.onePerGroup ? { path, state: st, photos } : null;
+    const undo = list.map((c) => ({ path: c.path, prev: project.overrides[c.path] }));
+    for (const c of list) { if (c.state === null) delete next[c.path]; else next[c.path] = c.state; }
+    const one = list.length === 1 ? list[0] : null;
+    localPatch.current = one && one.state !== null && !scanningNow && project.keepCap === undefined && !project.onePerGroup ? { path: one.path, state: one.state, photos } : null;
     updateProject(project.id, { overrides: next });
     // Only explicit keep / reject teach the taste model; "review" and "cleared" mean "not sure". With learning off, nothing is recorded at all.
     if (getSettings().learn && project.learn !== false) {
-      invoke("record_label", { path, label: st === null || st === "review" ? null : st === "keep", style: project?.style }).catch(() => { /* not in Tauri */ });
+      for (const c of list) invoke("record_label", { path: c.path, label: c.state === null || c.state === "review" ? null : c.state === "keep", style: project?.style }).catch(() => { /* not in Tauri */ });
     }
     setDirty((d) => d + 1);
     if (!fromUndo) {
-      undoStack.current.push({ path, prev });
+      undoStack.current.push(undo);
       if (undoStack.current.length > 50) undoStack.current.shift();
       bumpHint(1);
     }
+  }, [project, photos, byPath, phase]);
+  /** 把一张或一批照片标成 `st`。 */
+  const decide = useCallback((target: string | string[], st: State | null) => {
+    const paths = Array.isArray(target) ? target : [target];
+    mark(paths.map((path) => ({ path, state: st })));
     // In a filtered view a decision can move the photo elsewhere. Move on to a neighbour instead of losing the selection.
     if (st && mode !== "all" && st !== mode) {
-      const i = shown.findIndex((p) => p.path === path);
-      const nb = shown[i + 1] ?? shown[i - 1];
-      setSelected(nb && nb.path !== path ? nb.path : null);
+      const gone = new Set(paths);
+      const at = paths.map((p) => pickable.findIndex((x) => x.path === p)).filter((i) => i >= 0);
+      if (!at.length) return;
+      const hi = Math.max(...at), lo = Math.min(...at);
+      const nb = pickable.slice(hi + 1).find((p) => !gone.has(p.path)) ?? pickable.slice(0, lo).reverse().find((p) => !gone.has(p.path));
+      anchor.current = nb?.path ?? null;
+      setMulti(NONE);
+      setSelected(nb?.path ?? null);
     }
-  }, [project, mode, shown, photos]);
+  }, [mark, mode, pickable]);
+  /** 眼下选着的照片：多选时是那一批（只算还在墙上的），不然是焦点那一张。 */
+  const selection = useCallback((): string[] => {
+    if (multi.size > 1) return pickable.filter((p) => multi.has(p.path)).map((p) => p.path);
+    return selected && pickable.some((p) => p.path === selected) ? [selected] : [];
+  }, [multi, pickable, selected]);
+  const decideSel = useCallback((st: State | null) => { const s = selection(); if (s.length) decide(s, st); }, [selection, decide]);
   const decideRef = useRef(decide);
   decideRef.current = decide;
-  const tileDecide = useCallback((path: string, st: State | null) => decideRef.current(path, st), []);
+  // 格子上的按钮：点的是多选里的一张就整批改
+  const tileDecide = useCallback((path: string, st: State | null) => {
+    const m = multiRef.current;
+    decideRef.current(m.size > 1 && m.has(path) ? [...m] : path, st);
+  }, []);
   const undoLast = useCallback(() => {
     const e = undoStack.current.pop();
-    if (e) decide(e.path, e.prev ?? null, true);
-  }, [decide]);
-  const move = useCallback((d: number) => {
-    if (!shown.length) return;
-    const i = Math.min(shown.length - 1, Math.max(0, (selIndex < 0 ? (d > 0 ? -1 : 0) : selIndex) + d));
-    select(shown[i].path);
-  }, [shown, selIndex, select]);
+    if (e) mark(e.map((x) => ({ path: x.path, state: x.prev ?? null })), true);
+  }, [mark]);
+  const move = useCallback((d: number, extend = false) => {
+    if (!pickable.length) return;
+    const i = Math.min(pickable.length - 1, Math.max(0, (selIndex < 0 ? (d > 0 ? -1 : 0) : selIndex) + d));
+    goTo(pickable[i].path, extend);
+  }, [pickable, selIndex, goTo]);
+  /** ↑ ↓ PageUp PageDown：按墙上的行走（分析中只落在出了结果的格子上）；Home / End：第一张 / 最后一张。 */
+  const moveRow = useCallback((key: string, extend: boolean) => {
+    if (!pickable.length) return;
+    const first = pickable[0].path, last = pickable[pickable.length - 1].path;
+    if (key === "home" || key === "end" || !sel) { goTo(key === "end" || (!sel && (key === "arrowup" || key === "pageup")) ? last : first, extend); return; }
+    const ok = phase === "scanning" ? (k: string) => results.current.has(k) : undefined;
+    const down = key === "arrowdown" || key === "pagedown";
+    const to = key.startsWith("page") ? wallRef.current?.pageStep(sel.path, down ? 1 : -1, ok) : wallRef.current?.rowStep(sel.path, down ? 1 : -1, ok);
+    // 翻页翻到头：落在第一张 / 最后一张
+    if (to) goTo(to, extend);
+    else if (key.startsWith("page")) goTo(down ? last : first, extend);
+  }, [pickable, sel, phase, goTo]);
 
   useEffect(() => {
-    if (!active || zoomed || phase !== "done") return;
+    // 分析中也能选、能改判（整理和重新分析留到分析完）
+    if (!active || zoomed || (phase !== "done" && phase !== "scanning")) return;
+    const onWall = phase === "scanning" || layout === "justified" || layout === "grid";
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement).tagName;
       if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || isModalOpen()) return;
       const k = e.key.toLowerCase();
       if ((e.metaKey || e.ctrlKey) && k === "z") { e.preventDefault(); undoLast(); return; }
       if ((e.metaKey || e.ctrlKey) && (e.key === "]" || e.key === "[")) { if (sel) { e.preventDefault(); rotate(sel.path, e.key === "]" ? 1 : -1); } return; }
-      if (layout === "compare" && ["arrowright", "arrowleft", "p", "r", "x"].includes(k)) return; // Compare handles these itself (groups; the photo under the pointer)
-      if (k === "arrowright") { e.preventDefault(); move(1); }
-      else if (k === "arrowleft") { e.preventDefault(); move(-1); }
+      if (phase === "done" && layout === "compare" && ["arrowright", "arrowleft", "p", "r", "x"].includes(k)) return; // Compare handles these itself (groups; the photo under the pointer)
+      if (k === "escape" && multi.size) { setMulti(NONE); return; }
+      if (k === "arrowright") { e.preventDefault(); move(1, e.shiftKey); }
+      else if (k === "arrowleft") { e.preventDefault(); move(-1, e.shiftKey); }
+      else if (onWall && ["arrowup", "arrowdown", "pageup", "pagedown", "home", "end"].includes(k)) { e.preventDefault(); moveRow(k, e.shiftKey); }
       else if (k === " " && sel) { e.preventDefault(); openViewer(sel.path); }
-      else if (k === "p" && sel) decide(sel.path, "keep");
-      else if (k === "r" && sel) decide(sel.path, "review");
-      else if (k === "x" && sel) decide(sel.path, "reject");
+      else if (k === "p") decideSel("keep");
+      else if (k === "r") decideSel("review");
+      else if (k === "x") decideSel("reject");
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, zoomed, phase, layout, move, sel, decide, rotate, undoLast, openViewer]);
+  }, [active, zoomed, phase, layout, move, moveRow, sel, multi, decideSel, rotate, undoLast, openViewer]);
 
   // Single and Compare always show a photo: fall back to the first one when nothing (or something filtered out) is selected.
   useEffect(() => {
@@ -678,10 +780,10 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
 
   // While a full-size view is open, the next few photos are prepared in the background so stepping is instant.
   useEffect(() => {
-    if (phase !== "done" || !(zoomed || layout === "single") || selIndex < 0) return;
-    const id = setTimeout(() => prefetchLarge([1, -1, 2, -2, 3].map((d) => shown[selIndex + d]?.path).filter((p): p is string => !!p)), 120);
+    if (!(phase === "done" ? zoomed || layout === "single" : phase === "scanning" && zoomed) || selIndex < 0) return;
+    const id = setTimeout(() => prefetchLarge([1, -1, 2, -2, 3].map((d) => pickable[selIndex + d]?.path).filter((p): p is string => !!p)), 120);
     return () => clearTimeout(id);
-  }, [phase, zoomed, layout, selIndex, shown]);
+  }, [phase, zoomed, layout, selIndex, pickable]);
 
   // Scroll the selected photo into view, unless it was picked by clicking it: it is right under the pointer already, and scrolling the whole
   // wall by a few pixels at that moment reads as the cards jumping.
@@ -762,7 +864,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scanning]);
   const showBanner = scanning || celebrate;
-  const decision = sel ? decisions.get(sel.path) : undefined;
+  const decision = sel ? pickDecisions.get(sel.path) : undefined;
   const pendingFiles = files.filter((f) => !f.cached);
 
   return (
@@ -791,7 +893,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
             {project && phase === "done" && projectSearch && (
               <SearchBox value={query} onChange={setQuery} inputRef={searchRef} placeholder={t("search.placeholder")} progress={index.progress} count={hits ? hits.length : null} onActivate={ensureSearch} />
             )}
-            {project && phase === "done" && (
+            {project && (phase === "done" || scanning) && (
               <button className={`btn icon plain ${panelOpen ? "on" : ""}`} onClick={togglePanel} aria-pressed={panelOpen} aria-label={t("cull.filters")} title={t("cull.filters")}>
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><rect x="1.7" y="2.7" width="12.6" height="10.6" rx="2" /><path d="M6 3v10" /></svg>
               </button>
@@ -800,6 +902,12 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
               <ViewMenu layout={layout} onLayout={pickLayout} sort={sortBy} onSort={setSortBy}
                 layouts={LAYOUTS.map((l) => ({ id: l.id, icon: l.icon, label: t(`cull.layout.${l.id}`) }))}
                 sorts={(["group", "order", "time", "score"] as SortBy[]).map((id) => ({ id, label: t(`cull.sort.${id}`) }))} />
+            )}
+            {/* 分析中墙是文件顺序、单张和对比要分完组才有：只换宫格 / 拼贴 */}
+            {project && scanning && (
+              <ViewMenu layout={layout === "grid" ? "grid" : "justified"} onLayout={pickLayout} sort={sortBy} onSort={setSortBy}
+                layouts={LAYOUTS.filter((l) => l.id === "justified" || l.id === "grid").map((l) => ({ id: l.id, icon: l.icon, label: t(`cull.layout.${l.id}`) }))}
+                sorts={[]} />
             )}
             {project && phase === "done" && <i className="tb-sep" aria-hidden />}
             {project && phase === "done" && <Organize project={project} photos={photos} decisions={decisions} onChanged={() => setReloadKey((k) => k + 1)} />}
@@ -906,16 +1014,17 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
             : <p className="ash pad">{t("cull.emptyView")}</p>)}
 
           {showWall && !(phase === "done" && sceneView) && !(phase === "done" && (layout === "single" || layout === "compare")) && (
-            <Wall ref={wallRef} scrollRef={scrollRef} widthDelta={wallDelta} items={wallItems} selected={phase === "done" ? selected : null} layout={layout === "grid" ? "grid" : "justified"} render={(i, box) => {
+            <Wall ref={wallRef} scrollRef={scrollRef} widthDelta={wallDelta} items={wallItems} selected={selected} marked={multi.size > 1 ? multi : null} layout={layout === "grid" ? "grid" : "justified"} render={(i, box) => {
               const it = items[i];
+              const photo = scanning ? results.current.get(it.path) : shown[i];
               // 分析中：照片一出结果就按眼下的判定盖章（后来的照片会改变分组和排名，分析完换成正式的）
-              const d = it.photo ? (phase === "scanning" ? live.current.get(it.path) : decisions.get(it.path)) : undefined;
-              const state = !it.photo ? "" : d?.state ?? "";
+              const d = photo ? pickDecisions.get(it.path) : undefined;
+              const state = !photo ? "" : d?.state ?? "";
               return (
-                <Tile key={it.path} path={it.path} ratio={it.ratio} photo={it.photo} stage={stages.current.get(it.path)}
+                <Tile key={it.path} path={it.path} ratio={it.ratio} photo={photo} stage={stages.current.get(it.path)}
                   state={state} reveal={celebrate && phase === "done"} dim={state === "reject" && mode === "all"} stamp={scanning}
                   manual={!!d?.manual} groupEnd={groupEnds.has(it.path)} showScore={sortBy === "score"} index={i}
-                  interactive={phase === "done" && !!it.photo} box={box}
+                  interactive={!!photo} box={box}
                   onSelect={tileSelect} onOpen={openViewer} onDecide={tileDecide} />
               );
             }} />
@@ -942,7 +1051,8 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
                   {sel ? (
                     <motion.div key="body" className="inspector-body" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.2, ease: EASE_OUT }}>
                       {/* 没有预览缩略图：它就是墙上带焦点框的那一张（M8.1）；名字行右边一个"放大" */}
-                      <PhotoVerdict photo={sel} decision={decision} onDecide={(st) => decide(sel.path, st)} reasonText={reasonText}
+                      {multi.size > 1 && <p className="ash multi-note">{t("inspector.multi", { count: selection().length })}</p>}
+                      <PhotoVerdict photo={sel} decision={decision} onDecide={decideSel} reasonText={reasonText}
                         scoreTip={<InfoPop title={t("inspector.overall")} width={280}><p className="ash">{t("inspector.scoreTip")}</p></InfoPop>}
                         onZoom={() => openViewer(sel.path)} />
                       {groupMates.length > 1 && (
@@ -1007,8 +1117,8 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
 
       <AnimatePresence>
         {zoomed && sel && (
-          <Viewer key="viewer" photo={sel} decision={decision} index={selIndex} total={shown.length}
-            onClose={() => setZoomed(false)} onStep={move} onDecide={(st) => decide(sel.path, st)} onRotate={(d) => rotate(sel.path, d)} photos={shown} decisions={decisions} onJump={select} from={from} active={active} />
+          <Viewer key="viewer" photo={sel} decision={decision} index={selIndex} total={pickable.length}
+            onClose={() => setZoomed(false)} onStep={move} onDecide={(st) => decide(sel.path, st)} onRotate={(d) => rotate(sel.path, d)} photos={pickable} decisions={pickDecisions} onJump={select} from={from} active={active} />
         )}
       </AnimatePresence>
     </div>

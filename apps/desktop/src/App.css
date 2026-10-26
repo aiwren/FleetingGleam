@@ -308,6 +308,7 @@ input[type=range]::-webkit-slider-thumb { appearance: none; width: 14px; height:
 .metrics .sub dt { padding-left: 14px; opacity: .8; }
 .hints { line-height: 2; }
 .inspector-body { display: flex; flex-direction: column; gap: 16px; }
+.multi-note { margin: 0; font-size: 12px; }
 .glint, .mark { pointer-events: none; }
 
 .subbar { flex: none; overflow: hidden; display: flex; align-items: center; justify-content: flex-end; gap: 18px; padding: 0 16px; border-bottom: 1px solid var(--line); }

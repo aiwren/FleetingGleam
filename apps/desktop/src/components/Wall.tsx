@@ -5,7 +5,13 @@ export type WallItem = { key: string; ratio: number; /** 相似组的末尾：�
 /** 组末多留的间隙。 */
 const GROUP_GAP = 6;
 export type Box = { left: number; top: number; width: number; height: number };
-export type WallHandle = { reveal: (key: string) => void };
+export type WallHandle = {
+  reveal: (key: string) => void;
+  /** 往下（n > 0）或往上 n 行里横向离 `key` 最近、`ok` 认可的格子；那一行没有就接着往同一方向找。到头了返回 null。 */
+  rowStep: (key: string, n: number, ok?: (key: string) => boolean) => string | null;
+  /** 往下（1）或往上（-1）翻一屏，落在那一行里横向最近的格子。 */
+  pageStep: (key: string, dir: 1 | -1, ok?: (key: string) => boolean) => string | null;
+};
 
 export type WallLayout = "justified" | "grid";
 
@@ -63,12 +69,14 @@ const Wall = forwardRef<WallHandle, {
   layout?: WallLayout;
   /** Key of the selected item: a single focus frame glides to it, instead of each tile drawing its own. */
   selected?: string | null;
+  /** 多选时其余选中的格子：同一种角框，原地不动（不另加颜色）。 */
+  marked?: ReadonlySet<string> | null;
   /**
    * While a side panel slides open (negative) or shut (positive) the wall is laid out at the width it will end up with, right away,
    * instead of following the shrinking container frame by frame: the photos glide once to their final places while the panel expands.
    */
   widthDelta?: number | null;
-}>(function Wall({ items, scrollRef, render, layout: kind = "justified", selected, widthDelta = null }, ref) {
+}>(function Wall({ items, scrollRef, render, layout: kind = "justified", selected, marked = null, widthDelta = null }, ref) {
   const wrap = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const [view, setView] = useState({ top: 0, height: 900 });
@@ -130,17 +138,61 @@ const Wall = forwardRef<WallHandle, {
 
   const layout = useMemo(() => (width > 0 ? place(items, width, kind) : { boxes: [] as Box[], height: 0 }), [items, width, kind]);
   const index = useMemo(() => new Map(items.map((it, i) => [it.key, i])), [items]);
+  /** reveal 发起的平滑滚动要去的位置和发起时间。 */
+  const gliding = useRef<{ top: number; t: number } | null>(null);
+  // 行：同一行的格子 top 相同（拼贴和宫格都是），按顺序连在一起
+  const rows = useMemo(() => {
+    const list: number[][] = [];
+    const of = new Int32Array(layout.boxes.length);
+    let top = NaN;
+    layout.boxes.forEach((b, i) => { if (b.top !== top) { list.push([]); top = b.top; } list[list.length - 1].push(i); of[i] = list.length - 1; });
+    return { list, of };
+  }, [layout]);
+
+  const rowStep = useCallback((key: string, n: number, ok?: (key: string) => boolean) => {
+    const i = index.get(key), b = i === undefined ? undefined : layout.boxes[i];
+    if (i === undefined || !b || n === 0) return null;
+    const cx = b.left + b.width / 2, dir = n > 0 ? 1 : -1;
+    for (let r = Math.max(0, Math.min(rows.list.length - 1, rows.of[i] + n)); r >= 0 && r < rows.list.length; r += dir) {
+      if (r === rows.of[i]) break;
+      let best = -1, dist = Infinity;
+      for (const j of rows.list[r]) {
+        if (ok && !ok(items[j].key)) continue;
+        const c = layout.boxes[j], d = Math.abs(c.left + c.width / 2 - cx);
+        if (d < dist) { dist = d; best = j; }
+      }
+      if (best >= 0) return items[best].key;
+    }
+    return null;
+  }, [index, layout, rows, items]);
 
   useImperativeHandle(ref, () => ({
+    rowStep,
+    pageStep(key, dir, ok) {
+      const i = index.get(key), s = scrollRef.current;
+      if (i === undefined || !s) return null;
+      // 落点：往那个方向挪一屏（少一行的高度，翻过去还看得见原来那一行的边）
+      const b = layout.boxes[i], y = b.top + dir * Math.max(b.height, s.clientHeight - b.height);
+      let target = rows.of[i];
+      for (let r = rows.of[i]; r >= 0 && r < rows.list.length; r += dir) {
+        target = r;
+        const top = layout.boxes[rows.list[r][0]].top;
+        if (dir > 0 ? top >= y : top <= y) break;
+      }
+      return rowStep(key, target === rows.of[i] ? dir : target - rows.of[i], ok);
+    },
     reveal(key) {
       const i = index.get(key), s = scrollRef.current;
       const b = i === undefined ? undefined : layout.boxes[i];
       if (!b || !s) return;
       const top = offset() + b.top, bottom = top + b.height;
-      if (top < s.scrollTop + 8) s.scrollTo({ top: Math.max(0, top - 24), behavior: "smooth" });
-      else if (bottom > s.scrollTop + s.clientHeight - 8) s.scrollTo({ top: bottom - s.clientHeight + 24, behavior: "smooth" });
+      // 上一次平滑滚动还在路上（连按 End、Home 时）：按它要去的位置算，不按眼下还没动的位置
+      const p = gliding.current, at = p && performance.now() - p.t < 700 ? p.top : s.scrollTop;
+      const go = (y: number) => { const t = Math.max(0, Math.min(y, s.scrollHeight - s.clientHeight)); gliding.current = { top: t, t: performance.now() }; s.scrollTo({ top: t, behavior: "smooth" }); };
+      if (top < at + 8) go(top - 24);
+      else if (bottom > at + s.clientHeight - 8) go(bottom - s.clientHeight + 24);
     },
-  }), [index, layout, scrollRef, offset]);
+  }), [index, layout, scrollRef, offset, rows, rowStep]);
 
   // A screen and a half above and two screens below are prepared ahead: their images load before the rows scroll into view.
   const from = view.top - view.height * 1.5;
@@ -154,9 +206,16 @@ const Wall = forwardRef<WallHandle, {
 
   const si = selected ? index.get(selected) : undefined;
   const sb = si === undefined ? undefined : layout.boxes[si];
+  const marks: ReactNode[] = [];
+  marked?.forEach((key) => {
+    const i = index.get(key), b = i === undefined ? undefined : layout.boxes[i];
+    if (!b || key === selected || b.top + b.height < from || b.top > to) return;
+    marks.push(<div key={key} className="selframe" aria-hidden style={{ left: b.left, top: b.top, width: b.width, height: b.height }}><i /><i /><i /><i /></div>);
+  });
   return (
     <div ref={wrap} className={`wall virtual ${kind}`} style={{ height: layout.height }}>
       {mounted}
+      {marks}
       {/* One frame for the whole wall: it travels from the previous photo to the new one, across rows too, and is never clipped by a tile. */}
       <AnimatePresence>
         {sb && (
