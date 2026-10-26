@@ -478,6 +478,16 @@ impl Engine {
         crate::platform::vision()?.start(&self.paths.models, workers, cpu_only)
     }
 
+    /// 分析要不要引擎的 MediaPipe 眼睛模型：只在按 MediaPipe 量、而视觉信号自己不量的时候（Mac 的 Vision 只给框）。
+    /// Android 的人脸流水线自带一份同样的网格模型，再加载一份就是两份内存；没有视觉信号就没有脸，也用不上。
+    fn eyes_model_for(&self, method: EyeMethod, vision: Option<&dyn SystemVision>) -> Option<Arc<mediapipe::MediapipeEyes>> {
+        if method == EyeMethod::Mediapipe && vision.map_or(false, |v| !v.measures_eyes()) {
+            self.mediapipe_eyes()
+        } else {
+            None
+        }
+    }
+
     /// 启动后在后台做的事：把启用的 NAS 都连上，修剪缩略图旁边的草稿文件。
     pub fn start_background(self: &Arc<Self>) {
         let e = self.clone();
@@ -561,8 +571,9 @@ impl Engine {
         std::fs::create_dir_all(&cache_dir).map_err(|e| e.to_string())?;
         let model_dir = self.paths.models.clone();
         let tag = scorer::analysis_tag(scorer::resolve(&model_dir, !cpu_only, want));
-        let mp = if eye_method == EyeMethod::Mediapipe { self.mediapipe_eyes() } else { None };
         let fe = self.face_embedder();
+        // 一次分析只起一套系统视觉信号（Mac 是 Vision 边车，Android 是人脸流水线），分析、补量眼睛、补看人脸三段共用；用到才起
+        let vision_cell: std::cell::OnceCell<Option<Box<dyn SystemVision>>> = std::cell::OnceCell::new();
 
         let cancelled = || !self.scan_live(gen, &a.key, job);
         // 镜像里可能有探测之后才到 NAS 上的新照片；再对一次远端，没变化时只是几次目录列表
@@ -659,7 +670,8 @@ impl Engine {
             });
             // Models are only loaded when there is real work: re-opening a cached project is instant.
             let scorer = ClipScorer::load(&model_dir, !cpu_only, want).map_err(|e| eprintln!("AI disabled: {e}")).ok();
-            let vision = self.start_vision(vision_workers(), cpu_only);
+            let vision = vision_cell.get_or_init(|| self.start_vision(vision_workers(), cpu_only)).as_deref();
+            let mp = self.eyes_model_for(eye_method, vision);
             if !quiet {
                 self.emit(
                     "scan-info",
@@ -716,7 +728,7 @@ impl Engine {
                         }
                         self.emit("scan-stage", &Stage { path: &key, stage, pct, thumb: thumb.map(|t| t.0), width: thumb.map(|t| t.1), height: thumb.map(|t| t.2) });
                     };
-                    let r = analyze::analyze(p, &cache_dir, scorer.as_ref().map(|s| s as &dyn AiScorer), vision.as_deref(), eye_method, mp.as_deref(), fe.as_deref(), &on_stage);
+                    let r = analyze::analyze(p, &cache_dir, scorer.as_ref().map(|s| s as &dyn AiScorer), vision, eye_method, mp.as_deref(), fe.as_deref(), &on_stage);
                     lap("start");
                     let d = done.fetch_add(1, Ordering::Relaxed) + 1;
                     if !quiet {
@@ -779,12 +791,13 @@ impl Engine {
         // 没有（现在分析不再存副本）就从原图现解一张（见 `analyze::look_again`）。
         let mut hits = hits;
         if hits.iter().any(|p| p.face_count > 0 && !analyze::eyes_current(p.eye_method.as_deref(), eye_method)) {
-            if let Some(v) = self.start_vision(vision_workers(), cpu_only) {
+            if let Some(v) = vision_cell.get_or_init(|| self.start_vision(vision_workers(), cpu_only)).as_deref() {
+                let mp = self.eyes_model_for(eye_method, Some(v));
                 let measured: Vec<(usize, (f32, &'static str))> = hits
                     .par_iter()
                     .enumerate()
                     .filter(|(_, p)| p.face_count > 0 && !analyze::eyes_current(p.eye_method.as_deref(), eye_method) && !cancelled())
-                    .filter_map(|(i, p)| analyze::measure_eyes(Path::new(&p.path), &cache_dir, &*v, eye_method, mp.as_deref()).map(|e| (i, e)))
+                    .filter_map(|(i, p)| analyze::measure_eyes(Path::new(&p.path), &cache_dir, v, eye_method, mp.as_deref()).map(|e| (i, e)))
                     .collect();
                 if !measured.is_empty() {
                     for (i, (e, tag)) in &measured {
@@ -808,14 +821,14 @@ impl Engine {
         if let (Some(f), Ok(pool)) = (fe.as_deref(), rayon::ThreadPoolBuilder::new().num_threads(2).build()) {
             let total = hits.iter().filter(|p| !p.faces_done).count();
             if total > 0 {
-                if let Some(v) = self.start_vision(vision_workers(), cpu_only) {
+                if let Some(v) = vision_cell.get_or_init(|| self.start_vision(vision_workers(), cpu_only)).as_deref() {
                     let counter = AtomicUsize::new(0);
                     let found: Vec<(usize, Vec<[f32; 4]>, Vec<Vec<f32>>)> = pool.install(|| {
                         hits.par_iter()
                             .enumerate()
                             .filter(|(_, p)| !p.faces_done && !cancelled())
                             .filter_map(|(i, p)| {
-                                let r = analyze::measure_faces(Path::new(&p.path), &cache_dir, &*v, f).map(|(b, e)| (i, b, e));
+                                let r = analyze::measure_faces(Path::new(&p.path), &cache_dir, v, f).map(|(b, e)| (i, b, e));
                                 self.emit("people-progress", &Progress { done: counter.fetch_add(1, Ordering::Relaxed) + 1, total });
                                 r
                             })
@@ -840,6 +853,8 @@ impl Engine {
                 }
             }
         }
+        // 视觉信号到这里用完了（Mac 上是几个边车进程），不留到分组结束
+        drop(vision_cell);
         // Photos analysed before HDR and motion were looked at: their HDR thumbnail and motion clip are made now (the helper runs one
         // process per photo, so this gets a pool of its own, like the faces above).
         if let Ok(pool) = rayon::ThreadPoolBuilder::new().num_threads(4).build() {

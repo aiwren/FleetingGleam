@@ -82,6 +82,11 @@ pub trait SystemVision: Send + Sync {
     fn analyze_pixels(&self, _img: &DynamicImage) -> Option<VisionOut> {
         None
     }
+    /// 这套信号自己按 MediaPipe 量表量眼睛（`VisionOut::eyes_mediapipe` 总为真，Android 的人脸流水线）：分析时不用再加载引擎的
+    /// MediaPipe 眼睛模型。默认不（Mac 的 Vision 只给眼睛框，睁眼值由引擎的模型量）。
+    fn measures_eyes(&self) -> bool {
+        false
+    }
 }
 
 /// 每次分析起一套系统视觉信号：桌面端是几个 Apple Vision 边车进程，Android 是核心库自己的人脸流水线（`facepipe::Factory`）。
