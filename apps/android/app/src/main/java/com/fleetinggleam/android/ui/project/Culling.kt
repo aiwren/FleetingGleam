@@ -392,7 +392,9 @@ fun CullingContent(project: Project, cull: CullState, data: CullData, actions: C
             SinglePager(data.shown, decisions, cull, onDecide = actions.decide, onOpen = actions.open, bottomPad = bottomPad)
         }
         cull.layout == ViewStyle.Compare && data.shown.isNotEmpty() -> Box(Modifier.fillMaxSize().padding(top = topPad)) {
-            CompareView(data.shown, if (cull.personFilter == null) photos else photos.filter { it.people.contains(cull.personFilter) }, if (cull.sceneFilter != null) "scene" else "group",
+            // 人物筛选下的照片池：只在照片或筛选变了时重算（以前每次重组都 filter 一遍，CompareView 里的 groupBy 跟着重算）
+            val pool = remember(photos, cull.personFilter) { cull.personFilter?.let { who -> photos.filter { it.people.contains(who) } } ?: photos }
+            CompareView(data.shown, pool, if (cull.sceneFilter != null) "scene" else "group",
                 cull, decisions, onDecide = actions.decide, onOpen = actions.open, bottomPad = bottomPad)
         }
         else -> {

@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -117,6 +118,8 @@ fun CompareView(photos: List<Photo>, all: List<Photo>, scopeProp: String, cull: 
     }
     val view = remember { Animatable(View(), androidx.compose.animation.core.TwoWayConverter({ androidx.compose.animation.core.AnimationVector3D(it.s, it.x, it.y) }, { View(it.v1, it.v2, it.v3) })) }
     LaunchedEffect(cur.group, cur.scene) { view.snapTo(View()) }
+    // 视野每帧都在变：只把"怎么读"交给格子（在 graphicsLayer、手势和 derivedStateOf 里读），整个 CompareView 不跟着每帧重组
+    val viewNow = remember(view) { { view.value } }
     fun apply(v: View) {
         val lim = max(0f, (v.s - 1) / 2)
         val n = View(v.s, if (v.s <= 1) 0f else v.x.coerceIn(-lim, lim), if (v.s <= 1) 0f else v.y.coerceIn(-lim, lim))
@@ -186,7 +189,7 @@ fun CompareView(photos: List<Photo>, all: List<Photo>, scopeProp: String, cull: 
                 set.chunked(cols).forEachIndexed { r, row ->
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         row.forEachIndexed { k, p ->
-                            Cell(p, r * cols + k, decisions[p.path], view.value, cellW, cellH, metrics, set, set.size, cull,
+                            Cell(p, r * cols + k, decisions[p.path], viewNow, cellW, cellH, metrics, set, set.size, cull,
                                 onDecide = { st -> onDecide(p.path, st) }, onOpen = { onOpen(p.path) }, apply = { apply(it) },
                                 reset = { scope.launch { view.animateTo(View(), com.fleetinggleam.android.ui.theme.Motion.glide()) } })
                         }
@@ -241,7 +244,7 @@ private fun ArrowBtn(d: String, enabled: Boolean, onClick: () -> Unit) {
 
 @Composable
 private fun Cell(
-    p: Photo, index: Int, d: Decision?, view: View, w: Dp, h: Dp, metrics: List<Triple<String, String, (Photo) -> Int?>>, set: List<Photo>, count: Int, cull: CullState,
+    p: Photo, index: Int, d: Decision?, view: () -> View, w: Dp, h: Dp, metrics: List<Triple<String, String, (Photo) -> Int?>>, set: List<Photo>, count: Int, cull: CullState,
     onDecide: (String?) -> Unit, onOpen: () -> Unit, apply: (View) -> Unit, reset: () -> Unit,
 ) {
     val c = LocalFg.current
@@ -254,12 +257,14 @@ private fun Cell(
     var large by remember(p.path) { mutableStateOf(Large.ready(p.path)) }
     var sharp by remember(p.path) { mutableStateOf(false) }
     LaunchedEffect(p.path) { delay(500); warm = true }
-    LaunchedEffect(p.path, warm, view.s > 1.02f) { if (large == null && (warm || view.s > 1.02f)) large = Large.get(p.path) }
+    // 放大了没有、倍数标签：derivedStateOf，跨过阈值 / 第一位小数变了才重组这一格
+    val zoomed by remember(view) { derivedStateOf { view().s > 1.02f } }
+    val zoomTag by remember(view) { derivedStateOf { view().s.let { if (it > 1.02f) "%.1f×".format(it) else null } } }
+    LaunchedEffect(p.path, warm, zoomed) { if (large == null && (warm || zoomed)) large = Large.get(p.path) }
     val W = with(density) { w.toPx() }; val H = with(density) { h.toPx() }
     val fw = min(W, H * p.ratio); val fh = fw / p.ratio
     val shape = RoundedCornerShape(10.dp)
-    // 手势里要的是此刻的视野，不是手势开始那一刻捕获的
-    val latest by androidx.compose.runtime.rememberUpdatedState(view)
+    // 手势里要的是此刻的视野，不是手势开始那一刻捕获的（view() 每次读的都是此刻的）
     Box(Modifier.size(w, h), contentAlignment = Alignment.Center) {
         Box(
             Modifier.size(with(density) { fw.toDp() }, with(density) { fh.toDp() })
@@ -269,14 +274,14 @@ private fun Cell(
                 .background(c.surface)
                 .pointerInput(p.path) {
                     detectTapGestures(onDoubleTap = { at ->
-                        if (latest.s > 1.02f) reset()
+                        if (view().s > 1.02f) reset()
                         else { val cx = at.x / fw - 0.5f; val cy = at.y / fh - 0.5f; val n = 2.5f; apply(View(n, cx - n * cx, cy - n * cy)) }
                     })
                 }
                 .pointerInput(p.path, fw, fh) {
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false)
-                        var v = latest
+                        var v = view()
                         do {
                             val ev = awaitPointerEvent()
                             val fingers = ev.changes.count { it.pressed }
@@ -299,7 +304,7 @@ private fun Cell(
                 },
         ) {
             // 缩放改的是照片真实的大小与位置（不是拉伸一张位图）
-            Box(Modifier.fillMaxSize().graphicsLayer { scaleX = view.s; scaleY = view.s; translationX = view.x * fw; translationY = view.y * fh }) {
+            Box(Modifier.fillMaxSize().graphicsLayer { val v = view(); scaleX = v.s; scaleY = v.s; translationX = v.x * fw; translationY = v.y * fh }) {
                 AsyncImage(File(p.thumb), null, Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
                 large?.let { src ->
                     val req = remember(src) { ImageRequest.Builder(ctx).data(File(src)).size(2560, 2560).build() }
@@ -313,7 +318,7 @@ private fun Cell(
                 if (p.groupBest && count > 1) Tag(t("cmp.best"))
                 if (st == "keep") Tag(t("cmp.kept"), star = true)
                 if (st == "reject") Tag(t("cmp.rejected"))
-                if (view.s > 1.02f) Tag("%.1f×".format(view.s))
+                zoomTag?.let { Tag(it) }
             }
             // 压在照片上的圆钮统一规格（A8.4）
             Box(Modifier.align(Alignment.TopEnd).padding(8.dp).size(26.dp).clip(CircleShape).background(Color(0x4D000000)).border(1.dp, Color(0x33FFFFFF), CircleShape).clickable(onClick = onOpen), contentAlignment = Alignment.Center) {
