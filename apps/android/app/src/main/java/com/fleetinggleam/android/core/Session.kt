@@ -48,6 +48,8 @@ object Session {
     /** 出错时的文案键或消息（"cull.emptyFolder"、"cull.nasOffline"……）。 */
     val error = MutableStateFlow<String?>(null)
     val nasOff = MutableStateFlow("")
+    /** 读权限失效的那个系统文件夹镜像（`cull.safExpired` 时界面拿它去"重新授权"）。 */
+    @Volatile var expired: Media.Mirror? = null; private set
     val etaSeconds = MutableStateFlow<Int?>(null)
     /** 开始分析前给确认页用的快速缩略图。 */
     val previews = MutableStateFlow<Map<String, String>>(emptyMap())
@@ -187,10 +189,13 @@ object Session {
         }
         // 离开的那个项目：只停它自己的读取 / 分析。正在分析的那个转到后台接着跑（通知栏照常显示进度）
         attached = false
-        if (left != null && left != run?.id) runCatching { Core.callBlocking("scan_cancel", args("key" to left)) }
+        // 同样不在调用方的线程上等引擎（"重试"按钮、重新授权会从主线程进来）
+        if (left != null && left != run?.id) scope.launch { runCatching { Core.call("scan_cancel", args("key" to left)) } }
         undoStack.clear(); undoCount.value = 0
         error.value = null; celebrate.value = false; dirty.value = 0; nasProg.value = null; peopleProg.value = null; mediaProg.value = null
         if (run == null && pausedProject == null) paused.value = Pause.None
+        // 上一个项目分析中的实时表：没有分析在后台跑就清掉（在跑的那个回来时还要用，留着）
+        if (run == null) { results.clear(); stages.clear(); live.clear(); lastStage = null }
         decisions.value = emptyMap()
         currentKey = project?.let { "${it.id}|${it.folders.joinToString("|")}" } ?: ""
         if (project == null || project.folders.isEmpty()) { phase.value = Phase.Idle; photos.value = emptyList(); files.value = emptyList(); return }
@@ -218,10 +223,21 @@ object Session {
                     phase.value = Phase.Ready
                     prepareReady(tok)
                 } else runScan(project, probe.files.size, quiet = true, tok = tok)
+            } catch (e: Media.SafExpired) {
+                // 系统文件夹的读权限没了：和 NAS 连不上一样停在这里，给"重新授权"（镜像里的照片一张没动）
+                if (tok == token) { photos.value = emptyList(); files.value = emptyList(); phase.value = Phase.Idle; expired = e.mirror; nasOff.value = e.mirror.name; error.value = e.message }
             } catch (e: Exception) {
                 if (tok == token && e.message != "cancelled") { error.value = e.message; phase.value = Phase.Idle }
             }
         }
+    }
+
+    /** 重新授权失效的那个文件夹：用户在系统选择器里选的是原来那个就重新进项目，返回 true；选错了返回 false。 */
+    suspend fun reauthorize(uri: android.net.Uri): Boolean {
+        val m = expired ?: return false
+        val ok = kotlinx.coroutines.withContext(Dispatchers.IO) { Media.reauthorize(app, m, uri) }
+        if (ok) { expired = null; enter() }
+        return ok
     }
 
     /** 确认页：预计要多久（应用会用的模型、这台手机的核数），和前几张照片的快速缩略图。 */
@@ -310,8 +326,14 @@ object Session {
         }
     }
 
-    /** 停下正在跑的那次分析（不管页面开着哪个项目：通知栏的"停止"也走这里）。 */
-    fun stopScan() { running.value?.let { r -> runCatching { Core.callBlocking("scan_cancel", args("key" to r.id)) } } }
+    /**
+     * 停下正在跑的那次分析（不管页面开着哪个项目：通知栏的"停止"也走这里）。调用方多在主线程（停止按钮、通知栏、温度回调），
+     * 而 scan_cancel 要等引擎的锁，所以放到 IO 上发出去，这里立刻返回；停下之后 `running` 会变回 null。
+     */
+    fun stopScan() {
+        val r = running.value ?: return
+        scope.launch { runCatching { Core.call("scan_cancel", args("key" to r.id)) } }
+    }
 
     /** 问过了：先停下另一个项目的分析（分析过的都在缓存里，回到它时接着来），再分析这个。 */
     fun stopOtherAndStart() {

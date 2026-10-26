@@ -54,7 +54,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -65,6 +65,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -107,6 +108,7 @@ import com.fleetinggleam.android.ui.theme.Type
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import java.io.File
@@ -138,7 +140,8 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, re
     val haptic = LocalHapticFeedback.current
     val pager = rememberPagerState(initialPage = start) { shown.size }
     val photo = shown.getOrNull(pager.currentPage) ?: shown[0]
-    var scale by remember { mutableFloatStateOf(1f) }
+    // 眼前这页放大了没有（只在跨过 1 倍时变：手势检测器和翻页开关跟着它，不再每帧重启）
+    var zoomed by remember { mutableStateOf(false) }
     var chrome by remember { mutableStateOf(true) }
     var info by remember { mutableStateOf(false) }
     val enter = remember { Animatable(0f) }
@@ -191,20 +194,22 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, re
         runCatching { Core.get<String>("motion_clip", args("path" to photo.path)) }.getOrNull()?.let { quiet = !sound; clip = it; playing++ }
     }
 
-    val e = enter.value
-    val dy = drag.value
-    val fade = (1f - abs(dy) / with(density) { 360.dp.toPx() }).coerceIn(0f, 1f)
+    // 进出场和下拉每帧都在变：只在 graphicsLayer 里读；显隐条件用 derivedStateOf，整页不跟着每帧重组
+    val dismissPx = with(density) { 360.dp.toPx() }
+    fun fadeNow() = (1f - abs(drag.value) / dismissPx).coerceIn(0f, 1f)
+    val chromeIn by remember { derivedStateOf { enter.value > 0.6f } }
+    val barsIn by remember { derivedStateOf { enter.value > 0.6f && fadeNow() > 0.7f } }
     Box(Modifier.fillMaxSize().onGloballyPositioned { stage = it.boundsInRoot() }) {
         // ---- 房间：深色底，照片的模糊副本把它照亮
-        Box(Modifier.fillMaxSize().graphicsLayer { alpha = e * fade }.background(ROOM)) {
+        Box(Modifier.fillMaxSize().graphicsLayer { alpha = enter.value * fadeNow() }.background(ROOM)) {
             AsyncImage(File(photo.thumb), null, Modifier.fillMaxSize().blur(60.dp).graphicsLayer { alpha = 0.42f }, contentScale = ContentScale.Crop)
         }
         // ---- 照片
         Box(Modifier.fillMaxSize().then(if (com.fleetinggleam.android.ui.components.LocalGlassOn.current) Modifier.layerBackdrop(backdrop) else Modifier)) {
             HorizontalPager(
-                pager, Modifier.fillMaxSize().pointerInput(scale) {
+                pager, Modifier.fillMaxSize().pointerInput(zoomed) {
                     // 没放大时竖着拖：往下关、往上看详情
-                    if (scale > 1.01f) return@pointerInput
+                    if (zoomed) return@pointerInput
                     detectVerticalDragGestures(
                         onDragEnd = {
                             val v = drag.value
@@ -217,16 +222,17 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, re
                         onDragCancel = { scope.launch { drag.animateTo(0f, Motion.glide()) } },
                     ) { change, d -> change.consume(); scope.launch { drag.snapTo(drag.value + if (drag.value < 0) d * 0.5f else d) } }
                 },
-                userScrollEnabled = scale <= 1.01f, beyondViewportPageCount = 1, key = { shown[it].path },
+                userScrollEnabled = !zoomed, beyondViewportPageCount = 1, key = { shown[it].path },
             ) { page ->
                 val p = shown[page]
                 val isOrigin = page == start
                 ZoomPage(
-                    p, active = page == pager.currentPage,
+                    p, active = page == pager.currentPage, resident = page == pager.currentPage || page == pager.settledPage,
                     clip = if (page == pager.currentPage) clip else null, clipRun = playing, quiet = quiet, onClipEnd = { clip = null },
-                    onScale = { if (page == pager.currentPage) scale = it },
+                    onZoomed = { if (page == pager.currentPage) zoomed = it },
                     onTap = { chrome = !chrome },
                     modifier = Modifier.graphicsLayer {
+                        val e = enter.value; val dy = drag.value; val fade = fadeNow()
                         // 打开：从格子飞出来；关上：飞回此刻这张的格子（不在屏幕上就只淡出）
                         val from = if (isOrigin && page == pager.currentPage) origin else if (page == pager.currentPage) cull.rect(p.path) else null
                         val st = stage
@@ -248,7 +254,7 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, re
 
         // ---- 上面一条：关闭、名字、标签、实况、第几张。查看器总是暗的房间，所以玻璃件和文字一律用深色那套
         CompositionLocalProvider(LocalBackdrop provides backdrop, LocalFg provides com.fleetinggleam.android.ui.theme.Dark) {
-            AnimatedVisibility(chrome && e > 0.6f, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.TopCenter)) {
+            AnimatedVisibility(chrome && chromeIn, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.TopCenter)) {
                 // 顶栏（设计审查 A9.1 / A9.3 / A9.4）：左 × ，中间文件名 + 页码，右边实况、旋转、检查器；全部 40dp 玻璃圆
                 Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
                     GlassRound(Icons.CLOSE, t("viewer.close")) { close() }
@@ -280,7 +286,7 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, re
             }
 
             // ---- 下面：小图条、保留 / 待复查 / 淘汰、详情
-            AnimatedVisibility(chrome && e > 0.6f && fade > 0.7f, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.BottomCenter)) {
+            AnimatedVisibility(chrome && barsIn, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.BottomCenter)) {
                 Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     // 小图条和单张同一规格（A7.5）：当前项白色描边
                     Filmstrip(shown, decisions, pager.currentPage, Modifier.fillMaxWidth(), ring = Color.White) { cull.select(it) }
@@ -320,18 +326,25 @@ private fun fitRect(ratio: Float, w: Float, h: Float): androidx.compose.ui.geome
  * 一页：照片按比例放在中间，可以缩放、平移。缩放画的是照片本身（不是放大一张位图），清晰的部分到了再叠上去。
  */
 @Composable
-private fun ZoomPage(p: Photo, active: Boolean, clip: String?, clipRun: Int, quiet: Boolean, onClipEnd: () -> Unit, onScale: (Float) -> Unit, onTap: () -> Unit, modifier: Modifier) {
+private fun ZoomPage(p: Photo, active: Boolean, resident: Boolean, clip: String?, clipRun: Int, quiet: Boolean, onClipEnd: () -> Unit, onZoomed: (Boolean) -> Unit, onTap: () -> Unit, modifier: Modifier) {
     val ctx = LocalContext.current
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     // 以缩略图的路径为键：照片转过之后缩略图换了文件，大图、清晰块和缩放都从头来
     val zoom = remember(p.thumb) { Animatable(1f) }
     val pan = remember(p.thumb) { Animatable(Offset.Zero, Offset.VectorConverter) }
-    var large by remember(p.thumb) { mutableStateOf(Large.ready(p.path, true)) }
+    // 大图解码的最长边：屏幕长边 × 2（再细由下面的清晰块接手），封顶 4096。一张 4096² 就是 64 MB，以前左右两页也各解一张
+    val decodeMax = remember { ctx.resources.displayMetrics.let { min(4096, max(it.widthPixels, it.heightPixels) * 2) } }
+    // 大图只给眼前这一页（翻页途中还看得到的上一页也留着）；左右预备的那两页先只放缩略图，翻到了再解
+    var large by remember(p.thumb) { mutableStateOf(if (active) Large.ready(p.path, true) else null) }
     var sharp by remember(p.thumb) { mutableStateOf(false) }
     var detail by remember(p.thumb) { mutableStateOf<Pair<String, androidx.compose.ui.geometry.Rect>?>(null) }
-    LaunchedEffect(p.thumb, active) { if (large == null && active) large = Large.get(p.path, full = true) ?: Large.get(p.path) }
-    LaunchedEffect(zoom.value) { if (active) onScale(zoom.value) }
+    LaunchedEffect(p.thumb, active, resident) {
+        if (!resident) { large = null; sharp = false; detail = null; return@LaunchedEffect }
+        if (large == null && active) large = Large.get(p.path, full = true) ?: Large.get(p.path)
+    }
+    // 只在跨过 1 倍时告诉外面（以前每帧回调一次，外面的状态跟着每帧变）
+    LaunchedEffect(zoom, active) { if (active) snapshotFlow { zoom.value > 1.01f }.distinctUntilChanged().collect { onZoomed(it) } }
 
     BoxWithConstraints(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         val W = constraints.maxWidth.toFloat(); val H = constraints.maxHeight.toFloat()
@@ -351,28 +364,29 @@ private fun ZoomPage(p: Photo, active: Boolean, clip: String?, clipRun: Int, qui
                 else { zoom.snapTo(n); pan.snapTo(o) }
             }
         }
-        // 清晰的部分：放大到比已经解码的（最长边 4096）还细时，按屏幕上那一块从原图解出来
-        LaunchedEffect(zoom.value, pan.value, active) {
+        // 清晰的部分：放大到比已经解码的（最长边 decodeMax）还细时，按屏幕上那一块从原图解出来
+        // 缩放 / 平移经 snapshotFlow 进来、停 160 毫秒才取（collectLatest：手还在动就作废重来），不再每帧重启一个 LaunchedEffect
+        LaunchedEffect(zoom, active, fit, W, H) {
             if (!active) return@LaunchedEffect
-            val long = max(p.width, p.height).toFloat()
-            val have = min(long, 4096f)
-            val s = zoom.value
-            // 原图不比已解码的大，或者屏幕上画出来的还没超过已解码的像素：不用再取
-            if (long <= have * 1.05f || max(fit.width, fit.height) * s <= have * 0.9f) {
-                if (s < 1.05f) detail = null
-                return@LaunchedEffect
+            snapshotFlow { zoom.value to pan.value }.collectLatest { (s, o) ->
+                val long = max(p.width, p.height).toFloat()
+                val have = min(long, decodeMax.toFloat())
+                // 原图不比已解码的大，或者屏幕上画出来的还没超过已解码的像素：不用再取
+                if (long <= have * 1.05f || max(fit.width, fit.height) * s <= have * 0.9f) {
+                    if (s < 1.05f) detail = null
+                    return@collectLatest
+                }
+                delay(160)
+                // 屏幕上看得到的那一块（照片的比例坐标），四周再留一些，拖一拖还在清晰范围里
+                val x0 = ((-W / 2 - o.x) / (fit.width * s) + 0.5f).coerceIn(0f, 1f); val x1 = ((W / 2 - o.x) / (fit.width * s) + 0.5f).coerceIn(0f, 1f)
+                val y0 = ((-H / 2 - o.y) / (fit.height * s) + 0.5f).coerceIn(0f, 1f); val y1 = ((H / 2 - o.y) / (fit.height * s) + 0.5f).coerceIn(0f, 1f)
+                val cur = detail?.second
+                if (cur != null && x0 >= cur.left && y0 >= cur.top && x1 <= cur.right && y1 <= cur.bottom) return@collectLatest
+                val px = (x1 - x0) * 0.3f; val py = (y1 - y0) * 0.3f
+                val g = androidx.compose.ui.geometry.Rect((x0 - px).coerceAtLeast(0f), (y0 - py).coerceAtLeast(0f), (x1 + px).coerceAtMost(1f), (y1 + py).coerceAtMost(1f))
+                val outW = max(800, min((g.width * p.width).toInt(), (g.width * fit.width * s * 1.1f).toInt()))
+                runCatching { Core.get<String>("photo_detail", args("path" to p.path, "x" to g.left, "y" to g.top, "w" to g.width, "h" to g.height, "out_w" to outW)) }.getOrNull()?.let { detail = it to g }
             }
-            delay(160)
-            // 屏幕上看得到的那一块（照片的比例坐标），四周再留一些，拖一拖还在清晰范围里
-            val o = pan.value
-            val x0 = ((-W / 2 - o.x) / (fit.width * s) + 0.5f).coerceIn(0f, 1f); val x1 = ((W / 2 - o.x) / (fit.width * s) + 0.5f).coerceIn(0f, 1f)
-            val y0 = ((-H / 2 - o.y) / (fit.height * s) + 0.5f).coerceIn(0f, 1f); val y1 = ((H / 2 - o.y) / (fit.height * s) + 0.5f).coerceIn(0f, 1f)
-            val cur = detail?.second
-            if (cur != null && x0 >= cur.left && y0 >= cur.top && x1 <= cur.right && y1 <= cur.bottom) return@LaunchedEffect
-            val px = (x1 - x0) * 0.3f; val py = (y1 - y0) * 0.3f
-            val g = androidx.compose.ui.geometry.Rect((x0 - px).coerceAtLeast(0f), (y0 - py).coerceAtLeast(0f), (x1 + px).coerceAtMost(1f), (y1 + py).coerceAtMost(1f))
-            val outW = max(800, min((g.width * p.width).toInt(), (g.width * fit.width * s * 1.1f).toInt()))
-            runCatching { Core.get<String>("photo_detail", args("path" to p.path, "x" to g.left, "y" to g.top, "w" to g.width, "h" to g.height, "out_w" to outW)) }.getOrNull()?.let { detail = it to g }
         }
 
         Box(
@@ -417,7 +431,8 @@ private fun ZoomPage(p: Photo, active: Boolean, clip: String?, clipRun: Int, qui
         ) {
             AsyncImage(File(p.thumb), null, Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
             large?.let { src ->
-                val req = remember(src) { ImageRequest.Builder(ctx).data(File(src)).size(4096, 4096).build() }
+                // 不进 Coil 的内存缓存：几十 MB 一张，进去就把墙上那些 480 px 的缩略图挤出去，退回墙上又得重解
+                val req = remember(src) { ImageRequest.Builder(ctx).data(File(src)).size(decodeMax, decodeMax).memoryCachePolicy(coil3.request.CachePolicy.DISABLED).build() }
                 AsyncImage(req, p.name, Modifier.fillMaxSize().graphicsLayer { alpha = if (sharp) 1f else 0f }, contentScale = ContentScale.FillBounds, onSuccess = { sharp = true })
             }
             detail?.let { (src, g) ->
@@ -438,19 +453,30 @@ private fun ZoomPage(p: Photo, active: Boolean, clip: String?, clipRun: Int, qui
                 }
             }
         }
-        // 放大时右下角的小地图：整张照片和此刻看着的那一块；倍数写在地图上方（A9.4）
-        if (zoom.value > 1.02f) {
-            val nw = min(120f, 90f * p.ratio); val nh = nw / p.ratio
+        // 放大时右下角的小地图：整张照片和此刻看着的那一块；倍数写在地图上方（A9.4）。显不显示用 derivedStateOf，框在绘制阶段读，平移时不重组
+        val showMap by remember(zoom) { derivedStateOf { zoom.value > 1.02f } }
+        if (showMap) ZoomMap(p, zoom, pan, W, H, fit, Modifier.align(Alignment.BottomEnd))
+    }
+}
+
+/** 小地图：倍数只在整数百分比变了时重组；看着的那一块是画出来的，每帧读缩放 / 平移也只重画、不重组。 */
+@Composable
+private fun ZoomMap(p: Photo, zoom: Animatable<Float, *>, pan: Animatable<Offset, *>, W: Float, H: Float, fit: androidx.compose.ui.geometry.Rect, modifier: Modifier) {
+    val nw = min(120f, 90f * p.ratio); val nh = nw / p.ratio
+    val pct by remember(zoom) { derivedStateOf { Math.round(zoom.value * 100) } }
+    Column(modifier.navigationBarsPadding().padding(end = 14.dp, bottom = 150.dp), horizontalAlignment = Alignment.End) {
+        Text("$pct%", style = Type.monoSmall.copy(color = Color.White.copy(alpha = 0.85f)), modifier = Modifier.padding(bottom = 4.dp))
+        Box(Modifier.size(nw.dp, nh.dp).clip(RoundedCornerShape(6.dp)).border(1.dp, Color.White.copy(alpha = 0.5f), RoundedCornerShape(6.dp)).drawWithContent {
+            drawContent()
             val s = zoom.value; val o = pan.value
             val fx0 = ((-W / 2 - o.x) / (fit.width * s) + 0.5f).coerceIn(0f, 1f); val fx1 = ((W / 2 - o.x) / (fit.width * s) + 0.5f).coerceIn(0f, 1f)
             val fy0 = ((-H / 2 - o.y) / (fit.height * s) + 0.5f).coerceIn(0f, 1f); val fy1 = ((H / 2 - o.y) / (fit.height * s) + 0.5f).coerceIn(0f, 1f)
-            Column(Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(end = 14.dp, bottom = 150.dp), horizontalAlignment = Alignment.End) {
-                Text("${Math.round(s * 100)}%", style = Type.monoSmall.copy(color = Color.White.copy(alpha = 0.85f)), modifier = Modifier.padding(bottom = 4.dp))
-                Box(Modifier.size(nw.dp, nh.dp).clip(RoundedCornerShape(6.dp)).border(1.dp, Color.White.copy(alpha = 0.5f), RoundedCornerShape(6.dp))) {
-                    AsyncImage(File(p.thumb), null, Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
-                    Box(Modifier.offset((fx0 * nw).dp, (fy0 * nh).dp).size(((fx1 - fx0) * nw).dp, ((fy1 - fy0) * nh).dp).border(1.5.dp, Color.White, RoundedCornerShape(2.dp)))
-                }
-            }
+            val stroke = 1.5.dp.toPx()
+            drawRoundRect(Color.White, topLeft = Offset(fx0 * size.width + stroke / 2, fy0 * size.height + stroke / 2),
+                size = androidx.compose.ui.geometry.Size(((fx1 - fx0) * size.width - stroke).coerceAtLeast(0f), ((fy1 - fy0) * size.height - stroke).coerceAtLeast(0f)),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(2.dp.toPx()), style = androidx.compose.ui.graphics.drawscope.Stroke(stroke))
+        }) {
+            AsyncImage(File(p.thumb), null, Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
         }
     }
 }

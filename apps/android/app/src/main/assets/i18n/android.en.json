@@ -144,7 +144,10 @@
   "readyBody": "Analysis decodes each photo, checks sharpness and exposure, scores it with on-device models, then groups similar shots. Everything runs on this phone and your originals stay untouched.",
   "layout": {
    "grid": "Grid"
-  }
+  },
+  "safExpired": "The folder “{{name}}” for this project can no longer be read: access was revoked (by the system, or when app data was cleared). The photos already copied are still here; grant access again to keep syncing.",
+  "safReauth": "Grant access",
+  "safWrongFolder": "That is not the original folder. Please pick “{{name}}” again."
  },
  "searchset": {
   "info": "The first time it is turned on, a search model is downloaded and the photos are indexed in the background (a few tens of milliseconds each). It all happens on this phone; photos are never uploaded."

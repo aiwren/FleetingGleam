@@ -251,6 +251,12 @@ fun Wall(
             zoomNow?.invoke(m.toLevel - m.fromLevel)
             haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
         }
+        // 手势协程只建一次（捏到一半不能重启），里面一律经 rememberUpdatedState 取最新的：换筛选、切网格↔瀑布、旋转之后再捏，
+        // 档数、格子尺寸和目标布局都按眼下的 items / width / layout 算（以前按第一次组合时的算）
+        val levelsNow by androidx.compose.runtime.rememberUpdatedState(levels)
+        val cellNow by androidx.compose.runtime.rememberUpdatedState<(Int) -> Float>(::cellOf)
+        val buildNow by androidx.compose.runtime.rememberUpdatedState<(Int, Int, Offset, Float) -> Morph?>(::buildMorph)
+        val commitNow by androidx.compose.runtime.rememberUpdatedState<(Morph) -> Unit>(::commit)
         val pinch = if (onZoom == null) Modifier else Modifier.pointerInput(Unit) {
             // 两根手指时自己处理（Initial 阶段先拿到、吃掉，列表不跟着滚）；一根手指照常滚动
             awaitEachGesture {
@@ -267,20 +273,20 @@ fun Wall(
                         if (!pinching) { pinching = true; pivot = ev.calculateCentroid(useCurrent = true) }
                         acc = (acc * ev.calculateZoom()).coerceIn(0.4f, 2.5f)
                         val dir = if (acc >= 1f) 1 else -1
-                        val next = (level + dir).coerceIn(0, levels - 1)
+                        val next = (level + dir).coerceIn(0, levelsNow - 1)
                         // 方向变了、或还没建：建这一档到下一档的过渡；到顶 / 到底就只记手势
                         if (next != level && (cur == null || cur.toLevel != next)) {
-                            cur = buildMorph(level, next, pivot, size.height.toFloat())
+                            cur = buildNow(level, next, pivot, size.height.toFloat())
                             morph = cur
                         }
                         val m = cur
                         if (m != null) {
-                            val ratio = cellOf(m.toLevel) / cellOf(m.fromLevel)
+                            val ratio = cellNow(m.toLevel) / cellNow(m.fromLevel)
                             val p = if (ratio > 1f) (acc - 1f) / (ratio - 1f) else (1f - acc) / (1f - ratio)
                             zoomScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { m.p.snapTo(p.coerceIn(0f, 1f)) }
                             if (p >= 1f) {
                                 // 捏满一档：换档，接着往下一档流（锚点换到手指此刻的位置）
-                                commit(m)
+                                commitNow(m)
                                 level = m.toLevel
                                 acc = 1f
                                 cur = null
@@ -296,7 +302,7 @@ fun Wall(
                         val spring = androidx.compose.animation.core.spring<Float>(dampingRatio = 0.9f, stiffness = 500f)
                         if (m.p.value >= 0.45f) {
                             m.p.animateTo(1f, spring)
-                            commit(m)
+                            commitNow(m)
                             kotlinx.coroutines.delay(32)
                         } else {
                             m.p.animateTo(0f, spring)

@@ -57,7 +57,10 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.node.GlobalPositionAwareModifierNode
+import androidx.compose.ui.node.ModifierNodeElement
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -140,7 +143,10 @@ class CullState {
         private set
     var hintUses by mutableIntStateOf(UiPrefs.int("hint.dock", 0))
         private set
-    /** 每张照片的格子的布局坐标：打开大图时照片从它的格子里飞出来。只记坐标对象，位置在用到时才算（滚动时每帧不算矩形）。 */
+    /**
+     * 每张照片的格子的布局坐标：打开大图时照片从它的格子里飞出来。只记坐标对象，位置在用到时才算（滚动时每帧不算矩形）。
+     * 经 [trackRect] 登记，格子离开组合就注销（以前只增不减，滚过的每个格子都被攥着）。
+     */
     val coords = HashMap<String, androidx.compose.ui.layout.LayoutCoordinates>()
     fun rect(path: String): Rect? = coords[path]?.takeIf { it.isAttached }?.boundsInRoot()
     /** 照片墙的缩放档位（网格、瀑布各一个，记住）。 */
@@ -167,6 +173,29 @@ class CullState {
     fun bumpHint(n: Int = 1) { hintUses = if (n == 99) 99 else maxOf(hintUses, hintUses + 1); UiPrefs.put("hint.dock", hintUses) }
     fun select(path: String?, byTap: Boolean = false) { selectedByTap = byTap; selected = path }
     val filtered: Boolean get() = sceneFilter != null || personFilter != null
+}
+
+/** 把这一块的布局坐标登记进 `map[key]`（[CullState.coords] / [CullState.tabCoords]）；离开组合时注销自己登记的那份。 */
+fun Modifier.trackRect(map: MutableMap<String, LayoutCoordinates>, key: String): Modifier = this then TrackRectElement(map, key)
+
+private class TrackRectElement(val map: MutableMap<String, LayoutCoordinates>, val key: String) : ModifierNodeElement<TrackRectNode>() {
+    override fun create() = TrackRectNode(map, key)
+    override fun update(node: TrackRectNode) {
+        if (node.map === map && node.key == key) return
+        node.drop()
+        node.map = map; node.key = key
+    }
+    // 按身份比 map（HashMap 的 equals 会逐项比内容）
+    override fun equals(other: Any?) = other is TrackRectElement && other.map === map && other.key == key
+    override fun hashCode() = System.identityHashCode(map) * 31 + key.hashCode()
+}
+
+private class TrackRectNode(var map: MutableMap<String, LayoutCoordinates>, var key: String) : Modifier.Node(), GlobalPositionAwareModifierNode {
+    private var mine: LayoutCoordinates? = null
+    override fun onGloballyPositioned(coordinates: LayoutCoordinates) { mine = coordinates; map[key] = coordinates }
+    override fun onDetach() = drop()
+    /** 只删自己登记的：同一张照片可能同时在墙上和单张 / 对比里登记，后来的那份不能被先走的删掉。 */
+    fun drop() { if (mine != null && map[key] === mine) map.remove(key); mine = null }
 }
 
 data class SceneItem(val scene: Int, val cover: Photo, val total: Int, val count: Int, val text: String)
@@ -363,7 +392,9 @@ fun CullingContent(project: Project, cull: CullState, data: CullData, actions: C
             SinglePager(data.shown, decisions, cull, onDecide = actions.decide, onOpen = actions.open, bottomPad = bottomPad)
         }
         cull.layout == ViewStyle.Compare && data.shown.isNotEmpty() -> Box(Modifier.fillMaxSize().padding(top = topPad)) {
-            CompareView(data.shown, if (cull.personFilter == null) photos else photos.filter { it.people.contains(cull.personFilter) }, if (cull.sceneFilter != null) "scene" else "group",
+            // 人物筛选下的照片池：只在照片或筛选变了时重算（以前每次重组都 filter 一遍，CompareView 里的 groupBy 跟着重算）
+            val pool = remember(photos, cull.personFilter) { cull.personFilter?.let { who -> photos.filter { it.people.contains(who) } } ?: photos }
+            CompareView(data.shown, pool, if (cull.sceneFilter != null) "scene" else "group",
                 cull, decisions, onDecide = actions.decide, onOpen = actions.open, bottomPad = bottomPad)
         }
         else -> {
@@ -382,7 +413,7 @@ fun CullingContent(project: Project, cull: CullState, data: CullData, actions: C
                     val p = data.shown[i]
                     val d = decisions[p.path]
                     val st = d?.state ?: ""
-                    Box(Modifier.onGloballyPositioned { cull.coords[p.path] = it }) {
+                    Box(Modifier.trackRect(cull.coords, p.path)) {
                         Tile(p.path, w, h, p, null, st, selected = cull.selected == p.path, reveal = celebrate, dim = st == "reject" && cull.mode == "all", manual = d?.manual == true,
                             showScore = sortBy == "score", index = i, interactive = true, dock = false,
                             onSelect = actions.selectTile, onOpen = actions.open, onDecide = actions.decide)
@@ -493,7 +524,7 @@ fun StatusStrip(cull: CullState, data: CullData, padded: Boolean = true) {
                             Text(t("state.$id"), style = Type.tab.copy(color = if (on) c.ink else c.ash, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal),
                                 modifier = Modifier.onGloballyPositioned { spans[id] = (rowX + it.positionInParent().x) to it.size.width.toFloat() })
                             // 数字像计数器一样一位位滚（分析中会一直变）；颜色跟随页签。分析中的光点飞到它的左侧
-                            Box(Modifier.padding(start = 4.dp, bottom = 2.dp).onGloballyPositioned { cull.tabCoords[id] = it }) { Ticker(data.status[id] ?: 0, Type.monoSmall.copy(color = if (on) c.ink else c.ash)) }
+                            Box(Modifier.padding(start = 4.dp, bottom = 2.dp).trackRect(cull.tabCoords, id)) { Ticker(data.status[id] ?: 0, Type.monoSmall.copy(color = if (on) c.ink else c.ash)) }
                         }
                     }
                 }
