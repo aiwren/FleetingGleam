@@ -176,6 +176,7 @@ async function scan(dirs: string[], quiet: boolean, live?: { keep_ratio?: number
 let dialogCalls = 0;
 let dlCancel = false;
 const mirrorBytes: Record<string, number> = {};
+let exportCancel = false;
 let labels = 0, keeps = 0;
 /** The same shape prefs.rs sends: counts, whether the taste is in use, and the marks on the way to its full say. */
 const prefsOf = (labels: number, keeps: number, refs = 0, refs_from = "") => {
@@ -309,12 +310,25 @@ w.__TAURI_INTERNALS__ = {
         return prefsInfo();
       }
       case "export_photos": {
+        // 每张 300 ms，可以中途停（export_cancel）；第 2 张"目标里已经有了"，第 4、6 张按约定的错误码失败
         const paths = args.paths as string[];
-        for (let i = 0; i < paths.length; i++) { emit("export-progress", { done: i + 1, total: paths.length }); await sleep(60); }
+        exportCancel = false;
+        let copied = 0, skipped = 0, cancelled = false;
+        const failed: { path: string; error: string }[] = [];
+        for (let i = 0; i < paths.length; i++) {
+          if (exportCancel) { cancelled = true; break; }
+          await sleep(300);
+          if (i === 1) skipped++;
+          else if (i === 3) failed.push({ path: paths[i], error: "space:9400000:1200000" });
+          else if (i === 5) failed.push({ path: paths[i], error: "denied:Operation not permitted (os error 1)" });
+          else copied++;
+          emit("export-progress", { done: i + 1, total: paths.length });
+        }
         // 落在 NAS 镜像里的：假装传到了 NAS 上
         const nas = String(args.dest).match(/\/nas\/[^/]+\/(.+)$/);
-        return nas ? { copied: paths.length, skipped: 0, dest: `smb://nas.local/${nas[1]}`, remote: true } : { copied: paths.length, skipped: 0, dest: args.dest };
+        return nas ? { copied, skipped, failed, cancelled, dest: `smb://nas.local/${nas[1]}`, remote: true } : { copied, skipped, failed, cancelled, dest: args.dest };
       }
+      case "export_cancel": exportCancel = true; return null;
       case "trash_photos": {
         const paths = args.paths as string[];
         for (const p of paths) { const i = SRC.findIndex((s) => s.path === p); if (i >= 0) SRC.splice(i, 1); cached.delete(p); }

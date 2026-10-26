@@ -289,6 +289,8 @@ const en = {
     exportNasItem: "Export to a NAS…", exportNasDesc: "Upload the {{count}} kept photos to a folder on a NAS", exportNasPick: "Export to which folder on the NAS?", exportHere: "Export here", exportFailed: "Could not export: {{error}}",
     exportTitle: "Export kept photos", exportBody_one: "{{count}} kept photo will be copied to:", exportBody_other: "{{count}} kept photos will be copied to:", exportSafe: "Copies only: originals are never moved or changed, and files with the same name get a number instead of being overwritten.",
     exportGo: "Start export", exporting: "Exporting {{done}} / {{total}}", exported_one: "Exported {{count}} photo", exported_other: "Exported {{count}} photos", exportedSkipped: "{{n}} could not be copied",
+    exportedAlready: "{{n}} already there, skipped", exportedFailed: "{{n}} not exported", exportFailedMore: "{{n}} more…",
+    exportStop: "Stop export", exportStopping: "Stopping…", exportStopped: "Stopped: {{count}} exported, {{left}} not yet",
     trashItem: "Move rejected photos to the Trash…", trashDesc: "{{count}} · can be put back from the Trash",
     trashTitle: "Move to the Trash", trashBody: "These photos will be moved to the system Trash and disappear from this project. To get them back, open the Trash, right-click a photo and choose Put Back.",
     scopeManual: "Only the ones I marked as rejected ({{count}})", scopeAll: "All rejected, including the system's suggestions ({{count}})",

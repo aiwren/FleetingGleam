@@ -9,6 +9,7 @@ import { baseName, pickLocalFolder } from "../projectActions";
 import { Project, updateProject } from "../projects";
 import { Decision, Photo } from "../types";
 import { getEnabledShares, nasLabel, openPicker } from "../nas";
+import { errText } from "../errors";
 
 type Dlg = null | { kind: "export"; dest: string } | { kind: "trash" };
 type Phase = "confirm" | "running" | "done";
@@ -25,13 +26,15 @@ export default function Organize({ project, photos, decisions, offline = false, 
   offline?: boolean;
   onChanged: () => void;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [menu, setMenu] = useState(false);
   const [dlg, setDlg] = useState<Dlg>(null);
   const [phase, setPhase] = useState<Phase>("confirm");
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [scope, setScope] = useState<"manual" | "all">("manual");
-  const [result, setResult] = useState<{ ok: number; bad: number; dest?: string; bins?: string[]; remote?: boolean; error?: string } | null>(null);
+  /** `skipped`：目标里已经有了（同名、同大小、同时间）；`failed`：没导出的那些和原因（约定的错误前缀）；`cancelled`：中途停下了。 */
+  const [result, setResult] = useState<{ ok: number; bad: number; skipped?: number; failed?: { path: string; error: string }[]; cancelled?: boolean; dest?: string; bins?: string[]; remote?: boolean; error?: string } | null>(null);
+  const [stopping, setStopping] = useState(false);
 
   const keep = photos.filter((p) => decisions.get(p.path)?.state === "keep");
   const rejectAll = photos.filter((p) => decisions.get(p.path)?.state === "reject");
@@ -45,7 +48,7 @@ export default function Organize({ project, photos, decisions, offline = false, 
     return () => window.removeEventListener("mousedown", close);
   }, [menu]);
 
-  const open = (d: Dlg) => { setResult(null); setPhase("confirm"); setProgress({ done: 0, total: 0 }); setDlg(d); setMenu(false); };
+  const open = (d: Dlg) => { setResult(null); setStopping(false); setPhase("confirm"); setProgress({ done: 0, total: 0 }); setDlg(d); setMenu(false); };
   const close = () => { setDlg(null); if (phase === "done") onChanged(); };
 
   const startExport = async () => {
@@ -54,12 +57,15 @@ export default function Organize({ project, photos, decisions, offline = false, 
     setProgress({ done: 0, total: keep.length });
     const un = await listen<{ done: number; total: number }>("export-progress", (e) => setProgress(e.payload));
     try {
-      const r = await invoke<{ copied: number; skipped: number; dest: string; remote?: boolean }>("export_photos", { paths: keep.map((p) => p.path), dest: dlg.dest });
-      setResult({ ok: r.copied, bad: r.skipped, dest: r.dest, remote: r.remote });
+      const r = await invoke<{ copied: number; skipped: number; dest: string; remote?: boolean; failed?: { path: string; error: string }[]; cancelled?: boolean }>("export_photos", { paths: keep.map((p) => p.path), dest: dlg.dest });
+      setResult({ ok: r.copied, bad: r.failed?.length ?? 0, skipped: r.skipped, failed: r.failed ?? [], cancelled: !!r.cancelled, dest: r.dest, remote: r.remote });
     } catch (e) { setResult({ ok: 0, bad: keep.length, error: String(e) }); }
     un();
     setPhase("done");
   };
+
+  /** 导出中途停下：核心做完手上这一张就停，返回的结果里 `cancelled` 为真。 */
+  const stopExport = () => { setStopping(true); invoke("export_cancel").catch(() => { /* not in Tauri */ }); };
 
   const startTrash = async () => {
     setPhase("running");
@@ -120,15 +126,28 @@ export default function Organize({ project, photos, decisions, offline = false, 
           </>
         ) : (
           <>
-            <button className="btn" onClick={close} disabled={phase === "running"}>{t("organize.cancel")}</button>
+            {phase === "running"
+              ? <button className="btn" onClick={stopExport} disabled={stopping}>{stopping ? t("organize.exportStopping") : t("organize.exportStop")}</button>
+              : <button className="btn" onClick={close}>{t("organize.cancel")}</button>}
             <button className="btn primary sm" onClick={startExport} disabled={phase === "running"}>{phase === "running" ? t("organize.exporting", progress) : t("organize.exportGo")}</button>
           </>
         )}>
         {phase === "done" ? (
           <>
             {result?.error
-              ? <p>{t("organize.exportFailed", { error: result.error })}</p>
-              : <p>{t("organize.exported", { count: result?.ok ?? 0 })}{result && result.bad > 0 ? ` · ${t("organize.exportedSkipped", { n: result.bad })}` : ""}</p>}
+              ? <p>{t("organize.exportFailed", { error: errText(t, i18n.language, result.error) })}</p>
+              : <p>
+                  {result?.cancelled ? t("organize.exportStopped", { count: result.ok, left: Math.max(0, keep.length - result.ok - (result.skipped ?? 0) - result.bad) }) : t("organize.exported", { count: result?.ok ?? 0 })}
+                  {result?.skipped ? ` · ${t("organize.exportedAlready", { n: result.skipped })}` : ""}
+                  {result && result.bad > 0 ? ` · ${t("organize.exportedFailed", { n: result.bad })}` : ""}
+                </p>}
+            {/* 没导出的列出来：文件名和原因（磁盘满、没权限……），多了只列前几张 */}
+            {result?.failed && result.failed.length > 0 && (
+              <ul className="mlist export-failed">
+                {result.failed.slice(0, 5).map((f) => <li key={f.path}><span className="mono">{baseName(f.path)}</span><span className="ash">{errText(t, i18n.language, f.error)}</span></li>)}
+                {result.failed.length > 5 && <li><span className="ash">{t("organize.exportFailedMore", { n: result.failed.length - 5 })}</span></li>}
+              </ul>
+            )}
             {result?.remote && result.dest && <p className="mono dest">{result.dest}</p>}
           </>
         ) : (

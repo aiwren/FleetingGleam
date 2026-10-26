@@ -396,6 +396,9 @@ input[type=range]::-webkit-slider-thumb { appearance: none; width: 14px; height:
 .sidebar li kbd { margin-left: auto; }
 /* NAS 连不上、从本机镜像打开时顶部那一句（Culling） */
 .nas-detail { margin-left: 8px; }
+/* 导出结果里没导出的那几张：文件名 · 原因 */
+.export-failed li { gap: 12px; }
+.export-failed li .ash { text-align: right; }
 /* 起始屏：新建项目 + 试试示例照片 */
 .empty-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 /* 转到后台的模型下载（DownloadNav） */
