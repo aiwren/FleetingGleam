@@ -19,6 +19,7 @@ object Pickers {
     private lateinit var tree: ActivityResultLauncher<Uri?>
     private lateinit var create: ActivityResultLauncher<String>
     private lateinit var openDoc: ActivityResultLauncher<Array<String>>
+    private lateinit var createTxt: ActivityResultLauncher<String>
     private lateinit var sender: ActivityResultLauncher<IntentSenderRequest>
     private var waiting: CompletableDeferred<Any?>? = null
     private var activity: java.lang.ref.WeakReference<ComponentActivity>? = null
@@ -35,6 +36,7 @@ object Pickers {
         tree = a.registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { answer(it) }
         create = a.registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { answer(it) }
         openDoc = a.registerForActivityResult(ActivityResultContracts.OpenDocument()) { answer(it) }
+        createTxt = a.registerForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { answer(it) }
         sender = a.registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { answer(it.resultCode == android.app.Activity.RESULT_OK) }
     }
 
@@ -82,6 +84,9 @@ object Pickers {
     suspend fun createJson(name: String): Uri? = wait({ create.launch(name) })
 
     /** 系统的"打开文件"（导入我的设置与喜好）。 */
+    /** 存一个文本文件（导出诊断信息）：系统的"另存为"。 */
+    suspend fun createText(name: String): Uri? = wait({ createTxt.launch(name) })
+
     suspend fun openJson(): Uri? = wait({ openDoc.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) })
 
     /** 系统的确认框（把照片移进系统回收站要用户点同意）：同意了返回 true。 */

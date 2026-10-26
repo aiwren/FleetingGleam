@@ -58,7 +58,12 @@
    "mirrors": "NAS / 网盘副本",
    "mirrorsDesc": "从 NAS、网盘选的文件夹，照片会复制一份在手机上。清掉后下次打开项目重新拉，分析结果保留。",
    "mirrorNas": "NAS · {{name}}",
-   "mirrorSaf": "网盘 · {{name}}"
+   "mirrorSaf": "网盘 · {{name}}",
+   "diagnostics": "导出诊断信息",
+   "diagnosticsDesc": "版本、系统、设置（不含密码和令牌）、最近的日志与崩溃记录，存成一个文本文件。只存在你选的位置，发不发给开发者由你决定。",
+   "diagnosticsBtn": "导出",
+   "diagnosticsDone": "已存好",
+   "diagnosticsFailed": "没能导出：{{error}}"
   },
   "cull": {
    "hint": "点一张照片选中，底栏可以保留、淘汰或放大查看；单张模式里上推留下、下拉淘汰。",

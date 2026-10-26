@@ -118,6 +118,9 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
     var refFailed by remember { mutableStateOf(false) }
     var tasteBusy by remember { mutableStateOf(false) }
     var tasteMsg by remember { mutableStateOf<String?>(null) }
+    var diagBusy by remember { mutableStateOf(false) }
+    var diagDone by remember { mutableStateOf(false) }
+    var diagMsg by remember { mutableStateOf<String?>(null) }
     // "0.1.0 (105)"：括号里是内部版本号（build，仓库的提交次数），一眼分得清是不是最新的包
     val version = remember {
         runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).let { "${it.versionName} (${it.longVersionCode})" } }.getOrNull() ?: "dev"
@@ -464,6 +467,18 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                 }
                 SettingGroup("") {
                     SettingRow(t("settings.aboutVersion"), null, first = true) { Text("v$version", style = Type.mono.copy(color = c.ash)) }
+                    // 本地的诊断文件（审查第 36 条）：写到用户自己选的位置，不联网
+                    SettingRow(t("android.settings.diagnostics"), diagMsg ?: t("android.settings.diagnosticsDesc")) {
+                        FgButton(if (diagDone) t("android.settings.diagnosticsDone") else t("android.settings.diagnosticsBtn"), {
+                            scope.launch {
+                                val uri = Pickers.createText("fleetinggleam-diagnostics.txt") ?: return@launch
+                                diagBusy = true; diagMsg = null
+                                try { com.fleetinggleam.android.core.Diagnostics.export(ctx, uri); diagDone = true }
+                                catch (e: Exception) { diagMsg = t("android.settings.diagnosticsFailed", "error" to (com.fleetinggleam.android.core.Errors.explain(e.message) ?: e.message)) }
+                                diagBusy = false
+                            }
+                        }, small = true, enabled = !diagBusy)
+                    }
                 }
             }
         }
