@@ -278,12 +278,15 @@ impl Pool {
     }
 }
 
-/// 把客户端的错误说成人话；连接层面的错误同时让调用方知道该把这个共享当作断开。
+/// 把客户端的错误说成人话，前缀按 `errors` 的约定：`auth:` 是账号密码被拒，`denied:` 是登录成功但这个共享或文件夹没权限
+/// （以前也说成"密码错误"，用户改了密码还是不行），`net:` 是连不上。连接层面的错误同时让调用方知道该把这个共享当作断开。
 fn explain(e: &smb2::Error) -> String {
     match e.kind() {
-        ErrorKind::AccessDenied | ErrorKind::AuthRequired | ErrorKind::GuestSessionRefused | ErrorKind::SignatureInvalid => "wrong user name or password".to_string(),
+        ErrorKind::AuthRequired | ErrorKind::GuestSessionRefused | ErrorKind::SignatureInvalid => "auth:wrong user name or password".to_string(),
+        ErrorKind::AccessDenied => format!("denied:this account has no access to that share or folder ({e})"),
         ErrorKind::NotFound => "no such share or folder on that server".to_string(),
-        ErrorKind::ConnectionLost | ErrorKind::TimedOut | ErrorKind::Io | ErrorKind::SessionExpired => format!("the server cannot be reached ({e})"),
+        ErrorKind::ConnectionLost | ErrorKind::TimedOut | ErrorKind::Io | ErrorKind::SessionExpired => format!("net:the server cannot be reached ({e})"),
+        ErrorKind::Cancelled => crate::errors::CANCELLED.to_string(),
         _ => e.to_string(),
     }
 }
@@ -427,21 +430,46 @@ struct Remote {
     modified: SystemTime,
 }
 
+/// 列一个目录：值得看的条目（见 `wanted`）和各自的修改时间。真的是 SMB 的树，测试里是假的。
+trait Dirs {
+    async fn list(&mut self, dir: &str) -> Result<Vec<(Entry, SystemTime)>, smb2::Error>;
+}
+
+/// 一个共享的树，连同用来发请求的客户端。
+struct SmbDirs<'a> {
+    client: &'a mut SmbClient,
+    tree: &'a mut Tree,
+}
+
+impl Dirs for SmbDirs<'_> {
+    async fn list(&mut self, dir: &str) -> Result<Vec<(Entry, SystemTime)>, smb2::Error> {
+        Ok(self.client.list_directory(self.tree, dir).await?.iter().filter_map(|e| wanted(e).map(|w| (w, e.modified.to_system_time().unwrap_or(UNIX_EPOCH)))).collect())
+    }
+}
+
 /// 共享里一个文件夹下的全部照片，连同子文件夹；路径相对共享根。
-async fn walk(client: &mut SmbClient, tree: &mut Tree, rel: &str, cancel: &dyn Fn() -> bool) -> Result<Vec<Remote>, smb2::Error> {
+async fn walk(dirs: &mut impl Dirs, rel: &str, cancel: &dyn Fn() -> bool) -> Result<Vec<Remote>, smb2::Error> {
     let mut stack = vec![rel.to_string()];
     let mut out = Vec::new();
     while let Some(dir) = stack.pop() {
         if cancel() {
             return Err(smb2::Error::Cancelled);
         }
-        for e in client.list_directory(tree, &dir).await? {
-            let Some(w) = wanted(&e) else { continue };
+        let entries = match dirs.list(&dir).await {
+            Ok(v) => v,
+            // 里面某个文件夹没权限（NAS 上别人的私人文件夹、系统目录）：跳过它、记一笔，不让整次同步失败；选的那个文件夹本身没权限照旧报错
+            Err(e) if e.kind() == ErrorKind::AccessDenied && dir != rel => {
+                crate::platform::log(&format!("NAS：没有权限打开 {dir}，跳过（{e}）"));
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
+        for (w, modified) in entries {
             let rel = join_rel(&dir, &w.name);
             if w.dir {
                 stack.push(rel);
             } else {
-                out.push(Remote { rel, size: w.size, modified: e.modified.to_system_time().unwrap_or(UNIX_EPOCH) });
+                out.push(Remote { rel, size: w.size, modified });
             }
         }
     }
@@ -465,7 +493,7 @@ async fn sync(c: &mut Conn, rel: &str, local_root: &Path, progress: &dyn Fn(Sync
     // 镜像里这个共享自己的一格
     let local_root = local_root.join(&share);
     let local_root = local_root.as_path();
-    let remote = walk(client, tree, path, cancel).await?;
+    let remote = walk(&mut SmbDirs { client, tree }, path, cancel).await?;
     let need: Vec<&Remote> = remote.iter().filter(|r| !mirrored(&local_root.join(&r.rel), r)).collect();
     let total = need.len();
     let bytes_total: u64 = need.iter().map(|r| r.size).sum();
@@ -484,8 +512,17 @@ async fn sync(c: &mut Conn, rel: &str, local_root: &Path, progress: &dyn Fn(Sync
         // 先写到旁边的临时文件，整张到齐、时间戳对上之后才换成正式的名字：镜像里永远没有半张照片
         let name = local.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let tmp = local.with_file_name(format!(".{name}.part"));
+        let mut download = match client.download(tree, &r.rel).await {
+            Ok(d) => d,
+            // 单张没权限读：跳过、记一笔，别的照常拉
+            Err(e) if e.kind() == ErrorKind::AccessDenied => {
+                crate::platform::log(&format!("NAS：没有权限读取 {}，跳过（{e}）", r.rel));
+                report(i + 1, bytes_done);
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
         let mut file = std::fs::File::create(&tmp)?;
-        let mut download = client.download(tree, &r.rel).await?;
         while let Some(chunk) = download.next_chunk().await {
             let bytes = chunk?;
             file.write_all(&bytes)?;
@@ -691,6 +728,34 @@ mod tests {
         assert_eq!(join_rel("", "a"), "a");
         assert_eq!(join_rel("a/b", "c.jpg"), "a/b/c.jpg");
         assert_eq!(recycle_url(&shares[0], "photos"), "smb://nas/photos/.FleetingGleam Recycle Bin");
+    }
+
+    /// 假的 NAS 目录：没列出的目录没权限。
+    struct FakeDirs(HashMap<String, Vec<(Entry, SystemTime)>>);
+
+    impl Dirs for FakeDirs {
+        async fn list(&mut self, dir: &str) -> Result<Vec<(Entry, SystemTime)>, smb2::Error> {
+            self.0.get(dir).cloned().ok_or(smb2::Error::Protocol { status: smb2::types::status::NtStatus::ACCESS_DENIED, command: smb2::types::Command::QueryDirectory })
+        }
+    }
+
+    #[test]
+    fn a_folder_without_permission_is_skipped_not_fatal() {
+        let file = |n: &str| (Entry { name: n.into(), dir: false, size: 20_000 }, UNIX_EPOCH);
+        let dir = |n: &str| (Entry { name: n.into(), dir: true, size: 0 }, UNIX_EPOCH);
+        let mut fake = FakeDirs(HashMap::from([
+            ("photos".to_string(), vec![file("a.jpg"), dir("trip"), dir("private")]),
+            ("photos/trip".to_string(), vec![file("b.jpg")]),
+        ]));
+        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let found = rt.block_on(walk(&mut fake, "photos", &|| false)).expect("the private folder is skipped");
+        let mut names: Vec<String> = found.into_iter().map(|r| r.rel).collect();
+        names.sort();
+        assert_eq!(names, vec!["photos/a.jpg", "photos/trip/b.jpg"]);
+        // 选的那个文件夹本身没权限：照旧报错，说成没权限，不说密码错
+        let e = rt.block_on(walk(&mut fake, "photos/private", &|| false)).err().expect("the chosen folder itself is refused");
+        assert_eq!(e.kind(), ErrorKind::AccessDenied);
+        assert!(explain(&e).starts_with("denied:"), "{}", explain(&e));
     }
 
     /// 排错用：直接连一次，把错误的完整样子打出来。

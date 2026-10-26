@@ -12,6 +12,7 @@ pub mod colorsig;
 pub mod consistency;
 pub mod decide;
 pub mod engine;
+pub mod errors;
 pub mod facepipe;
 pub mod faces;
 pub mod files;
