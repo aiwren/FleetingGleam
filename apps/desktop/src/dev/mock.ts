@@ -231,7 +231,7 @@ w.__TAURI_INTERNALS__ = {
       case "projects_load": return localStorage.getItem("fg.projects");
       case "projects_save": localStorage.setItem("fg.projects", String(args.json)); return null;
       case "projects_quarantine": localStorage.removeItem("fg.projects"); return "fg.projects.corrupt";
-      case "nas_list": return [...mockShares];
+      case "nas_list": { const down = (window as unknown as { __mockNasDown?: string }).__mockNasDown; return mockShares.map((s) => ({ ...s, connected: s.connected && !down, error: down ?? null })); }
       case "nas_add": {
         await sleep(600);
         if (String(args.url).includes("bad")) throw "the server cannot be reached (65)";

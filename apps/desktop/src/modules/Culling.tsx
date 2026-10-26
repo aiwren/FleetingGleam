@@ -31,6 +31,7 @@ import { getSettings, ScanInfo, setScanInfo, useSettings, useCacheRev } from "..
 import { Decision, Photo, Probe, ProbeFile, Reason, State, pct, thumbSrc } from "../types";
 import { NasProgress } from "../nas";
 import Organize from "./Organize";
+import { errDetail, errKind } from "../errors";
 import ReadyStage from "./ReadyStage";
 import ProjectSettings from "./ProjectSettings";
 import ProjectHome from "./ProjectHome";
@@ -62,10 +63,11 @@ const LAYOUTS: { id: ViewStyle; icon: ReactNode }[] = [
   { id: "compare", icon: <><rect x="1.5" y="2.5" width="5.5" height="11" rx="1.2" /><rect x="9" y="2.5" width="5.5" height="11" rx="1.2" /></> },
 ];
 
-export default function Culling({ active, inspectorHidden, onToggleInspector, onOpenStyles }: {
+export default function Culling({ active, inspectorHidden, onToggleInspector, onOpenStyles, onOpenSettings }: {
   active: boolean;
   inspectorHidden: boolean;
   onToggleInspector: () => void;
+  onOpenSettings: (section?: string) => void;
   /** Called when the user selects a photo, so the shell can slide the inspector open. */
   onOpenStyles: () => void;
 }) {
@@ -140,6 +142,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const [nasOff, setNasOff] = useState("");
   /**
    * 项目所在的 NAS 现在连不上：照片照样从本机镜像打开（上次同步的那些），顶部说一声，NAS 上的整理操作置灰。
+   * `error` 是 nas_ensure 给的原因（约定的前缀），决定给"去设置"还是"重试"。
    */
   const [offline, setOffline] = useState<{ names: string; error: string | null } | null>(null);
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
@@ -980,12 +983,22 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
         <div className="scroll" ref={scrollRef}>
           {error && error !== "cull.nasOffline" && error !== "cull.nasDisabled" && <p className="error">{t(error, { defaultValue: error })}</p>}
           {error === "cull.nasDisabled" && <p className="error">{t(error, { name: nasOff })} <button className="btn sm" onClick={() => setReloadKey((k) => k + 1)}>{t("cull.nasRetry")}</button></p>}
-          {(error === "cull.nasOffline" || offline) && (
-            <p className={error === "cull.nasOffline" ? "error" : "error nas-mirror"}>
-              {error === "cull.nasOffline" ? t("cull.nasOffline", { name: nasOff }) : t("cull.nasOfflineMirror", { name: offline!.names })}{" "}
-              <button className="btn sm" onClick={() => setReloadKey((k) => k + 1)}>{t("cull.nasRetry")}</button>
-            </p>
-          )}
+          {(error === "cull.nasOffline" || offline) && (() => {
+            // 密码不对 / 没权限 → 去设置；连不上（或说不清）→ 重试
+            const kind = errKind(offline?.error);
+            const toSettings = kind === "auth" || kind === "denied";
+            const lead = error === "cull.nasOffline" ? t("cull.nasOffline", { name: nasOff }) : t("cull.nasOfflineMirror", { name: offline!.names });
+            const why = kind === "auth" ? t("cull.nasWhyAuth") : kind === "denied" ? t("cull.nasWhyDenied") : kind === "net" ? t("cull.nasWhyNet") : "";
+            return (
+              <p className={error === "cull.nasOffline" ? "error" : "error nas-mirror"}>
+                {lead}{why && ` ${why}`}{" "}
+                {toSettings
+                  ? <button className="btn sm" onClick={() => onOpenSettings("sec-nas")}>{t("cull.nasToSettings")}</button>
+                  : <button className="btn sm" onClick={() => setReloadKey((k) => k + 1)}>{t("cull.nasRetry")}</button>}
+                {offline?.error && <span className="ash small mono nas-detail">{errDetail(offline.error)}</span>}
+              </p>
+            );
+          })()}
           {saveError && <p className="error">{t("cull.saveFailed", { error: saveError })}</p>}
           {loadError === "corrupt" && <p className="error">{t("cull.loadCorrupt")}</p>}
 

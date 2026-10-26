@@ -1,6 +1,7 @@
 import { PrefsInfo, bumpPrefsRevision, learnFromFolder, refreshStyles } from "../styles";
 import LearnMeter from "../components/LearnMeter";
 import { fmtBytes } from "../format";
+import { errKind, errText } from "../errors";
 import { pickLocalFolder, baseName } from "../projectActions";
 import { ensurePack, ensurePacks, removePack, showGate, useGate, usePacks } from "../models";
 import { adopt, release, tierPacks } from "../strategy";
@@ -152,7 +153,7 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
     try {
       const list = await probeShare({ host: nasForm.host, user: nasForm.user, password: nasForm.password, id: nasEditing?.id });
       setNasShares(list);
-    } catch (e) { setNasErr(String(e)); }
+    } catch (e) { setNasErr(errText(t, i18n.language, e)); }
     setNasBusy(null);
   };
   const [nasBusy, setNasBusy] = useState<string | null>(null);
@@ -161,8 +162,13 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
   const [nasRemoving, setNasRemoving] = useState<Share | null>(null);
   const nasDo = async (sh: Share, f: () => Promise<void>) => {
     setNasBusy(sh.id); setNasMsg(null);
-    try { await f(); } catch (e) { setNasMsg({ id: sh.id, text: String(e) }); }
+    try { await f(); } catch (e) { setNasMsg({ id: sh.id, text: errText(t, i18n.language, e) }); }
     setNasBusy(null);
+  };
+  /** 没连上的那台为什么没连上：密码不对（去"编辑…"里改）、没权限、连不上；说不清就是"未连接"。 */
+  const nasWhy = (sh: Share) => {
+    const k = errKind(sh.error);
+    return k === "auth" ? t("settings.nasWhyAuth") : k === "denied" ? t("settings.nasWhyDenied") : k === "net" ? t("settings.nasWhyNet") : t("settings.nasOffline");
   };
   const nasSubmit = async () => {
     setNasBusy("new"); setNasErr(null);
@@ -170,7 +176,7 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
       if (nasEditing) await updateShare({ id: nasEditing.id, name: nasForm.name, host: nasForm.host, user: nasForm.user, password: nasForm.password, remember: nasForm.remember });
       else await addShare({ name: nasForm.name, host: nasForm.host, user: nasForm.user, password: nasForm.password, remember: nasForm.remember });
       setNasOpen(false); setNasForm(blankNas); setNasShares(null); setNasEditing(null);
-    } catch (e) { setNasErr(String(e)); }
+    } catch (e) { setNasErr(errText(t, i18n.language, e)); }
     setNasBusy(null);
   };
   // 备份：和"我的设置与喜好"同一份内容，自动存到用户自己的云存储；可以有多个目标（现在只有 Cloudflare R2 一种），各有名字；Secret 只进钥匙串
@@ -504,7 +510,7 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
                 <button className="btn" onClick={() => { setNasErr(null); setNasShares(null); setNasEditing(null); setNasForm(blankNas); setNasOpen(true); }}>{t("settings.nasAdd")}</button>
               </Row>
               {shares.map((sh) => (
-                <Row key={sh.id} label={sh.name} desc={`${sh.enabled && sh.connected ? "●" : "○"} ${!sh.enabled ? t("settings.nasDisabled") : sh.connected ? t("settings.nasConnected") : nasBusy === sh.id ? t("settings.nasConnecting") : t("settings.nasOffline")} · ${sh.host} · ${sh.user || t("settings.nasGuest")}${nasMsg?.id === sh.id ? ` · ${nasMsg.text}` : ""}`}>
+                <Row key={sh.id} label={sh.name} desc={`${sh.enabled && sh.connected ? "●" : "○"} ${!sh.enabled ? t("settings.nasDisabled") : sh.connected ? t("settings.nasConnected") : nasBusy === sh.id ? t("settings.nasConnecting") : nasWhy(sh)} · ${sh.host} · ${sh.user || t("settings.nasGuest")}${nasMsg?.id === sh.id ? ` · ${nasMsg.text}` : ""}`}>
                   <span className="sctl-pair">
                     <button className="switch" role="switch" aria-checked={sh.enabled} aria-label={t("settings.nasEnabled")} title={t("settings.nasEnabled")} disabled={nasBusy === sh.id} onClick={() => nasDo(sh, () => setShareEnabled(sh.id, !sh.enabled))} />
                     <RowMenu label={t("more.open")}>
