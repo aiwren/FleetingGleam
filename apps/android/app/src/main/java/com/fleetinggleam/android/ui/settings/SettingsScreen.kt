@@ -113,6 +113,7 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
     var cache by remember { mutableStateOf<Long?>(null) }
     var cleared by remember { mutableStateOf(false) }
     var prefsReset by remember { mutableStateOf(false) }
+    var confirmReset by remember { mutableStateOf<PrefsInfo?>(null) }
     var refBusy by remember { mutableStateOf<Float?>(null) }
     var refFailed by remember { mutableStateOf(false) }
     var tasteBusy by remember { mutableStateOf(false) }
@@ -265,9 +266,8 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                 SettingRow(t("styles.title"), t("styles.desc")) { FgButton(t("styles.open"), onOpenStyles, small = true) }
                 prefs?.takeIf { it.labels > 0 || it.refs > 0 }?.let { p ->
                     SettingRow(t("settings.learnReset"), t("settings.learned", "count" to p.labels + p.refs, "n" to p.labels + p.refs)) {
-                        FgButton(if (prefsReset) t("settings.learnResetDone") else t("settings.learnReset"), {
-                            scope.launch { runCatching { prefs = Core.get("prefs_reset"); prefsReset = true; Styles.bumpRevision() } }
-                        }, small = true)
+                        // 一点就清太危险：先问一句，写明要清掉多少（审查第 19 条）
+                        FgButton(if (prefsReset) t("settings.learnResetDone") else t("settings.learnReset"), { confirmReset = p }, small = true)
                     }
                 }
             }
@@ -428,6 +428,17 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
         }
     }
     }
+    }
+
+    // ---- 重置已学习的偏好：和删除风格同样的确认框
+    confirmReset?.let { p ->
+        FgDialog(true, { confirmReset = null }, t("android.settings.learnResetTitle"), footer = {
+            FgButton(t("organize.cancel"), { confirmReset = null })
+            FgButton(t("android.settings.learnResetAction"), {
+                confirmReset = null
+                scope.launch { runCatching { prefs = Core.get("prefs_reset"); prefsReset = true; Styles.bumpRevision() } }
+            }, on = true)
+        }) { Text(t("android.settings.learnResetBody", "labels" to p.labels, "refs" to p.refs), style = Type.body.copy(color = c.ink)) }
     }
 
     // ---- 备份目标：添加 / 编辑

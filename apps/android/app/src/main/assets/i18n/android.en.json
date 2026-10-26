@@ -51,7 +51,10 @@
    "tierInstalled": "Installed",
    "tierHint": "After switching, the project in view is re-evaluated.",
    "glass": "Liquid glass",
-   "glassDesc": "The tab bar and floating controls refract what is behind them. Off, they are plain frosted panels, smoother on older phones."
+   "glassDesc": "The tab bar and floating controls refract what is behind them. Off, they are plain frosted panels, smoother on older phones.",
+   "learnResetTitle": "Reset the learned taste?",
+   "learnResetBody": "The {{labels}} choices and {{refs}} reference photos it learned from are erased for good. To keep a copy, export your taste under Backup first.",
+   "learnResetAction": "Reset"
   },
   "cull": {
    "hint": "Tap a photo to select it; the bar below keeps, rejects or opens it. In single view, push up to keep and pull down to reject.",
@@ -125,6 +128,11 @@
   "cmp": {
    "keepNth": "Keep #{{n}}",
    "groupShort": "Group {{i}} / {{n}}"
+  },
+  "styles": {
+   "resetTitle": "Clear “{{name}}”?",
+   "resetBody": "The {{labels}} choices and {{refs}} reference photos it learned from are erased for good; the style itself and the projects using it stay.",
+   "resetAction": "Clear"
   }
  },
  "models": {

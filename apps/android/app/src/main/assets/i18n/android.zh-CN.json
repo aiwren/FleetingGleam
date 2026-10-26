@@ -51,7 +51,10 @@
    "tierInstalled": "已安装",
    "tierHint": "换档位后，正在看的项目会重新评估一遍。",
    "glass": "液态玻璃",
-   "glassDesc": "标签栏和浮动控件折射后面的内容。关掉后换成普通磨砂，老机器上更流畅。"
+   "glassDesc": "标签栏和浮动控件折射后面的内容。关掉后换成普通磨砂，老机器上更流畅。",
+   "learnResetTitle": "重置已学习的偏好？",
+   "learnResetBody": "学到的 {{labels}} 次判断和 {{refs}} 张参考照片会被清除，无法恢复。想留一份，先到「备份」里导出喜好。",
+   "learnResetAction": "重置"
   },
   "cull": {
    "hint": "点一张照片选中，底栏可以保留、淘汰或放大查看；单张模式里上推留下、下拉淘汰。",
@@ -125,6 +128,11 @@
   "cmp": {
    "keepNth": "留第 {{n}} 张",
    "groupShort": "第 {{i}} / {{n}} 组"
+  },
+  "styles": {
+   "resetTitle": "清空「{{name}}」？",
+   "resetBody": "它学到的 {{labels}} 次判断和 {{refs}} 张参考照片会被清除，无法恢复；风格本身和在用它的项目不变。",
+   "resetAction": "清空"
   }
  },
  "models": {
