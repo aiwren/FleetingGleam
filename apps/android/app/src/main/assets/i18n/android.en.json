@@ -69,7 +69,8 @@
    "bgDone": "“{{name}}” is analysed",
    "bgFailed": "“{{name}}” could not be analysed: {{error}}",
    "open": "Open",
-   "reevalDone": "Re-ranked with your latest taste"
+   "reevalDone": "Re-ranked with your latest taste",
+   "offline": "NAS “{{name}}” is not connected; showing the photos from the last sync"
   },
   "models": {
    "background": "Download in background",
@@ -88,7 +89,8 @@
   "organize": {
    "toAlbum": "Export keepers to an album",
    "toAlbumDesc": "Copy {{count}} to the album \"{{where}}\"; originals untouched",
-   "toFolder": "Export to a folder…"
+   "toFolder": "Export to a folder…",
+   "offline": "The NAS is not connected; this needs it"
   },
   "tab": {
    "photos": "Photos"

@@ -48,6 +48,8 @@ object Session {
     /** 出错时的文案键或消息（"cull.emptyFolder"、"cull.nasOffline"……）。 */
     val error = MutableStateFlow<String?>(null)
     val nasOff = MutableStateFlow("")
+    /** 项目所在的 NAS 没连上，照片是本机镜像里上次同步的：顶上提示一句，NAS 上的整理操作置灰（`nasOff` 是那台的名字）。 */
+    val offline = MutableStateFlow(false)
     /** 读权限失效的那个系统文件夹镜像（`cull.safExpired` 时界面拿它去"重新授权"）。 */
     @Volatile var expired: Media.Mirror? = null; private set
     val etaSeconds = MutableStateFlow<Int?>(null)
@@ -192,7 +194,7 @@ object Session {
         // 同样不在调用方的线程上等引擎（"重试"按钮、重新授权会从主线程进来）
         if (left != null && left != run?.id) scope.launch { runCatching { Core.call("scan_cancel", args("key" to left)) } }
         undoStack.clear(); undoCount.value = 0
-        error.value = null; celebrate.value = false; dirty.value = 0; nasProg.value = null; peopleProg.value = null; mediaProg.value = null
+        error.value = null; celebrate.value = false; dirty.value = 0; nasProg.value = null; peopleProg.value = null; mediaProg.value = null; offline.value = false
         if (run == null && pausedProject == null) paused.value = Pause.None
         // 上一个项目分析中的实时表：没有分析在后台跑就清掉（在跑的那个回来时还要用，留着）
         if (run == null) { results.clear(); stages.clear(); live.clear(); lastStage = null }
@@ -209,15 +211,25 @@ object Session {
                 if (tok != token) return@launch
                 val disabled = shares.filter { !it.enabled }
                 if (disabled.isNotEmpty()) { photos.value = emptyList(); files.value = emptyList(); phase.value = Phase.Idle; nasOff.value = disabled.joinToString(", ") { it.name }; error.value = "cull.nasDisabled"; return@launch }
+                // NAS 没连上：不再清空照片、整个打不开——核心跳过同步、用本机镜像（`Probe.offline`），这里只提示"显示上次同步的照片"（审查第 30 条）
                 val off = shares.filter { !it.connected }
-                if (off.isNotEmpty()) { photos.value = emptyList(); files.value = emptyList(); phase.value = Phase.Idle; nasOff.value = off.joinToString(", ") { it.name }; error.value = "cull.nasOffline"; return@launch }
+                if (off.isNotEmpty()) nasOff.value = off.joinToString(", ") { it.name }
                 // a folder picked through the system picker that has no path: bring its new photos into the mirror first
                 Media.syncMirrors(app, project.folders, { done, total, name -> nasProg.value = if (done >= total) null else NasProgress(name, done, total) }, { tok != token })
                 nasProg.value = null
-                val probe = Core.get<Probe>("probe_folder", args("dirs" to project.folders, "compute" to "auto", "quality" to Strategy.currentTier()))
+                val probe = try {
+                    Core.get<Probe>("probe_folder", args("dirs" to project.folders, "compute" to "auto", "quality" to Strategy.currentTier()))
+                } catch (e: Exception) {
+                    // 还是老核心（NAS 不通时 probe 报错）：照旧说连不上，给"重试"
+                    if (off.isEmpty() || e.message == "cancelled") throw e
+                    if (tok == token) { photos.value = emptyList(); files.value = emptyList(); phase.value = Phase.Idle; error.value = "cull.nasOffline" }
+                    return@launch
+                }
                 if (tok != token) return@launch
+                offline.value = probe.offline || off.isNotEmpty()
                 files.value = probe.files; bytes.value = probe.bytes; uncached.value = probe.uncached
-                if (probe.files.isEmpty()) { photos.value = emptyList(); phase.value = Phase.Idle; error.value = "cull.emptyFolder"; return@launch }
+                // 没连上、本机也还没有同步过的照片：说连不上，不说"文件夹是空的"
+                if (probe.files.isEmpty()) { photos.value = emptyList(); phase.value = Phase.Idle; error.value = if (offline.value) "cull.nasOffline" else "cull.emptyFolder"; return@launch }
                 if (project.count != probe.files.size) Projects.update(project.id) { it.copy(count = probe.files.size) }
                 if (probe.uncached > 0) {
                     phase.value = Phase.Ready

@@ -69,7 +69,8 @@
    "bgDone": "「{{name}}」分析完成",
    "bgFailed": "「{{name}}」分析出错：{{error}}",
    "open": "打开",
-   "reevalDone": "已按新喜好重排"
+   "reevalDone": "已按新喜好重排",
+   "offline": "NAS「{{name}}」没连上，显示上次同步的照片"
   },
   "models": {
    "background": "后台下载",
@@ -88,7 +89,8 @@
   "organize": {
    "toAlbum": "导出保留的照片到相册",
    "toAlbumDesc": "复制 {{count}} 张到相册「{{where}}」，原图不动",
-   "toFolder": "导出到一个文件夹…"
+   "toFolder": "导出到一个文件夹…",
+   "offline": "NAS 没连上，连上后才能做这一步"
   },
   "tab": {
    "photos": "照片"

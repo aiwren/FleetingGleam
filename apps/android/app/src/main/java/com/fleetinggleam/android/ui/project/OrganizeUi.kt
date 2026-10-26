@@ -86,6 +86,8 @@ fun OrganizeDialogs(project: Project, open: Boolean, onDismissMenu: () -> Unit) 
     var result by remember { mutableStateOf<Triple<Int, Int, List<String>>?>(null) }
     var exportErr by remember { mutableStateOf<String?>(null) }
     val nasShares = com.fleetinggleam.android.core.Nas.shares.collectAsState().value.filter { it.enabled }
+    // 项目所在的 NAS 没连上：导出到 NAS、移走淘汰的（进 NAS 的回收文件夹）做不了，先置灰（审查第 30 条）
+    val offline by Session.offline.collectAsState()
     var scopeAll by remember { mutableStateOf(false) }
     val keep = photos.filter { decisions[it.path]?.state == "keep" }
     val rejectAll = photos.filter { decisions[it.path]?.state == "reject" }
@@ -116,14 +118,14 @@ fun OrganizeDialogs(project: Project, open: Boolean, onDismissMenu: () -> Unit) 
                     }
                 }
                 // 导出到 NAS：选择器只列 NAS；选中的是那个文件夹的镜像路径，核心库认出来就直接传到 NAS 上
-                if (nasShares.isNotEmpty()) OrgItem(Icons.NAS, t("organize.exportNasItem"), if (keep.isEmpty()) t("organize.none") else t("organize.exportNasDesc", "count" to keep.size), keep.isNotEmpty()) {
+                if (nasShares.isNotEmpty()) OrgItem(Icons.NAS, t("organize.exportNasItem"), if (offline) t("android.organize.offline") else if (keep.isEmpty()) t("organize.none") else t("organize.exportNasDesc", "count" to keep.size), keep.isNotEmpty() && !offline) {
                     dlg = null; onDismissMenu()
                     scope.launch {
                         val path = com.fleetinggleam.android.core.Nas.pick(nasShares.singleOrNull()?.id, source = "nas", title = t("organize.exportNasPick"), choose = t("organize.exportHere")) ?: return@launch
                         open(Dlg.Export(Dest.Path(path, com.fleetinggleam.android.core.Nas.label(path))))
                     }
                 }
-                OrgItem(Icons.TRASH, t("organize.trashItem"), if (rejectAll.isEmpty()) t("organize.none") else t("organize.trashDesc", "count" to rejectAll.size), rejectAll.isNotEmpty(), box = 14f) {
+                OrgItem(Icons.TRASH, t("organize.trashItem"), if (offline) t("android.organize.offline") else if (rejectAll.isEmpty()) t("organize.none") else t("organize.trashDesc", "count" to rejectAll.size), rejectAll.isNotEmpty() && !offline, box = 14f) {
                     scopeAll = rejectManual.isEmpty(); open(Dlg.Trash)
                 }
                 }

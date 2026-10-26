@@ -85,7 +85,8 @@ data class Decision(val state: String, val manual: Boolean = false, val reasons:
 }
 
 @Serializable data class ProbeFile(val path: String, val width: Int, val height: Int, val cached: Boolean)
-@Serializable data class Probe(val files: List<ProbeFile> = emptyList(), val bytes: Long = 0, val uncached: Int = 0)
+/** `offline`：NAS 没连上，核心跳过了同步、照片是本机镜像里上次同步的（第二轮约定，第 30 条）。 */
+@Serializable data class Probe(val files: List<ProbeFile> = emptyList(), val bytes: Long = 0, val uncached: Int = 0, val offline: Boolean = false)
 @Serializable data class Progress(val done: Int = 0, val total: Int = 0)
 /** "scan-decide" 里的一条：分析中这张照片眼下的判定。 */
 @Serializable data class Judged(val path: String, val decision: Decision)

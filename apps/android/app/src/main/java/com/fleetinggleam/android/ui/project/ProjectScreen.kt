@@ -75,6 +75,7 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
     val progress by Session.progress.collectAsState()
     val error by Session.error.collectAsState()
     val nasOff by Session.nasOff.collectAsState()
+    val offline by Session.offline.collectAsState()
     val eta by Session.etaSeconds.collectAsState()
     val previews by Session.previews.collectAsState()
     val celebrate by Session.celebrate.collectAsState()
@@ -198,6 +199,11 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
                 if (phase == Phase.Done && cull.searchOpen && !scene) Box(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp)) { SearchField(cull) }
                 if (phase == Phase.Scanning) StatusStrip(cull, scanData)
                 if (phase == Phase.Done && !scene) StatusStrip(cull, data)
+                // NAS 没连上、照片是上次同步的：顶栏里一行灰字加"重试"（审查第 30 条）
+                if (offline && error == null && phase != Phase.Scanning && !scene) Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(t("android.cull.offline", "name" to nasOff), style = Type.rowDesc.copy(color = c.ash), modifier = Modifier.weight(1f))
+                    FgButton(t("cull.nasRetry"), { Session.reload() }, small = true)
+                }
                 AnimatedVisibility(phase == Phase.Scanning && cull.scanCardGone, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
                     ScanPill(progress) { scope.launch { cull.scanBackToTop?.invoke() } }
                 }
