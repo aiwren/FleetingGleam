@@ -315,7 +315,8 @@ fun rememberCullActions(cull: CullState, data: CullData): CullActions {
     return remember(cull) {
         val decide: (String, String?) -> Unit = { path, st -> haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); decideIn(cull, dataRef.value, path, st) }
         val open: (String) -> Unit = { path -> cull.select(path, byTap = true); cull.viewer = true }
-        val selectTile: (String) -> Unit = { path -> if (cull.selected == path) open(path) else cull.select(path, byTap = true) }
+        // 格子单击直接进大图，跟手机相册一样（作者 2026-10-26："点一下就放到大图就行了 不用双击"）
+        val selectTile: (String) -> Unit = open
         CullActions(decide, open, selectTile)
     }
 }

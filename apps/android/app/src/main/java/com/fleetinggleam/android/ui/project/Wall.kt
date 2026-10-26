@@ -556,7 +556,8 @@ fun Tile(
             .clip(shape)
             .background(c.surface)
             .then(if (kept) Modifier.border(1.dp, c.gleam.copy(alpha = 0.55f), shape) else Modifier)
-            .combinedClickable(interactionSource = src, indication = null, enabled = interactive, onClick = { onSelect(path) }, onDoubleClick = { onSelect(path); onOpen(path) }, onLongClick = { onSelect(path); onOpen(path) }),
+            // 单击就进大图（作者 2026-10-26）；不再注册双击，否则 Compose 要等双击超时才认单击，点下去会迟 300ms
+            .combinedClickable(interactionSource = src, indication = null, enabled = interactive, onClick = { onSelect(path) }, onLongClick = { onSelect(path); onOpen(path) }),
     ) {
         if (photo != null) {
             FocusImage(photo.thumb, Modifier.fillMaxSize(), quick = interactive && !reveal)
