@@ -362,6 +362,8 @@ pub struct Engine {
     cancel_gen: AtomicU64,
     /// Bumped by every recorded label; the retraining scheduled by a label only runs if no newer label came in the meantime.
     retrain_gen: AtomicU64,
+    /// 当前分析模型出的向量有多长（最近一次分析看到的）；喜好只用这个维度训练（见 `Prefs::retrain`）。0 = 这次启动还没分析过。
+    model_dim: AtomicUsize,
     /// Loaded once, on first use: the scene-description model (a few hundred MB) and the English-to-Chinese one.
     captioner: Mutex<Option<Arc<florence::Captioner>>>,
     translator: Mutex<Option<Arc<translate::Translator>>>,
@@ -419,6 +421,7 @@ impl Engine {
             scan_seq: AtomicU64::new(0),
             cancel_gen: AtomicU64::new(0),
             retrain_gen: AtomicU64::new(0),
+            model_dim: AtomicUsize::new(0),
             captioner: Mutex::new(None),
             translator: Mutex::new(None),
             scene_sentences: Mutex::new(None),
@@ -665,7 +668,12 @@ impl Engine {
             }
         }
 
-        let prefs = if a.learn { Some(self.prefs.lock().unwrap_or_else(|e| e.into_inner()).get(a.style.as_deref()).prefs.clone()) } else { None };
+        // 缓存里认识的照片说明了当前模型的向量长度；学到的喜好要是按别的维度训练的（刚换了分析档、或刚导入了别的设备的判断），
+        // 先按这个维度重训一次，否则这次分析混不进喜好
+        if let Some(d) = hits.iter().map(|p| p.embedding.len()).find(|&n| n > 0) {
+            self.note_model_dim(d, a.style.as_deref());
+        }
+        let mut prefs = if a.learn { Some(self.prefs.lock().unwrap_or_else(|e| e.into_inner()).get(a.style.as_deref()).prefs.clone()) } else { None };
         let mut fresh: Vec<Photo> = Vec::new();
         if !jobs.is_empty() {
             // 边分析边判：已经认识的照片先放进去，分析线程每出一张放一张；判定线程隔一会儿发一次 "scan-decide"
@@ -907,6 +915,13 @@ impl Engine {
         let mut photos = hits;
         photos.extend(fresh);
         photos.sort_by(|a, b| a.path.cmp(&b.path));
+        // 第一次分析（缓存里一张都没有）这时才知道当前模型的向量长度
+        if let Some(d) = photos.iter().map(|p| p.embedding.len()).find(|&n| n > 0).filter(|&d| d != self.model_dim.load(Ordering::Relaxed)) {
+            self.note_model_dim(d, a.style.as_deref());
+            if a.learn {
+                prefs = Some(self.prefs.lock().unwrap_or_else(|e| e.into_inner()).get(a.style.as_deref()).prefs.clone());
+            }
+        }
         // 刚分析出来的记录是 0 度；文件没变、用户转过的，缓存里（`put` 时）已经套上了角度，这里把它拿回来
         self.with_cache(|c| {
             for p in photos.iter_mut() {
@@ -2014,7 +2029,21 @@ impl Engine {
 
     fn retrain_style(&self, styles: &mut prefs::Styles, style: Option<&str>) {
         let p = &mut styles.get_mut(style).prefs;
-        self.with_cache(|c| p.retrain(|k| c.embedding(k), || c.pool()));
+        let dim = self.model_dim.load(Ordering::Relaxed);
+        self.with_cache(|c| p.retrain(dim, |k| c.embedding(k), || c.pool()));
+    }
+
+    /// 记下当前分析模型的向量长度；这个风格的喜好是按别的维度训练的，就按新的重训。
+    fn note_model_dim(&self, dim: usize, style: Option<&str>) {
+        self.model_dim.store(dim, Ordering::Relaxed);
+        let stale = {
+            let styles = self.prefs.lock().unwrap_or_else(|e| e.into_inner());
+            let p = &styles.get(style).prefs;
+            p.dim != dim && (!p.labels.is_empty() || !p.refs.is_empty() || !p.imported.is_empty())
+        };
+        if stale {
+            self.retrain_outside_lock(style);
+        }
     }
 
     /// Records (or clears) one explicit user decision. The label is recorded at once; the retraining it calls for runs a moment later,
@@ -2051,7 +2080,8 @@ impl Engine {
     /// `styles.json` outside the lock as well.
     fn retrain_outside_lock(&self, style: Option<&str>) {
         let mut copy = self.prefs.lock().unwrap_or_else(|e| e.into_inner()).get(style).prefs.clone();
-        self.with_cache(|c| copy.retrain(|k| c.embedding(k), || c.pool()));
+        let dim = self.model_dim.load(Ordering::Relaxed);
+        self.with_cache(|c| copy.retrain(dim, |k| c.embedding(k), || c.pool()));
         let pending = {
             let mut styles = self.prefs.lock().unwrap_or_else(|e| e.into_inner());
             styles.get_mut(style).prefs.adopt_weights(&copy);

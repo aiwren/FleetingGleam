@@ -178,7 +178,7 @@ mod tests {
             here.get_mut(None).prefs.labels.insert(path.clone(), *keep);
         }
         let emb_of = |k: &str| photos.iter().find(|(p, _, _)| p == k).map(|(_, e, _)| e.clone());
-        here.get_mut(None).prefs.retrain(emb_of, Vec::new);
+        here.get_mut(None).prefs.retrain(0, emb_of, Vec::new);
         assert!(here.get(None).prefs.active());
 
         let (pack, sum) = pack(&here, serde_json::json!({ "theme": "dark" }), "0.1.0", "test box", "mac", emb_of);
@@ -194,7 +194,7 @@ mod tests {
         let (sum2, touched) = unpack(&mut there, &pack2).unwrap();
         assert_eq!((sum2.styles, sum2.examples), (0, 12), "the nameless default style merges into the default style here");
         for id in &touched {
-            there.get_mut(Some(id)).prefs.retrain(|_| None, Vec::new);
+            there.get_mut(Some(id)).prefs.retrain(0, |_| None, Vec::new);
         }
         let p = there.get(None).prefs.clone();
         assert!(p.active(), "trained from the imported examples alone, with no photo analysed here");
