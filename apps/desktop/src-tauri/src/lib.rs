@@ -6,6 +6,7 @@ mod clipgpu;
 mod hdrview;
 mod imageio_macos;
 mod mounts;
+mod power;
 mod proxy;
 mod vision;
 #[cfg(test)]
@@ -106,6 +107,7 @@ async fn probe_folder(app: AppHandle, dirs: Vec<String>, compute: Option<String>
 async fn scan_project(app: AppHandle, key: String, dirs: Vec<String>, compute: Option<String>, quality: Option<String>, learn: bool, quiet: bool, style: Option<String>, force: Option<bool>, eye_method: Option<String>, live: Option<fg_core::engine::LiveArgs>) -> Result<Vec<Photo>, String> {
     let e = engine(&app);
     let args = ScanArgs { key, dirs, compute, quality, learn, quiet, style, force: force.unwrap_or(false), eye_method, live };
+    let _awake = power::Awake::begin("FleetingGleam: analysing photos");
     blocking(move || e.scan_project(args)).await?
 }
 
@@ -446,6 +448,7 @@ fn style_set_default(app: AppHandle, id: String) -> Vec<prefs::StyleInfo> {
 #[tauri::command]
 async fn learn_from_folder(app: AppHandle, dir: String, style: Option<String>, compute: Option<String>, quality: Option<String>) -> Result<prefs::PrefsInfo, String> {
     let e = engine(&app);
+    let _awake = power::Awake::begin("FleetingGleam: learning from a folder");
     blocking(move || e.learn_from_folder(&dir, style.as_deref(), compute.as_deref(), quality.as_deref())).await?
 }
 
