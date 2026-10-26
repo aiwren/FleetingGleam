@@ -345,28 +345,35 @@ export default function Viewer({ photo, decision, index, total, onClose, onStep,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nativeHdr]);
 
+  // 处理函数每次渲染换成最新的（帮助气泡开没开、当前照片、播放状态都是眼下的），监听只随 `active` 挂卸：
+  // 以前依赖表漏了 help / active，气泡开着按 Esc 直接关了查看器，进了设置页按 p / r / x 还在改判
+  const keyRef = useRef<(e: KeyboardEvent) => void>(() => {});
+  keyRef.current = (e: KeyboardEvent) => {
+    if (isModalOpen()) return;
+    // 在输入框里打字不是快捷键
+    const el = e.target as HTMLElement | null;
+    if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable)) return;
+    const k = e.key.toLowerCase();
+    if (k === "escape" && help) { setHelp(false); return; }
+    if (k === "?") { setHelp((v) => !v); return; }
+    if (k === "escape" || k === " ") { e.preventDefault(); onClose(); }
+    else if (k === "arrowright") onStep(1);
+    else if (k === "arrowleft") onStep(-1);
+    else if (k === "+" || k === "=") { ease(); zoom(1.4); }
+    else if (k === "-") { ease(); zoom(1 / 1.4); }
+    else if (k === "0") reset();
+    else if (k === "m") void playMotion();
+    else if ((e.metaKey || e.ctrlKey) && (e.key === "]" || e.key === "[")) { e.preventDefault(); onRotate(e.key === "]" ? 1 : -1); }
+    else if (k === "p") onDecide("keep");
+    else if (k === "r") onDecide("review");
+    else if (k === "x") onDecide("reject");
+  };
   useEffect(() => {
     if (!active) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (isModalOpen()) return;
-      const k = e.key.toLowerCase();
-      if (k === "escape" && help) { setHelp(false); return; }
-      if (k === "?") { setHelp((v) => !v); return; }
-      if (k === "escape" || k === " ") { e.preventDefault(); onClose(); }
-      else if (k === "arrowright") onStep(1);
-      else if (k === "arrowleft") onStep(-1);
-      else if (k === "+" || k === "=") { ease(); zoom(1.4); }
-      else if (k === "-") { ease(); zoom(1 / 1.4); }
-      else if (k === "0") reset();
-      else if (k === "m") void playMotion();
-      else if ((e.metaKey || e.ctrlKey) && (e.key === "]" || e.key === "[")) { e.preventDefault(); onRotate(e.key === "]" ? 1 : -1); }
-      else if (k === "p") onDecide("keep");
-      else if (k === "r") onDecide("review");
-      else if (k === "x") onDecide("reject");
-    };
+    const onKey = (e: KeyboardEvent) => keyRef.current(e);
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, onStep, onDecide, onRotate, photo.path, photo.motion, clip]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [active]);
 
   // Fly out of the tile on open...
   useLayoutEffect(() => {
