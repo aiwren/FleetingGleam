@@ -275,17 +275,18 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
         if (section == "data") item {
             SettingGroup("") {
                 SettingRow(t("models.title"), t("models.titleDesc"), first = true)
+                // 有对话框开着或下载在跑（含转到后台的）：别的包的"下载"、"删除"先置灰，一次只下一个（审查第 20 条）
+                val gate by Models.gate.collectAsState()
                 // 说明只留用途；装没装由右边表达：随应用安装的写一个灰字，装了的是"删除"，没装的是"下载 · 48 MB"（设计审查 A13.8）
                 packs.forEach { p ->
                     SettingRow(t("models.name.${p.id}"), t("models.desc.${p.id}")) {
                         if (p.bundled) Text(t("models.bundled"), style = Type.small.copy(color = c.ash))
-                        else if (p.installed) FgButton(t("models.remove"), { scope.launch { runCatching { Models.remove(p.id) }; Strategy.release(p.id) } }, small = true)
+                        else if (p.installed) FgButton(t("models.remove"), { scope.launch { runCatching { Models.remove(p.id) }; Strategy.release(p.id) } }, small = true, enabled = gate == null)
                         else {
                             // 正在（后台）下载的这一包：显示进度，点一下把下载对话框叫回来
-                            val gate by Models.gate.collectAsState()
                             val g = gate?.takeIf { it.phase == "downloading" && (it.id == p.id || it.ids?.contains(p.id) == true) }
                             if (g != null) FgButton("${if (g.total > 0) Math.round(g.done * 100f / g.total) else 0}%", { Models.showGate() }, small = true)
-                            else FgButton(t("models.get") + if (p.bytes > 0) " · " + fmtBytes(p.bytes) else "", { scope.launch { if (Models.ensurePack(p.id) != Answer.Cancelled) Strategy.adopt(p.id) } }, small = true)
+                            else FgButton(t("models.get") + if (p.bytes > 0) " · " + fmtBytes(p.bytes) else "", { scope.launch { if (Models.ensurePack(p.id) != Answer.Cancelled) Strategy.adopt(p.id) } }, small = true, enabled = gate == null)
                         }
                     }
                 }

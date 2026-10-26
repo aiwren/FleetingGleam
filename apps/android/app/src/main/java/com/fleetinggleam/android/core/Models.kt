@@ -7,6 +7,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import com.fleetinggleam.android.ui.components.Toasts
 
 /** 模型包的名字（和桌面端 src/models.ts 的 PackId 一样，多一个 Android 才用的 "detect"）。 */
@@ -73,41 +75,51 @@ object Models {
     /** 这次运行里用户选了"先跳过"的可选包：不再追问（设置 → 模型与存储里随时可以再下）。 */
     private val skipped = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
-    suspend fun ensurePack(id: String, optional: Set<String> = emptySet()): Answer {
+    /**
+     * 同一时间只有一个对话框（核心也只允许一个下载）：后来的排在这里，等前一个答完（下载完、取消或跳过）再问。
+     * 以前直接覆盖 `_gate`，前一个下载完又把新的清掉，等着新的那一方永远卡住（审查第 20 条）。轮到时重新看一遍装没装——前一个可能刚好下了它。
+     */
+    private val turn = Mutex()
+
+    suspend fun ensurePack(id: String, optional: Set<String> = emptySet()): Answer = turn.withLock { ensurePackNow(id, optional) }
+
+    private suspend fun ensurePackNow(id: String, optional: Set<String>): Answer {
         refresh()
         if (_packs.value.isEmpty() || installed(id)) return Answer.Ready
         if (id in optional && id in skipped) return Answer.Skipped
         val d = CompletableDeferred<Answer>()
         val bytes = try { Core.get<Long>("pack_size", args("id" to id)) } catch (e: Exception) {
             _gate.value = Gate(id = id, phase = "error", bytes = 0, error = e.message, resolve = d, optional = optional, failed = id)
-            return d.await()
+            return answer(d)
         }
         _gate.value = Gate(id = id, phase = "ask", bytes = bytes, total = bytes, resolve = d, optional = optional)
-        return d.await()
+        return answer(d)
     }
 
     /**
      * Several packs under one question: the person is told the whole size once and agrees once. What is already here is left out; answers "ready"
      * when nothing is missing.
      */
-    suspend fun ensurePacks(ids: List<String>, optional: Set<String> = emptySet()): Answer {
+    suspend fun ensurePacks(ids: List<String>, optional: Set<String> = emptySet()): Answer = turn.withLock { ensurePacksNow(ids, optional) }
+
+    private suspend fun ensurePacksNow(ids: List<String>, optional: Set<String>): Answer {
         refresh()
         if (_packs.value.isEmpty()) return Answer.Ready
         // 必需的先下，可选的放后面：可选的失败时前面的已经到了
         val missing = ids.distinct().filter { !installed(it) && !(it in optional && it in skipped) }.sortedBy { it in optional }
         if (missing.isEmpty()) return if (ids.any { it in skipped && !installed(it) }) Answer.Skipped else Answer.Ready
-        if (missing.size == 1) return ensurePack(missing[0], optional)
+        if (missing.size == 1) return ensurePackNow(missing[0], optional)
         val d = CompletableDeferred<Answer>()
         val sizes = mutableListOf<Long>()
         for (id in missing) {
             try { sizes.add(Core.get<Long>("pack_size", args("id" to id))) } catch (e: Exception) {
                 _gate.value = Gate(id = "bundle", ids = missing, phase = "error", bytes = 0, error = e.message, resolve = d, optional = optional, failed = id)
-                return d.await()
+                return answer(d)
             }
         }
         val bytes = sizes.sum()
         _gate.value = Gate(id = "bundle", ids = missing, sizes = sizes, phase = "ask", bytes = bytes, total = bytes, resolve = d, optional = optional)
-        return d.await()
+        return answer(d)
     }
 
     /** 可选包下载失败后"先跳过"：没下到的可选包这次运行不再问，等着的那件事接着做（少了那部分）。 */
@@ -139,13 +151,13 @@ object Models {
                 base = 0
                 refresh()
                 val wasHidden = _gate.value?.hidden == true
-                _gate.value = null
+                clear(g)
                 if (wasHidden) Toasts.show(t("android.models.done", "name" to t(if (g.ids != null) "android.models.bundle" else "models.name.${g.id}")))
                 g.resolve.complete(Answer.Downloaded)
             } catch (e: Exception) {
                 base = 0
                 if (e.message?.contains("cancelled") == true) {
-                    _gate.value = null
+                    clear(g)
                     g.resolve.complete(Answer.Cancelled)
                 } else {
                     // 出错了：后台的也把对话框拿回来，说清楚、可以重试
@@ -157,6 +169,18 @@ object Models {
             }
         }
     }
+
+    /**
+     * 等对话框的答复。等的那一方被取消了（比如设置页关掉了）对话框却还开着、下载还在跑：照样等它答完再放开排队的锁，
+     * 否则排在后面的会把它覆盖掉。
+     */
+    private suspend fun answer(d: CompletableDeferred<Answer>): Answer = try { d.await() } catch (e: kotlinx.coroutines.CancellationException) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { d.await() }
+        throw e
+    }
+
+    /** 撤掉这一次的对话框（只在它还是当前那个时）：别把排在后面、刚问上的那个清掉。 */
+    private fun clear(g: Gate) { if (_gate.value?.resolve === g.resolve) _gate.value = null }
 
     /** 下载转到后台（对话框收起）。 */
     fun hideGate() { _gate.value?.let { if (it.phase == "downloading") _gate.value = it.copy(hidden = true) } }
