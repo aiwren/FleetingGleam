@@ -138,6 +138,10 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const [reloadKey, setReloadKey] = useState(0);
   const cacheRev = useCacheRev();
   const [nasOff, setNasOff] = useState("");
+  /**
+   * 项目所在的 NAS 现在连不上：照片照样从本机镜像打开（上次同步的那些），顶部说一声，NAS 上的整理操作置灰。
+   */
+  const [offline, setOffline] = useState<{ names: string; error: string | null } | null>(null);
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
   const [searchRev, setSearchRev] = useState(0);
   const [previews, setPreviews] = useState<Record<string, string>>({});
@@ -278,7 +282,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     const left = enteredId.current;
     enteredId.current = project?.id ?? null;
     undoStack.current = []; // the marks that could be undone belonged to the project just left
-    setSelected(null); setMulti(NONE); anchor.current = null; setQuery(""); setZoomed(false); setError(null); setMode("all"); setSceneFilter(null); setPersonFilter(null); setSceneView(false); setCelebrate(false); setDirty(0); setNasProg(null);
+    setSelected(null); setMulti(NONE); anchor.current = null; setQuery(""); setZoomed(false); setError(null); setMode("all"); setSceneFilter(null); setPersonFilter(null); setSceneView(false); setCelebrate(false); setDirty(0); setNasProg(null); setOffline(null);
     setBgDone((d) => (d && project && d.id === project.id ? null : d));
     // 回到正在分析的那个项目（文件夹没变）：接上，照片墙和进度都还在，不重来
     if (project && run && run.id === project.id && run.folders.join("|") === project.folders.join("|")) {
@@ -296,15 +300,21 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     (async () => {
       try {
         // a project on a network share: connect the share first, and say so when it cannot be reached
-        const shares = await invoke<{ name: string; enabled: boolean; connected: boolean }[]>("nas_ensure", { dirs: project.folders }).catch(() => []);
+        const shares = await invoke<{ name: string; enabled: boolean; connected: boolean; error?: string | null }[]>("nas_ensure", { dirs: project.folders }).catch(() => []);
         if (tok !== token.current) return;
         const disabled = shares.filter((s) => !s.enabled);
         if (disabled.length > 0) { setPhotos([]); setFiles([]); setPhase("idle"); setNasOff(disabled.map((s) => s.name).join(", ")); setError("cull.nasDisabled"); return; }
+        // 连不上的 NAS 不再让整个项目打不开：核心跳过同步、用本机镜像，这里只记下来好在顶部说明
         const off = shares.filter((s) => !s.connected);
-        if (off.length > 0) { setPhotos([]); setFiles([]); setPhase("idle"); setNasOff(off.map((s) => s.name).join(", ")); setError("cull.nasOffline"); return; }
+        const offNames = off.map((s) => s.name).join(", ") || "NAS";
+        const offError = off.find((s) => s.error)?.error ?? null;
         const probe = await invoke<Probe>("probe_folder", { dirs: project.folders, compute: "auto", quality: currentTier() });
         if (tok !== token.current) return;
+        const isOffline = off.length > 0 || !!probe.offline;
         setFiles(probe.files); setBytes(probe.bytes); setUncached(probe.uncached);
+        // 镜像里还什么都没有（从没同步过）：那就真的打不开，照旧说连不上
+        if (probe.files.length === 0 && isOffline) { setPhotos([]); setPhase("idle"); setNasOff(offNames); setOffline({ names: offNames, error: offError }); setError("cull.nasOffline"); return; }
+        if (isOffline) setOffline({ names: offNames, error: offError });
         if (probe.files.length === 0) { setPhotos([]); setPhase("idle"); setError("cull.emptyFolder"); return; }
         if (project.count !== probe.files.length) updateProject(project.id, { count: probe.files.length });
         if (probe.uncached > 0) { autoStart.current = takeAutoStart(project.id); setPhase("ready"); }
@@ -915,7 +925,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
                 sorts={[]} />
             )}
             {project && phase === "done" && <i className="tb-sep" aria-hidden />}
-            {project && phase === "done" && <Organize project={project} photos={photos} decisions={decisions} onChanged={() => setReloadKey((k) => k + 1)} />}
+            {project && phase === "done" && <Organize project={project} photos={photos} decisions={decisions} offline={!!offline} onChanged={() => setReloadKey((k) => k + 1)} />}
             {project && phase === "done" && <i className="tb-sep" aria-hidden />}
             {project && (
               <button className="btn icon plain" onClick={() => setSettingsOpen(true)} disabled={scanning} aria-label={t("pset.settings")} title={t("pset.settings")}>
@@ -969,7 +979,13 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
         {panelShown && <Resizer panel={filterW} edge="right" label={t("cull.filters")} />}
         <div className="scroll" ref={scrollRef}>
           {error && error !== "cull.nasOffline" && error !== "cull.nasDisabled" && <p className="error">{t(error, { defaultValue: error })}</p>}
-          {(error === "cull.nasOffline" || error === "cull.nasDisabled") && <p className="error">{t(error, { name: nasOff })} <button className="btn sm" onClick={() => setReloadKey((k) => k + 1)}>{t("cull.nasRetry")}</button></p>}
+          {error === "cull.nasDisabled" && <p className="error">{t(error, { name: nasOff })} <button className="btn sm" onClick={() => setReloadKey((k) => k + 1)}>{t("cull.nasRetry")}</button></p>}
+          {(error === "cull.nasOffline" || offline) && (
+            <p className={error === "cull.nasOffline" ? "error" : "error nas-mirror"}>
+              {error === "cull.nasOffline" ? t("cull.nasOffline", { name: nasOff }) : t("cull.nasOfflineMirror", { name: offline!.names })}{" "}
+              <button className="btn sm" onClick={() => setReloadKey((k) => k + 1)}>{t("cull.nasRetry")}</button>
+            </p>
+          )}
           {saveError && <p className="error">{t("cull.saveFailed", { error: saveError })}</p>}
           {loadError === "corrupt" && <p className="error">{t("cull.loadCorrupt")}</p>}
 

@@ -17,10 +17,12 @@ type Phase = "confirm" | "running" | "done";
  * "整理": what to do with the result. Export copies the keepers somewhere new (originals untouched).
  * Trash moves rejects to the *system* trash, so anything can be put back from Finder.
  */
-export default function Organize({ project, photos, decisions, onChanged }: {
+export default function Organize({ project, photos, decisions, offline = false, onChanged }: {
   project: Project;
   photos: Photo[];
   decisions: Map<string, Decision>;
+  /** 项目所在的 NAS 现在连不上（照片来自本机镜像）：传到 NAS、在 NAS 上移到回收站都做不了，置灰。 */
+  offline?: boolean;
   onChanged: () => void;
 }) {
   const { t } = useTranslation();
@@ -86,10 +88,13 @@ export default function Organize({ project, photos, decisions, onChanged }: {
     if (dir) open({ kind: "export", dest: dir });
   };
 
+  // 镜像里的照片（…/nas/<id>/…）只有 NAS 连着时才能在 NAS 上移到回收站
+  const onNas = (p: Photo) => /\/nas\/[^/]+\//.test(p.path);
+  const trashBlocked = offline && rejectAll.some(onNas);
   const items = [
     { key: "export", count: keep.length, title: t("organize.exportItem"), desc: t("organize.exportDesc", { count: keep.length }), run: chooseDest },
-    ...(nasShares.length > 0 ? [{ key: "nas", count: keep.length, title: t("organize.exportNasItem"), desc: t("organize.exportNasDesc", { count: keep.length }), run: chooseNas }] : []),
-    { key: "trash", count: rejectAll.length, title: t("organize.trashItem"), desc: t("organize.trashDesc", { count: rejectAll.length }), run: () => { setScope(rejectManual.length > 0 ? "manual" : "all"); open({ kind: "trash" }); } },
+    ...(nasShares.length > 0 ? [{ key: "nas", count: keep.length, blocked: offline, title: t("organize.exportNasItem"), desc: t("organize.exportNasDesc", { count: keep.length }), run: chooseNas }] : []),
+    { key: "trash", count: rejectAll.length, blocked: trashBlocked, title: t("organize.trashItem"), desc: t("organize.trashDesc", { count: rejectAll.length }), run: () => { setScope(rejectManual.length > 0 ? "manual" : "all"); open({ kind: "trash" }); } },
   ];
 
   return (
@@ -99,8 +104,8 @@ export default function Organize({ project, photos, decisions, onChanged }: {
         {menu && (
           <motion.div className="fmenu orgmenu" initial={{ opacity: 0, y: -6, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -4, scale: 0.98 }} transition={{ duration: 0.16, ease: EASE_OUT }}>
             {items.map((it) => (
-              <button key={it.key} className="orgitem" disabled={it.count === 0} onClick={it.run}>
-                <b>{it.title}</b><span className="ash">{it.count === 0 ? t("organize.none") : it.desc}</span>
+              <button key={it.key} className="orgitem" disabled={it.count === 0 || !!it.blocked} onClick={it.run}>
+                <b>{it.title}</b><span className="ash">{it.count === 0 ? t("organize.none") : it.blocked ? t("organize.nasOffline") : it.desc}</span>
               </button>
             ))}
           </motion.div>

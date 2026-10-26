@@ -38,7 +38,8 @@ const en = {
     analyzing: "Analyzing on this computer",
     stop: "Stop analysis",
     loadCorrupt: "The projects file could not be read; it was set aside (projects.json.corrupt-…) and this run starts empty. The old file can be repaired by hand.",
-    nasOffline: "This project is on the NAS \u201c{{name}}\u201d, which cannot be reached right now.", nasRetry: "Try again", nasDisabled: "This project is on the NAS \u201c{{name}}\u201d, which is turned off in Settings.",
+    nasOffline: "This project is on the NAS \u201c{{name}}\u201d, which cannot be reached right now.", nasRetry: "Try again",
+    nasOfflineMirror: "The NAS \u201c{{name}}\u201d can\u2019t be reached; these are the photos from the last sync, and organizing on the NAS is off for now.",
     fetchingNas: "Reading photos from the NAS \u201c{{share}}\u201d {{done}} / {{total}} ({{size}} in all)…",
     saveFailed: "The project could not be saved to disk ({{error}}). What you did is still on screen and the next change will try again; check disk space and permissions.",
     eta: "about {{s}}s left",
@@ -278,7 +279,7 @@ const en = {
   },
   mark: { keep: "Keep", review: "Maybe", reject: "Reject", keepAct: "Keep", rejectAct: "Reject", clear: "Clear my mark" },
   organize: {
-    button: "Organize", none: "Nothing to organize", cancel: "Cancel", done: "Done", showInFinder: "Show in Finder",
+    button: "Organize", none: "Nothing to organize", nasOffline: "The NAS can\u2019t be reached; come back once it is", cancel: "Cancel", done: "Done", showInFinder: "Show in Finder",
     exportItem: "Export kept photos…", exportDesc: "Copy {{count}} to a new folder; originals stay put",
     exportNasItem: "Export to a NAS…", exportNasDesc: "Upload the {{count}} kept photos to a folder on a NAS", exportNasPick: "Export to which folder on the NAS?", exportHere: "Export here", exportFailed: "Could not export: {{error}}",
     exportTitle: "Export kept photos", exportBody_one: "{{count}} kept photo will be copied to:", exportBody_other: "{{count}} kept photos will be copied to:", exportSafe: "Copies only: originals are never moved or changed, and files with the same name get a number instead of being overwritten.",

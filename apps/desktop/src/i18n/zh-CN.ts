@@ -36,7 +36,8 @@ const zh = {
     analyzing: "正在本机分析",
     stop: "停止分析",
     loadCorrupt: "项目文件读不出来，已改名放在一旁（projects.json.corrupt-…），这次从空白开始；旧文件可以手工修复。",
-    nasOffline: "这个项目在 NAS「{{name}}」上，现在连不上。", nasRetry: "重试", nasDisabled: "这个项目在 NAS「{{name}}」上，它在设置里被停用了。",
+    nasOffline: "这个项目在 NAS「{{name}}」上，现在连不上。", nasRetry: "重试",
+    nasOfflineMirror: "NAS「{{name}}」现在连不上，显示的是上次同步的照片，NAS 上的整理先停用。",
     fetchingNas: "正在从 NAS「{{share}}」读取照片 {{done}} / {{total}}（共 {{size}}）…",
     saveFailed: "项目没能保存到磁盘（{{error}}）。你的操作仍在屏幕上，下一次改动会再试一次；请检查磁盘空间和权限。",
     eta: "约剩 {{s}} 秒",
@@ -276,7 +277,7 @@ const zh = {
   },
   mark: { keep: "保留", review: "待复查", reject: "淘汰", keepAct: "留下", rejectAct: "淘汰", clear: "取消我的标记" },
   organize: {
-    button: "整理", none: "没有可整理的照片", cancel: "取消", done: "完成", showInFinder: "在访达中显示",
+    button: "整理", none: "没有可整理的照片", nasOffline: "NAS 现在连不上，连上后再来", cancel: "取消", done: "完成", showInFinder: "在访达中显示",
     exportItem: "导出保留的照片…", exportDesc: "复制 {{count}} 张到新文件夹，原图不动",
     exportNasItem: "导出到 NAS…", exportNasDesc: "把 {{count}} 张保留的照片传到 NAS 上的文件夹", exportNasPick: "导出到 NAS 上的哪个文件夹？", exportHere: "导出到这里", exportFailed: "没能导出：{{error}}",
     exportTitle: "导出保留的照片", exportBody: "将把 {{count}} 张保留的照片复制到：", exportSafe: "只是复制，原图不会被移动或修改；重名的文件会自动加序号，不会覆盖。",

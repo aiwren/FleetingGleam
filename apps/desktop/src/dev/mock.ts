@@ -56,6 +56,7 @@ const FOLDERS: Record<string, { count: number; seedOffset: number }> = {
   "/mock/Big": { count: 300, seedOffset: 2 }, // for performance checks; pre-analysed so it opens instantly
   "/mock/Huge": { count: 3000, seedOffset: 3 }, // 3000 photos: windowing and lazy-loading checks
   "/mock/Samples": { count: 10, seedOffset: 7 }, // 起始屏的"试试示例照片"（samples_folder）
+  "/mock/nas/n1/photos/Lisbon": { count: 12, seedOffset: 1 }, // NAS「Home NAS」上的项目（本机镜像），离线时照样打开
 };
 type Src = { path: string; seed: number; shift: number; w: number; h: number };
 const SRC: Src[] = [];
@@ -67,7 +68,7 @@ for (const [dir, { count, seedOffset }] of Object.entries(FOLDERS)) {
   }
 }
 const inDirs = (dirs: string[]) => SRC.filter((s) => dirs.some((d) => s.path.startsWith(d + "/")));
-const cached = new Set<string>(SRC.filter((s) => s.path.startsWith("/mock/Big/") || s.path.startsWith("/mock/Huge/")).map((s) => s.path));
+const cached = new Set<string>(SRC.filter((s) => s.path.startsWith("/mock/Big/") || s.path.startsWith("/mock/Huge/") || s.path.startsWith("/mock/nas/")).map((s) => s.path));
 
 function makePhotos(list: Src[]): Photo[] {
   const rand = rng(7);
@@ -222,7 +223,8 @@ w.__TAURI_INTERNALS__ = {
         const list = inDirs(args.dirs as string[]);
         await sleep(250);
         const files = list.map((s) => ({ path: s.path, width: s.w, height: s.h, cached: cached.has(s.path) }));
-        return { files, bytes: files.filter((f) => !f.cached).length * 9_000_000, uncached: files.filter((f) => !f.cached).length };
+        const offline = !!(window as unknown as { __mockNasDown?: string }).__mockNasDown && (args.dirs as string[]).some((d) => d.startsWith("/mock/nas/"));
+        return { files, bytes: files.filter((f) => !f.cached).length * 9_000_000, uncached: files.filter((f) => !f.cached).length, offline };
       }
       case "scan_project": return scan(args.dirs as string[], !!args.quiet, args.live as { keep_ratio?: number; overrides?: Record<string, string> } | null, !!args.force);
       case "scan_cancel": return null;
@@ -241,7 +243,11 @@ w.__TAURI_INTERNALS__ = {
       case "nas_remove": { const i = mockShares.findIndex((s) => s.id === args.id); if (i >= 0) mockShares.splice(i, 1); return [...mockShares]; }
       case "nas_connect": { await sleep(500); const s = mockShares.find((x) => x.id === args.id); if (s) s.connected = true; return [...mockShares]; }
       case "nas_disconnect": { const s = mockShares.find((x) => x.id === args.id); if (s) s.connected = false; return [...mockShares]; }
-      case "nas_ensure": return [];
+      // `window.__mockNasDown = "auth:…"`（或 net: / denied:）：Home NAS 连不上，原因按约定的前缀给
+      case "nas_ensure": {
+        const down = (window as unknown as { __mockNasDown?: string }).__mockNasDown;
+        return mockShares.filter((s) => (args.dirs as string[]).some((d) => d.startsWith(s.local + "/"))).map((s) => ({ ...s, connected: s.connected && !down, error: down ?? null }));
+      }
       case "backup_status": return bkSync();
       case "backup_save_target": {
         await sleep(700);
