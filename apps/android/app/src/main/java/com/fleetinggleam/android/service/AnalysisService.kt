@@ -15,6 +15,7 @@ import com.fleetinggleam.android.R
 import com.fleetinggleam.android.core.Core
 import com.fleetinggleam.android.core.Fg
 import com.fleetinggleam.android.core.Progress
+import com.fleetinggleam.android.core.Scans
 import com.fleetinggleam.android.core.Session
 import com.fleetinggleam.android.core.t
 
@@ -75,6 +76,29 @@ class AnalysisService : Service() {
             .build()
     }
 
+    /**
+     * Android 15 起 dataSync / mediaProcessing 的前台服务一天合计最多 6 小时：到点系统调这里，几秒内不 stopSelf 就当应用崩了（审查第 22 条）。
+     * 先停下分析（分析过的都在缓存里，回到应用点"开始分析"就从这里接着来），撤掉前台服务，再留一条通知说分析到哪儿了。
+     */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        val p = Session.progress.value
+        Session.stopScan()
+        Session.dropPause()
+        Scans.timedOut()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+        val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_IMMUTABLE)
+        val body = t("android.scan.timeoutBody", "done" to p.done, "total" to p.total)
+        getSystemService(NotificationManager::class.java).notify(TIMEOUT_ID, NotificationCompat.Builder(this, CHANNEL)
+            .setSmallIcon(R.drawable.ic_stat_gleam)
+            .setContentTitle(if (name.isNotEmpty()) "${t("android.scan.timeoutTitle")} · $name" else t("android.scan.timeoutTitle"))
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setAutoCancel(true)
+            .setContentIntent(open)
+            .build())
+    }
+
     override fun onDestroy() {
         off?.invoke()
         off = null
@@ -88,5 +112,7 @@ class AnalysisService : Service() {
         const val ACTION_STOP = "com.fleetinggleam.android.STOP_SCAN"
         private const val CHANNEL = "analysis"
         private const val ID = 7
+        /** 6 小时到点停下时留的那条（不是常驻的；8 是下载服务的）。 */
+        private const val TIMEOUT_ID = 9
     }
 }

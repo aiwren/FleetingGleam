@@ -353,6 +353,14 @@ object Session {
         stopScan()
     }
 
+    /** 不再等着接着分析（用户点了通知栏的"停止"、前台服务到了时限）：忘掉暂停的那个项目，撤掉为它留着的前台服务。 */
+    fun dropPause() {
+        if (paused.value == Pause.None && pausedProject == null) return
+        pausedProject = null
+        paused.value = Pause.None
+        if (running.value == null) Scans.stopped()
+    }
+
     fun resumeAfterPause() {
         if (paused.value == Pause.None) return
         paused.value = Pause.None

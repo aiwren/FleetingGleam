@@ -114,7 +114,9 @@
    "resume": "{{done}} already analysed; only the rest are analysed this time."
   },
   "scan": {
-   "landing": "Photos land here as they are analysed"
+   "landing": "Photos land here as they are analysed",
+   "timeoutTitle": "The analysis has stopped for now",
+   "timeoutBody": "{{done}} of {{total}} photos are analysed. Android lets a background analysis run for only 6 hours a day; open the app to carry on, nothing analysed so far is lost."
   },
   "cmp": {
    "keepNth": "Keep #{{n}}",

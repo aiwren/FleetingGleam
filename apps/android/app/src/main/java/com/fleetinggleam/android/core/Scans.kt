@@ -72,6 +72,9 @@ object Scans {
         blocker().takeIf { it != Pause.None }?.let { Session.pauseFor(it) }
     }
 
+    /** 前台服务到了系统的 6 小时上限，自己撤掉了：只记下不在跑，别再去停它。 */
+    fun timedOut() { running = false }
+
     fun stopped() {
         if (!running) return
         running = false
