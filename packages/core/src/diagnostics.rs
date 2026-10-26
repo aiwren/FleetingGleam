@@ -25,7 +25,12 @@ pub fn init(data: &Path) {
     HOOK.call_once(|| {
         let prev = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
-            let dir = LOG_DIR.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            // 不等锁：panic 可能就发生在拿着日志锁写 app.log 的时候，这里再等就卡死了
+            let dir = match LOG_DIR.try_lock() {
+                Ok(g) => g.clone(),
+                Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner().clone(),
+                Err(std::sync::TryLockError::WouldBlock) => None,
+            };
             if let Some(dir) = dir {
                 let thread = std::thread::current().name().unwrap_or("unnamed").to_string();
                 let bt = std::backtrace::Backtrace::force_capture();
