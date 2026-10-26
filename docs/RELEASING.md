@@ -4,7 +4,7 @@
 
 | 什么时候 | 跑什么 | 结果 |
 |---|---|---|
-| 每次推送到 `main`、每个 Pull Request | [`ci.yml`](../.github/workflows/ci.yml) | 只做检查：落地页类型检查与构建；桌面前端构建、`cargo check`、`cargo test`。不发布任何东西 |
+| 每次推送到 `main`、每个 Pull Request | [`ci.yml`](../.github/workflows/ci.yml) | 只做检查：落地页类型检查与构建；桌面前端构建、`cargo check`、`cargo test`（含 Android 绑定 crate 在宿主上的测试）；Android 目标的 `cargo check` 与 Gradle `assembleRelease`。不发布任何东西 |
 | 推送形如 `v0.1.0` 的**版本标签** | [`release.yml`](../.github/workflows/release.yml) | 在 macOS 上构建安装包，创建一个**草稿** GitHub Release，把 `.dmg` 传上去 |
 
 **发布是由标签触发的，不是由某个“发布分支”触发的。** 日常提交到 `main` 不会打包；只有你主动打一个版本标签才会。这是开源项目里最常见的做法：标签就是版本的唯一标记，Release 页面上的每个版本都能对应到一个确切的提交。
@@ -15,10 +15,14 @@ Release 一律先创建成**草稿**，你检查过安装包再手动点“Publi
 
 1. **改版本号**，下面三处必须一致：
    - `apps/desktop/src-tauri/tauri.conf.json` 的 `version`
-   - `apps/desktop/src-tauri/Cargo.toml` 的 `version`
+   - 根目录 `Cargo.toml` 的 `[workspace.package]` 里的 `version`（核心库、桌面端、Android 绑定 crate 都写的是 `version.workspace = true`，跟着它走）
    - `apps/desktop/package.json` 的 `version`
 
    然后运行一次 `cargo check`，让 `Cargo.lock` 里的版本号跟着更新。
+
+   **Android** 不用另改：`apps/android/app/build.gradle.kts` 的 `versionName` 从根 `Cargo.toml` 读；`versionCode` 是仓库的提交数
+   （`git rev-list --count HEAD`），取不到（不在 git 仓库里、浅克隆）就构建失败，不会悄悄退回 1——没有 git 历史时用
+   `-PFG_BUILD_NUMBER=<数字>` 明确给出。发布工作流会核对 `versionName` 仍然取自 `Cargo.toml`。
 2. **更新 [CHANGELOG.md](../CHANGELOG.md)**：把“未发布”里的内容挪到新版本下面，写上日期。
 3. **提交并推送**到 `main`，等 CI 变绿。
 4. **打标签并推送**（首个版本是 `0.1.0`）：
@@ -87,6 +91,18 @@ sh scripts/release.sh
 
 它会构建辅助程序、构建应用，并检查安装包里没有混进模型文件。
 
+## Android 安装包
+
+目前 Android 包在本地构建（CI 只确认它能编出来，不发布）：
+
+```bash
+apps/android/gradlew -p apps/android assembleRelease
+```
+
+产物在 `apps/android/app/build/outputs/apk/release/`。正式签名的密钥库放在仓库外，路径与密码写在 `~/.gradle/gradle.properties` 的
+`FG_KEYSTORE`、`FG_KEYSTORE_PASSWORD`、`FG_KEY_ALIAS`、`FG_KEY_PASSWORD`；没配就用调试密钥签（能装，但不能覆盖正式签名的包）。
+构建前置条件见 [apps/android/README.md](../apps/android/README.md)。
+
 ## 部署落地页
 
 落地页（`apps/web`）构建时会预渲染成静态 HTML，由 Cloudflare 以“静态资源”的方式托管，没有服务端代码。配置在 [`apps/web/wrangler.jsonc`](../apps/web/wrangler.jsonc)。静态资源的请求在 Cloudflare 上免费且不限量。
@@ -103,6 +119,6 @@ pnpm dlx wrangler@4.146.0 deploy     # 首次部署前先 pnpm dlx wrangler@4.14
 
 ## 当前的限制
 
-- **只有 macOS**，需要 macOS 15 及以上（原生部分的编译目标是 macOS 15，安装包里的最低系统版本也写的是 15.0）。
+- **桌面端只有 macOS**，需要 macOS 15 及以上（原生部分的编译目标是 macOS 15，安装包里的最低系统版本也写的是 15.0）。
 - **只有 Apple Silicon。** 推理用的 ONNX Runtime（`ort` 2.0.0-rc.13）只提供 Apple Silicon 的 macOS 预编译库，没有 Intel 的。要出 Intel 版，需要在 CI 里从源码编译 ONNX Runtime，或者换用提供 x86_64 库的版本，再在 `release.yml` 的 `matrix` 里加回 `macos-15-intel`。
 - 工作流里用到的第三方 Action 都是按主版本号引用的（例如 `actions/checkout@v4`），需要升级时请手动改。如果你想要更强的供应链安全，可以把它们固定到提交 SHA。
