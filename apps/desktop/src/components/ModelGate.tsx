@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { cancelGate, hideGate, startDownload, useGate } from "../models";
+import { cancelGate, chooseStandard, hideGate, startDownload, useGate } from "../models";
 import Modal from "./Modal";
 
 import { fmtBytes } from "../format";
@@ -19,6 +19,7 @@ export default function ModelGate() {
         <>
           <button className="btn" onClick={cancelGate}>{t("organize.cancel")}</button>
           {g.phase === "downloading" && <button className="btn primary" autoFocus onClick={hideGate}>{t("models.background")}</button>}
+          {g.phase === "ask" && g.offerStandard && <button className="btn" onClick={chooseStandard}>{t("models.useStandard")}</button>}
           {g.phase === "ask" && <button className="btn primary" autoFocus onClick={startDownload}>{t("models.download", { size: fmtBytes(i18n.language, g.bytes) })}</button>}
           {g.phase === "error" && <button className="btn primary" onClick={startDownload}>{t("models.retry")}</button>}
         </>

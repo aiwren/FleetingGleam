@@ -1,5 +1,6 @@
+import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { createProject } from "./projects";
+import { createProject, getStore, setActive, updateProject } from "./projects";
 import { getEnabledShares, openPicker } from "./nas";
 
 export const baseName = (p: string) => p.split("/").filter(Boolean).pop() ?? p;
@@ -20,5 +21,28 @@ export async function newProjectFromDialog(): Promise<boolean> {
   const dir = await pickFolder();
   if (!dir) return false;
   createProject(baseName(dir), [dir]);
+  return true;
+}
+
+/** 示例项目建好后第一次到准备页就自动开始分析（它本来就是来看效果的）；Culling 取一次就清掉。 */
+let autoStart: string | null = null;
+export function takeAutoStart(id: string): boolean {
+  if (autoStart !== id) return false;
+  autoStart = null;
+  return true;
+}
+
+/**
+ * 起始屏的"试试示例照片"（和 Android 一样）：应用自带的十张照片复制到数据目录，建一个项目并打开（已经有一个就直接打开它）。
+ * 示例项目开着"相似的只留最好的一张"，两组连拍一眼能看出推荐。
+ */
+export async function openSamples(name: string): Promise<boolean> {
+  let dir: string;
+  try { dir = await invoke<string>("samples_folder"); } catch { return false; }
+  const existing = getStore().projects.find((p) => !p.trashed && p.folders.length === 1 && p.folders[0] === dir);
+  if (existing) { setActive(existing.id); return true; }
+  const p = createProject(name, [dir]);
+  updateProject(p.id, { onePerGroup: true });
+  autoStart = p.id;
   return true;
 }

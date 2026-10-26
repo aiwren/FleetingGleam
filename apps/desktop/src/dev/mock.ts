@@ -55,6 +55,7 @@ const FOLDERS: Record<string, { count: number; seedOffset: number }> = {
   "/mock/Porto": { count: 22, seedOffset: 5 },
   "/mock/Big": { count: 300, seedOffset: 2 }, // for performance checks; pre-analysed so it opens instantly
   "/mock/Huge": { count: 3000, seedOffset: 3 }, // 3000 photos: windowing and lazy-loading checks
+  "/mock/Samples": { count: 10, seedOffset: 7 }, // 起始屏的"试试示例照片"（samples_folder）
 };
 type Src = { path: string; seed: number; shift: number; w: number; h: number };
 const SRC: Src[] = [];
@@ -95,7 +96,9 @@ function makePhotos(list: Src[]): Photo[] {
 
 document.documentElement.dataset.mock = "1"; // the browser has no native vibrancy, so give the sidebar a base colour
 const w = window as unknown as Record<string, unknown>;
-const packState: Record<"standard" | "high" | "ultra" | "search" | "eyes" | "faces" | "scenetext", boolean> = { standard: true, high: false, ultra: false, search: false, eyes: false, faces: true, scenetext: true };
+// `?fresh`：一台刚装好的电脑，一个模型都没下（看第一次分析的询问框）
+const fresh = new URLSearchParams(location.search).has("fresh");
+const packState: Record<"standard" | "high" | "ultra" | "search" | "eyes" | "faces" | "scenetext", boolean> = { standard: !fresh, high: false, ultra: false, search: false, eyes: false, faces: !fresh, scenetext: !fresh };
 const emit = (event: string, payload: unknown) => (listeners.get(event) ?? []).forEach((h) => cbs.get(h)?.({ event, id: 0, payload }));
 // lets a test play the part of the native layer (e.g. `__mockEmit("hdr-view", {...})`)
 (window as unknown as { __mockEmit?: typeof emit }).__mockEmit = emit;
@@ -385,6 +388,7 @@ w.__TAURI_INTERNALS__ = {
         }
         return { system: "http://127.0.0.1:7890", manual: localStorage.getItem("fg.mock.proxy"), active: localStorage.getItem("fg.mock.proxy") ?? "http://127.0.0.1:7890" };
       }
+      case "samples_folder": return "/mock/Samples";
       case "set_locale": return null;
       case "cache_size": return 48_300_000;
       case "clear_cache": return null;

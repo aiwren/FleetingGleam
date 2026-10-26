@@ -8,12 +8,13 @@ import { listen } from "@tauri-apps/api/event";
  */
 export type PackId = "standard" | "high" | "ultra" | "search" | "eyes" | "faces" | "scenetext";
 export type PackInfo = { id: PackId; installed: boolean; bundled?: boolean };
-export type Answer = "ready" | "downloaded" | "cancelled";
+/** `standard`：问的是大模型，人选了"先用标准模型"（只在 `offerStandard` 时出现）。 */
+export type Answer = "ready" | "downloaded" | "cancelled" | "standard";
 /**
  * `id` names the dialog's text: a pack, or "bundle" when several are fetched under one question (`ids` says which, `sizes` how big each is).
  * `hidden`：下载转到了后台（对话框收起，侧栏显示进度，点一下叫回来）；出错时对话框自己回来。
  */
-export type Gate = { id: PackId | "bundle"; ids?: PackId[]; sizes?: number[]; phase: "ask" | "downloading" | "error"; bytes: number; done: number; total: number; error?: string; hidden?: boolean; resolve: (a: Answer) => void };
+export type Gate = { id: PackId | "bundle"; ids?: PackId[]; sizes?: number[]; phase: "ask" | "downloading" | "error"; bytes: number; done: number; total: number; error?: string; hidden?: boolean; offerStandard?: boolean; resolve: (a: Answer) => void };
 
 let packs: PackInfo[] = [];
 let gate: Gate | null = null;
@@ -43,7 +44,7 @@ async function idle() {
   }
 }
 
-export async function ensurePack(id: PackId): Promise<Answer> {
+export async function ensurePack(id: PackId, offerStandard = false): Promise<Answer> {
   await idle();
   await refreshPacks();
   if (!packs.length || packs.find((p) => p.id === id)?.installed) return "ready";
@@ -51,20 +52,20 @@ export async function ensurePack(id: PackId): Promise<Answer> {
   try { bytes = await invoke<number>("pack_size", { id }); } catch (e) {
     return new Promise((resolve) => setGate({ id, phase: "error", bytes: 0, done: 0, total: 0, error: String(e), resolve }));
   }
-  return new Promise((resolve) => setGate({ id, phase: "ask", bytes, done: 0, total: bytes, resolve }));
+  return new Promise((resolve) => setGate({ id, phase: "ask", bytes, done: 0, total: bytes, offerStandard, resolve }));
 }
 
 /**
  * Several packs under one question: the person is told the whole size once and agrees once. What is already here is left out; answers "ready"
  * when nothing is missing.
  */
-export async function ensurePacks(ids: PackId[]): Promise<Answer> {
+export async function ensurePacks(ids: PackId[], offerStandard = false): Promise<Answer> {
   await idle();
   await refreshPacks();
   if (!packs.length) return "ready";
   const missing = [...new Set(ids)].filter((id) => !packs.find((p) => p.id === id)?.installed);
   if (!missing.length) return "ready";
-  if (missing.length === 1) return ensurePack(missing[0]);
+  if (missing.length === 1) return ensurePack(missing[0], offerStandard && (missing[0] === "high" || missing[0] === "ultra"));
   const sizes: number[] = [];
   for (const id of missing) {
     try { sizes.push(await invoke<number>("pack_size", { id })); } catch (e) {
@@ -72,7 +73,7 @@ export async function ensurePacks(ids: PackId[]): Promise<Answer> {
     }
   }
   const bytes = sizes.reduce((a, b) => a + b, 0);
-  return new Promise((resolve) => setGate({ id: "bundle", ids: missing, sizes, phase: "ask", bytes, done: 0, total: bytes, resolve }));
+  return new Promise((resolve) => setGate({ id: "bundle", ids: missing, sizes, phase: "ask", bytes, done: 0, total: bytes, offerStandard: offerStandard && missing.some((id) => id === "high" || id === "ultra"), resolve }));
 }
 
 export function startDownload() {
@@ -99,6 +100,14 @@ export function startDownload() {
 }
 /** Bytes of the packs of a bundle that are already down, while the next one is fetched. */
 let base = 0;
+
+/** 询问框里选了"先用标准模型"：不下这一份，等着的一方换成标准模型再问。 */
+export function chooseStandard() {
+  const g = gate;
+  if (!g || g.phase !== "ask") return;
+  setGate(null);
+  g.resolve("standard");
+}
 
 /** 下载转到后台：对话框收起，应用照常可用；下完了等着的那一步照常接着走。 */
 export function hideGate() { if (gate?.phase === "downloading") setGate({ ...gate, hidden: true }); }

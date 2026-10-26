@@ -15,7 +15,7 @@ import FilterPanel, { PersonItem } from "../components/FilterPanel";
 import SearchBox from "../components/SearchBox";
 import { usePrefsRevision } from "../styles";
 import { ensurePack, ensurePacks, refreshPacks, usePacks } from "../models";
-import { analysisPacks, currentTier, estimateSeconds, eyeMethodNow, getMachine, predictTier, resolveTier } from "../strategy";
+import { currentTier, estimateSeconds, eyeMethodNow, getMachine, predictTier, settleTier } from "../strategy";
 import { Hit, searchPhotos, setPendingSelect, takePendingSelect, useSearchIndex } from "../search";
 import PhotoVerdict from "../components/PhotoVerdict";
 import { FileSection } from "../components/FileFacts";
@@ -25,7 +25,7 @@ import Compare from "./Compare";
 import Ticker from "../components/Ticker";
 import Tile, { StageInfo } from "../components/Tile";
 import { DUR, EASE_OUT, SPRING } from "../motion";
-import { newProjectFromDialog, pickFolder } from "../projectActions";
+import { newProjectFromDialog, openSamples, pickFolder, takeAutoStart } from "../projectActions";
 import { Project, setActive, trashProject, updateProject, useProjects, useProjectsStatus } from "../projects";
 import { getSettings, ScanInfo, setScanInfo, useSettings, useCacheRev } from "../settings";
 import { Decision, Photo, Probe, ProbeFile, Reason, State, pct, thumbSrc } from "../types";
@@ -181,6 +181,8 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   /** 要分析这个项目，可另一个还在分析：问一句。 */
   const [conflict, setConflict] = useState<{ id: string; name: string } | null>(null);
   const pendingStart = useRef<(() => void) | null>(null);
+  /** 示例项目第一次到准备页：不用再点"开始分析"。 */
+  const autoStart = useRef(false);
   /** 分析中照片判出来时飘向页签的光点。 */
   const flights = useRef<FlightsHandle>(null);
   const flush = useCallback(() => {
@@ -305,7 +307,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
         setFiles(probe.files); setBytes(probe.bytes); setUncached(probe.uncached);
         if (probe.files.length === 0) { setPhotos([]); setPhase("idle"); setError("cull.emptyFolder"); return; }
         if (project.count !== probe.files.length) updateProject(project.id, { count: probe.files.length });
-        if (probe.uncached > 0) setPhase("ready");
+        if (probe.uncached > 0) { autoStart.current = takeAutoStart(project.id); setPhase("ready"); }
         else await runScan(project, probe.files.length, true, tok);
       } catch (e) {
         if (tok === token.current) { setError(String(e)); setPhase("idle"); }
@@ -338,10 +340,13 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     const run = running.current;
     if (run && run.id !== project.id) { setConflict({ id: run.id, name: run.name }); return; }
     // The app picks the model (strategy.ts); what it needs, the eye model and people recognition included, is fetched under one question the first time.
-    const tier = await resolveTier();
-    if ((await ensurePacks(analysisPacks(tier))) === "cancelled") return;
+    if ((await settleTier()) === null) return;
     runScan(project, files.length, false, token.current);
   };
+  useEffect(() => {
+    if (phase === "ready" && autoStart.current) { autoStart.current = false; void startScan(); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
   /** 停下正在跑的那次分析（不管页面开着哪个项目）。 */
   const stopScan = () => { invoke("scan_cancel", { key: running.current?.id }).catch(() => { /* not in Tauri */ }); };
   /** 问过了：先停下另一个项目的分析（分析过的都在缓存里，回到它时接着来），再分析这个。 */
@@ -990,8 +995,9 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
                   <motion.li key={i} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ ...SPRING.soft, delay: 0.3 + i * 0.07 }}>{s}</motion.li>
                 ))}
               </ol>
-              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ ...SPRING.soft, delay: 0.55 }}>
+              <motion.div className="empty-actions" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ ...SPRING.soft, delay: 0.55 }}>
                 <button className="btn primary" onClick={() => newProjectFromDialog()}>{t("cull.newProjectBtn")} <kbd>⌘O</kbd></button>
+                <button className="btn" onClick={() => openSamples(t("cull.sampleName"))}>{t("cull.trySamples")}</button>
               </motion.div>
             </div>
           )}
