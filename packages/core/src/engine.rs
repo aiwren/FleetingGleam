@@ -1980,7 +1980,8 @@ impl Engine {
             .collect()
     }
 
-    /// How many bytes a pack still needs (0 if it is installed), so the app can say so before asking.
+    /// How many bytes a pack still needs on this device (0 if it is installed; standard 包只算这台设备用的那份 B/32，上次没下完的
+    /// `.part` 已有的部分也不算), so the app can say so before asking.
     pub fn pack_size(&self, id: &str) -> Result<u64, String> {
         let dir = &self.paths.models;
         let p = modelpacks::pack(id).ok_or("unknown pack")?;
@@ -1990,7 +1991,8 @@ impl Engine {
         modelpacks::manifest_sizes(dir, id)
     }
 
-    /// 下载一个包缺的文件（一次只能下一个包），进度发 `model-progress`；`pack_cancel` 可以中途停，下了一半的文件会删掉。
+    /// 下载一个包缺的文件（一次只能下一个包），进度发 `model-progress`；`pack_cancel` 可以中途停，下了一半的文件留着（`.part`），
+    /// 下次接着下。空间不够、网络、校验的错误带 `errors` 约定的前缀。
     pub fn pack_download(&self, id: &str) -> Result<(), String> {
         {
             let mut busy = self.downloads.busy.lock().unwrap_or_else(|e| e.into_inner());
