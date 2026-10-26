@@ -1,19 +1,25 @@
 import { useTranslation } from "react-i18next";
-import { cancelGate, startDownload, useGate } from "../models";
+import { cancelGate, chooseStandard, hideGate, startDownload, useGate } from "../models";
 import Modal from "./Modal";
 
 import { fmtBytes } from "../format";
+import { errDetail, errKind, errText } from "../errors";
 
-/** The one dialog for downloading models: says what and how big, shows progress, can be cancelled at any moment. */
+/**
+ * The one dialog for downloading models: says what and how big, shows progress, can be cancelled at any moment.
+ * 下载中可以"后台下载"（和 Android 一样）：对话框收起，应用照常可用，侧栏显示进度；按 Esc 或点空白处也是转到后台，不是取消。
+ */
 export default function ModelGate() {
   const { t, i18n } = useTranslation();
   const g = useGate();
   const pct = g && g.total ? Math.min(100, Math.round((g.done / g.total) * 100)) : 0;
   return (
-    <Modal open={!!g} onClose={cancelGate} locked={g?.phase === "downloading"} title={g ? t(`models.ask.${g.id}`) : ""}
+    <Modal open={!!g && !g.hidden} onClose={g?.phase === "downloading" ? hideGate : cancelGate} title={g ? t(`models.ask.${g.id}`) : ""}
       footer={g && (
         <>
           <button className="btn" onClick={cancelGate}>{t("organize.cancel")}</button>
+          {g.phase === "downloading" && <button className="btn primary" autoFocus onClick={hideGate}>{t("models.background")}</button>}
+          {g.phase === "ask" && g.offerStandard && <button className="btn" onClick={chooseStandard}>{t("models.useStandard")}</button>}
           {g.phase === "ask" && <button className="btn primary" autoFocus onClick={startDownload}>{t("models.download", { size: fmtBytes(i18n.language, g.bytes) })}</button>}
           {g.phase === "error" && <button className="btn primary" onClick={startDownload}>{t("models.retry")}</button>}
         </>
@@ -30,7 +36,9 @@ export default function ModelGate() {
           <p className="mono ash">{fmtBytes(i18n.language, g.done)} / {fmtBytes(i18n.language, g.total)} · {pct}%</p>
         </div>
       )}
-      {g?.phase === "error" && <p className="ash">{t("models.error")} <span className="mono">{g.error}</span></p>}
+      {/* 按核心的错误前缀说清楚是空间、校验还是网络，不再一律"检查网络"；细节小字放在下面 */}
+      {g?.phase === "error" && <p>{errKind(g.error) === "other" ? t("models.error") : errText(t, i18n.language, g.error)}</p>}
+      {g?.phase === "error" && errDetail(g.error) && <p className="ash small"><span>{t("errors.detail")}</span><span className="mono">{errDetail(g.error)}</span></p>}
     </Modal>
   );
 }

@@ -6,6 +6,9 @@ mod clipgpu;
 mod hdrview;
 mod imageio_macos;
 mod mounts;
+mod power;
+mod proxy;
+mod samples;
 mod vision;
 #[cfg(test)]
 mod bench;
@@ -105,6 +108,7 @@ async fn probe_folder(app: AppHandle, dirs: Vec<String>, compute: Option<String>
 async fn scan_project(app: AppHandle, key: String, dirs: Vec<String>, compute: Option<String>, quality: Option<String>, learn: bool, quiet: bool, style: Option<String>, force: Option<bool>, eye_method: Option<String>, live: Option<fg_core::engine::LiveArgs>) -> Result<Vec<Photo>, String> {
     let e = engine(&app);
     let args = ScanArgs { key, dirs, compute, quality, learn, quiet, style, force: force.unwrap_or(false), eye_method, live };
+    let _awake = power::Awake::begin("FleetingGleam: analysing photos");
     blocking(move || e.scan_project(args)).await?
 }
 
@@ -465,6 +469,7 @@ fn style_set_default(app: AppHandle, id: String) -> Vec<prefs::StyleInfo> {
 #[tauri::command]
 async fn learn_from_folder(app: AppHandle, dir: String, style: Option<String>, compute: Option<String>, quality: Option<String>) -> Result<prefs::PrefsInfo, String> {
     let e = engine(&app);
+    let _awake = power::Awake::begin("FleetingGleam: learning from a folder");
     blocking(move || e.learn_from_folder(&dir, style.as_deref(), compute.as_deref(), quality.as_deref())).await?
 }
 
@@ -567,6 +572,7 @@ pub fn run() {
             fg_core::platform::set_vision(Box::new(vision::Factory { bin: vision_bin(&handle) }));
             fg_core::platform::set_gpu_clip(Box::new(clipgpu::Factory));
             fg_core::platform::set_local_trash(Box::new(mounts::DesktopTrash));
+            proxy::init(data_dir(&handle));
             let paths = engine::Paths { data: data_dir(&handle), thumbs: thumbs_dir(&handle), models: models_dir(&handle), downloads: downloaded_models_dir(&handle) };
             let version = handle.package_info().version.to_string();
             let e = Engine::new(paths, Box::new(WebviewEvents(handle.clone())), &version);
@@ -581,7 +587,7 @@ pub fn run() {
         .on_menu_event(|app, event| {
             let _ = app.emit("menu", event.id().0.clone());
         })
-        .invoke_handler(tauri::generate_handler![forget_folders, probe_folder, scan_project, scan_cancel, decide_photos, projects_load, projects_save, projects_quarantine, taste_export, taste_import, nas_list, nas_add, nas_remove, nas_connect, nas_disconnect, nas_ensure, nas_browse, nas_probe, nas_update, nas_set_enabled, nas_mirror_usage, nas_mirror_clear, backup_status, backup_save_target, backup_remove_target, backup_set_options, backup_now, backup_restore, backup_peek, set_rotation, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, export_cancel, trash_photos, reveal, preview_thumbs, photo_info, large_preview, motion_clip, hdrview::hdr_overlay_supported, hdrview::hdr_overlay_show, hdrview::hdr_overlay_move, hdrview::hdr_overlay_hide, hdrview::hdr_overlay_detail, hdrview::hdr_overlay_detail_hide, photo_detail, machine_info, search_status, search_index, search_photos, scene_text, packs_status, pack_size, pack_download, pack_cancel, pack_remove, diagnostics_export, diagnostics_dir])
+        .invoke_handler(tauri::generate_handler![forget_folders, probe_folder, scan_project, scan_cancel, decide_photos, projects_load, projects_save, projects_quarantine, taste_export, taste_import, nas_list, nas_add, nas_remove, nas_connect, nas_disconnect, nas_ensure, nas_browse, nas_probe, nas_update, nas_set_enabled, nas_mirror_usage, nas_mirror_clear, backup_status, backup_save_target, backup_remove_target, backup_set_options, backup_now, backup_restore, backup_peek, set_rotation, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, export_cancel, trash_photos, reveal, preview_thumbs, photo_info, large_preview, motion_clip, hdrview::hdr_overlay_supported, hdrview::hdr_overlay_show, hdrview::hdr_overlay_move, hdrview::hdr_overlay_hide, hdrview::hdr_overlay_detail, hdrview::hdr_overlay_detail_hide, photo_detail, machine_info, search_status, search_index, search_photos, scene_text, packs_status, pack_size, pack_download, pack_cancel, pack_remove, diagnostics_export, diagnostics_dir, proxy::proxy_info, proxy::proxy_set, samples::samples_folder])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

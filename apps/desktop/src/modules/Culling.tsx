@@ -15,7 +15,7 @@ import FilterPanel, { PersonItem } from "../components/FilterPanel";
 import SearchBox from "../components/SearchBox";
 import { usePrefsRevision } from "../styles";
 import { ensurePack, ensurePacks, refreshPacks, usePacks } from "../models";
-import { analysisPacks, currentTier, estimateSeconds, eyeMethodNow, getMachine, predictTier, resolveTier } from "../strategy";
+import { currentTier, estimateSeconds, eyeMethodNow, getMachine, predictTier, settleTier } from "../strategy";
 import { Hit, searchPhotos, setPendingSelect, takePendingSelect, useSearchIndex } from "../search";
 import PhotoVerdict from "../components/PhotoVerdict";
 import { FileSection } from "../components/FileFacts";
@@ -25,12 +25,13 @@ import Compare from "./Compare";
 import Ticker from "../components/Ticker";
 import Tile, { StageInfo } from "../components/Tile";
 import { DUR, EASE_OUT, SPRING } from "../motion";
-import { newProjectFromDialog, pickFolder } from "../projectActions";
+import { newProjectFromDialog, openSamples, pickFolder, takeAutoStart } from "../projectActions";
 import { Project, setActive, trashProject, updateProject, useProjects, useProjectsStatus } from "../projects";
 import { getSettings, ScanInfo, setScanInfo, useSettings, useCacheRev } from "../settings";
 import { Decision, Photo, Probe, ProbeFile, Reason, State, pct, thumbSrc } from "../types";
 import { NasProgress } from "../nas";
 import Organize from "./Organize";
+import { errDetail, errKind } from "../errors";
 import ReadyStage from "./ReadyStage";
 import ProjectSettings from "./ProjectSettings";
 import ProjectHome from "./ProjectHome";
@@ -62,10 +63,11 @@ const LAYOUTS: { id: ViewStyle; icon: ReactNode }[] = [
   { id: "compare", icon: <><rect x="1.5" y="2.5" width="5.5" height="11" rx="1.2" /><rect x="9" y="2.5" width="5.5" height="11" rx="1.2" /></> },
 ];
 
-export default function Culling({ active, inspectorHidden, onToggleInspector, onOpenStyles }: {
+export default function Culling({ active, inspectorHidden, onToggleInspector, onOpenStyles, onOpenSettings }: {
   active: boolean;
   inspectorHidden: boolean;
   onToggleInspector: () => void;
+  onOpenSettings: (section?: string) => void;
   /** Called when the user selects a photo, so the shell can slide the inspector open. */
   onOpenStyles: () => void;
 }) {
@@ -138,6 +140,11 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const [reloadKey, setReloadKey] = useState(0);
   const cacheRev = useCacheRev();
   const [nasOff, setNasOff] = useState("");
+  /**
+   * 项目所在的 NAS 现在连不上：照片照样从本机镜像打开（上次同步的那些），顶部说一声，NAS 上的整理操作置灰。
+   * `error` 是 nas_ensure 给的原因（约定的前缀），决定给"去设置"还是"重试"。
+   */
+  const [offline, setOffline] = useState<{ names: string; error: string | null } | null>(null);
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
   const [searchRev, setSearchRev] = useState(0);
   const [previews, setPreviews] = useState<Record<string, string>>({});
@@ -181,6 +188,8 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   /** 要分析这个项目，可另一个还在分析：问一句。 */
   const [conflict, setConflict] = useState<{ id: string; name: string } | null>(null);
   const pendingStart = useRef<(() => void) | null>(null);
+  /** 示例项目第一次到准备页：不用再点"开始分析"。 */
+  const autoStart = useRef(false);
   /** 分析中照片判出来时飘向页签的光点。 */
   const flights = useRef<FlightsHandle>(null);
   const flush = useCallback(() => {
@@ -276,7 +285,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     const left = enteredId.current;
     enteredId.current = project?.id ?? null;
     undoStack.current = []; // the marks that could be undone belonged to the project just left
-    setSelected(null); setMulti(NONE); anchor.current = null; setQuery(""); setZoomed(false); setError(null); setMode("all"); setSceneFilter(null); setPersonFilter(null); setSceneView(false); setCelebrate(false); setDirty(0); setNasProg(null);
+    setSelected(null); setMulti(NONE); anchor.current = null; setQuery(""); setZoomed(false); setError(null); setMode("all"); setSceneFilter(null); setPersonFilter(null); setSceneView(false); setCelebrate(false); setDirty(0); setNasProg(null); setOffline(null);
     setBgDone((d) => (d && project && d.id === project.id ? null : d));
     // 回到正在分析的那个项目（文件夹没变）：接上，照片墙和进度都还在，不重来
     if (project && run && run.id === project.id && run.folders.join("|") === project.folders.join("|")) {
@@ -294,18 +303,24 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     (async () => {
       try {
         // a project on a network share: connect the share first, and say so when it cannot be reached
-        const shares = await invoke<{ name: string; enabled: boolean; connected: boolean }[]>("nas_ensure", { dirs: project.folders }).catch(() => []);
+        const shares = await invoke<{ name: string; enabled: boolean; connected: boolean; error?: string | null }[]>("nas_ensure", { dirs: project.folders }).catch(() => []);
         if (tok !== token.current) return;
         const disabled = shares.filter((s) => !s.enabled);
         if (disabled.length > 0) { setPhotos([]); setFiles([]); setPhase("idle"); setNasOff(disabled.map((s) => s.name).join(", ")); setError("cull.nasDisabled"); return; }
+        // 连不上的 NAS 不再让整个项目打不开：核心跳过同步、用本机镜像，这里只记下来好在顶部说明
         const off = shares.filter((s) => !s.connected);
-        if (off.length > 0) { setPhotos([]); setFiles([]); setPhase("idle"); setNasOff(off.map((s) => s.name).join(", ")); setError("cull.nasOffline"); return; }
+        const offNames = off.map((s) => s.name).join(", ") || "NAS";
+        const offError = off.find((s) => s.error)?.error ?? null;
         const probe = await invoke<Probe>("probe_folder", { dirs: project.folders, compute: "auto", quality: currentTier() });
         if (tok !== token.current) return;
+        const isOffline = off.length > 0 || !!probe.offline;
         setFiles(probe.files); setBytes(probe.bytes); setUncached(probe.uncached);
+        // 镜像里还什么都没有（从没同步过）：那就真的打不开，照旧说连不上
+        if (probe.files.length === 0 && isOffline) { setPhotos([]); setPhase("idle"); setNasOff(offNames); setOffline({ names: offNames, error: offError }); setError("cull.nasOffline"); return; }
+        if (isOffline) setOffline({ names: offNames, error: offError });
         if (probe.files.length === 0) { setPhotos([]); setPhase("idle"); setError("cull.emptyFolder"); return; }
         if (project.count !== probe.files.length) updateProject(project.id, { count: probe.files.length });
-        if (probe.uncached > 0) setPhase("ready");
+        if (probe.uncached > 0) { autoStart.current = takeAutoStart(project.id); setPhase("ready"); }
         else await runScan(project, probe.files.length, true, tok);
       } catch (e) {
         if (tok === token.current) { setError(String(e)); setPhase("idle"); }
@@ -338,10 +353,13 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     const run = running.current;
     if (run && run.id !== project.id) { setConflict({ id: run.id, name: run.name }); return; }
     // The app picks the model (strategy.ts); what it needs, the eye model and people recognition included, is fetched under one question the first time.
-    const tier = await resolveTier();
-    if ((await ensurePacks(analysisPacks(tier))) === "cancelled") return;
+    if ((await settleTier()) === null) return;
     runScan(project, files.length, false, token.current);
   };
+  useEffect(() => {
+    if (phase === "ready" && autoStart.current) { autoStart.current = false; void startScan(); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
   /** 停下正在跑的那次分析（不管页面开着哪个项目）。 */
   const stopScan = () => { invoke("scan_cancel", { key: running.current?.id }).catch(() => { /* not in Tauri */ }); };
   /** 问过了：先停下另一个项目的分析（分析过的都在缓存里，回到它时接着来），再分析这个。 */
@@ -910,7 +928,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
                 sorts={[]} />
             )}
             {project && phase === "done" && <i className="tb-sep" aria-hidden />}
-            {project && phase === "done" && <Organize project={project} photos={photos} decisions={decisions} onChanged={() => setReloadKey((k) => k + 1)} />}
+            {project && phase === "done" && <Organize project={project} photos={photos} decisions={decisions} offline={!!offline} onChanged={() => setReloadKey((k) => k + 1)} />}
             {project && phase === "done" && <i className="tb-sep" aria-hidden />}
             {project && (
               <button className="btn icon plain" onClick={() => setSettingsOpen(true)} disabled={scanning} aria-label={t("pset.settings")} title={t("pset.settings")}>
@@ -964,7 +982,23 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
         {panelShown && <Resizer panel={filterW} edge="right" label={t("cull.filters")} />}
         <div className="scroll" ref={scrollRef}>
           {error && error !== "cull.nasOffline" && error !== "cull.nasDisabled" && <p className="error">{t(error, { defaultValue: error })}</p>}
-          {(error === "cull.nasOffline" || error === "cull.nasDisabled") && <p className="error">{t(error, { name: nasOff })} <button className="btn sm" onClick={() => setReloadKey((k) => k + 1)}>{t("cull.nasRetry")}</button></p>}
+          {error === "cull.nasDisabled" && <p className="error">{t(error, { name: nasOff })} <button className="btn sm" onClick={() => setReloadKey((k) => k + 1)}>{t("cull.nasRetry")}</button></p>}
+          {(error === "cull.nasOffline" || offline) && (() => {
+            // 密码不对 / 没权限 → 去设置；连不上（或说不清）→ 重试
+            const kind = errKind(offline?.error);
+            const toSettings = kind === "auth" || kind === "denied";
+            const lead = error === "cull.nasOffline" ? t("cull.nasOffline", { name: nasOff }) : t("cull.nasOfflineMirror", { name: offline!.names });
+            const why = kind === "auth" ? t("cull.nasWhyAuth") : kind === "denied" ? t("cull.nasWhyDenied") : kind === "net" ? t("cull.nasWhyNet") : "";
+            return (
+              <p className={error === "cull.nasOffline" ? "error" : "error nas-mirror"}>
+                {lead}{why && ` ${why}`}{" "}
+                {toSettings
+                  ? <button className="btn sm" onClick={() => onOpenSettings("sec-nas")}>{t("cull.nasToSettings")}</button>
+                  : <button className="btn sm" onClick={() => setReloadKey((k) => k + 1)}>{t("cull.nasRetry")}</button>}
+                {offline?.error && <span className="ash small mono nas-detail">{errDetail(offline.error)}</span>}
+              </p>
+            );
+          })()}
           {saveError && <p className="error">{t("cull.saveFailed", { error: saveError })}</p>}
           {loadError === "corrupt" && <p className="error">{t("cull.loadCorrupt")}</p>}
 
@@ -990,8 +1024,9 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
                   <motion.li key={i} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ ...SPRING.soft, delay: 0.3 + i * 0.07 }}>{s}</motion.li>
                 ))}
               </ol>
-              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ ...SPRING.soft, delay: 0.55 }}>
+              <motion.div className="empty-actions" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ ...SPRING.soft, delay: 0.55 }}>
                 <button className="btn primary" onClick={() => newProjectFromDialog()}>{t("cull.newProjectBtn")} <kbd>⌘O</kbd></button>
+                <button className="btn" onClick={() => openSamples(t("cull.sampleName"))}>{t("cull.trySamples")}</button>
               </motion.div>
             </div>
           )}

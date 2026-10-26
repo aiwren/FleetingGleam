@@ -74,4 +74,5 @@ export const pct = (v: number) => Math.round(v * 100);
 export const stars = (v: number) => Math.max(1, Math.min(5, Math.ceil(v * 5)));
 
 export type ProbeFile = { path: string; width: number; height: number; cached: boolean };
-export type Probe = { files: ProbeFile[]; bytes: number; uncached: number };
+/** `offline`：项目在 NAS 上、现在连不上，照片是上次同步到本机镜像的那些（核心跳过了同步，不报错）。 */
+export type Probe = { files: ProbeFile[]; bytes: number; uncached: number; offline?: boolean };

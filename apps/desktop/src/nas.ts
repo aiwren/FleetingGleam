@@ -2,7 +2,8 @@ import { useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 /** 应用自己连接的一台 NAS（见 src-tauri/src/nas.rs）：服务器 + 账号，没有密码（在钥匙串里）。`local` 是它在本机的镜像文件夹。 */
-export type Share = { id: string; name: string; host: string; user: string; enabled: boolean; local: string; connected: boolean };
+/** `error`：没连上时最后一次的原因，带约定的前缀（`auth:` 密码不对、`net:` 连不上、`denied:` 没权限），连上时为 null。 */
+export type Share = { id: string; name: string; host: string; user: string; enabled: boolean; local: string; connected: boolean; error?: string | null };
 /** NAS 上一个位置的内容：根是共享列表，往下只有子文件夹和照片。 */
 export type NasEntry = { name: string; dir: boolean; size: number };
 export type Listing = { path: string; local: string; entries: NasEntry[] };

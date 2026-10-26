@@ -1,4 +1,5 @@
 import ModelGate from "./components/ModelGate";
+import DownloadNav from "./components/DownloadNav";
 import FolderPicker from "./components/FolderPicker";
 import { ReactNode, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
@@ -37,6 +38,11 @@ export default function App() {
   // hide it while a photo is selected; that stays until they bring it back.
   const [inspectorHidden, setInspectorHidden] = useState(false);
   const toggleInspector = () => setInspectorHidden((v) => !v);
+  /** 打开设置并滚到某一节（例如 NAS 密码不对时直接到 NAS 那一节）。设置页一直挂着，切过去之后就能滚。 */
+  const openSettingsAt = (section?: string) => {
+    setModuleId("settings");
+    if (section) setTimeout(() => document.getElementById(section)?.scrollIntoView({ block: "start" }), 0);
+  };
   const newProject = async () => { if (await newProjectFromDialog()) setModuleId("culling"); };
 
   useEffect(() => {
@@ -105,6 +111,7 @@ export default function App() {
                 </li>
               ))}
             </ul>
+            <DownloadNav />
             <p className="privacy">{t("nav.privacy")}</p>
             <ul className="nav-bottom">
               <li>
@@ -117,7 +124,7 @@ export default function App() {
           </nav>
         </div>
         <main className="content">
-          <Culling active={moduleId === "culling"} inspectorHidden={inspectorHidden} onToggleInspector={toggleInspector} onOpenStyles={() => openStyles("culling")} />
+          <Culling active={moduleId === "culling"} inspectorHidden={inspectorHidden} onToggleInspector={toggleInspector} onOpenStyles={() => openStyles("culling")} onOpenSettings={openSettingsAt} />
           <Styles active={moduleId === "styles"} from={stylesFrom} onBack={() => setModuleId(stylesFrom)} />
           <Settings active={moduleId === "settings"} onOpenStyles={() => openStyles("settings")} />
           {current && !current.ready && (

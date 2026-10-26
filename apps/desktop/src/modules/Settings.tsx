@@ -1,8 +1,9 @@
 import { PrefsInfo, bumpPrefsRevision, learnFromFolder, refreshStyles } from "../styles";
 import LearnMeter from "../components/LearnMeter";
 import { fmtBytes } from "../format";
+import { errKind, errText } from "../errors";
 import { pickLocalFolder, baseName } from "../projectActions";
-import { ensurePack, ensurePacks, removePack, usePacks } from "../models";
+import { ensurePack, ensurePacks, removePack, showGate, useGate, usePacks } from "../models";
 import { adopt, release, tierPacks } from "../strategy";
 import RowMenu from "../components/RowMenu";
 import { ReactNode, useEffect, useRef, useState } from "react";
@@ -61,6 +62,8 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
   const [cleared, setCleared] = useState(false);
   const [prefs, setPrefs] = useState<PrefsInfo | null>(null);
   const [prefsReset, setPrefsReset] = useState(false);
+  /** 重置前先确认，写明会丢掉多少（和删除风格一样）。 */
+  const [resetAsk, setResetAsk] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const sections = [
     { id: "sec-general", label: t("settings.general") },
@@ -106,14 +109,47 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
   }, [active]);
 
   const bytes = (b: number) => fmtBytes(i18n.language, b);
+  // 网络代理：系统的（启动时读）和手填的（优先）；下载模型、云备份走它
+  type ProxyInfo = { system: string | null; manual: string | null; active: string | null };
+  const [proxy, setProxy] = useState<ProxyInfo | null>(null);
+  const [proxyOpen, setProxyOpen] = useState(false);
+  const [proxyText, setProxyText] = useState("");
+  const [proxyErr, setProxyErr] = useState<string | null>(null);
+  useEffect(() => {
+    if (active) invoke<ProxyInfo>("proxy_info").then((v) => setProxy(v && typeof v === "object" ? v : null)).catch(() => setProxy(null));
+  }, [active]);
+  const proxySave = async (manual: string | null) => {
+    setProxyErr(null);
+    try { setProxy(await invoke<ProxyInfo>("proxy_set", { manual })); setProxyOpen(false); }
+    catch (e) { const [code, scheme] = String(e).split(":"); setProxyErr(t(`settings.proxyBad.${code}`, { scheme, defaultValue: String(e) })); }
+  };
+  const proxyDesc = !proxy ? "" : proxy.manual ? t("settings.proxyManual", { url: proxy.manual }) : proxy.system ? t("settings.proxySystem", { url: proxy.system }) : t("settings.proxyDirect");
+  // NAS 副本：每台 NAS 的照片在本机镜像里占多少（不算在缩略图缓存里），可以按 NAS 清掉；分析结果保留
+  type MirrorUsage = { id: string; name: string; bytes: number };
+  const [mirrors, setMirrors] = useState<MirrorUsage[]>([]);
+  const [mirrorAsk, setMirrorAsk] = useState<MirrorUsage | null>(null);
+  const [mirrorMsg, setMirrorMsg] = useState<string | null>(null);
+  const refreshMirrors = () => invoke<MirrorUsage[]>("nas_mirror_usage").then((v) => setMirrors(Array.isArray(v) ? v : [])).catch(() => setMirrors([]));
+  useEffect(() => { if (active) { setMirrorMsg(null); void refreshMirrors(); } }, [active]);
+  const clearMirror = async (m: MirrorUsage) => {
+    setMirrorAsk(null);
+    try { const freed = await invoke<number>("nas_mirror_clear", { id: m.id }); setMirrorMsg(t("settings.mirrorCleared", { name: m.name, size: bytes(freed ?? 0) })); }
+    catch (e) { setMirrorMsg(errText(t, i18n.language, e)); }
+    void refreshMirrors();
+  };
   const clear = async () => {
     try { await invoke("clear_cache"); setCache(0); setCleared(true); bumpCacheRev(); } catch { /* ignore */ }
   };
   const resetPrefs = async () => {
+    setResetAsk(false);
     try { const v = await invoke<PrefsInfo>("prefs_reset"); setPrefs(v && typeof v === "object" ? v : null); setPrefsReset(true); bumpPrefsRevision(); } catch { /* ignore */ }
   };
 
   const packs = usePacks();
+  // 正在下的那个包（可能已转到后台）：它那一行显示百分比，点一下把下载对话框叫回来
+  const gate = useGate();
+  const downloading = gate?.phase === "downloading" ? (gate.ids ?? [gate.id]) : [];
+  const gatePct = gate?.total ? Math.min(100, Math.round((gate.done / gate.total) * 100)) : 0;
   // network shares the app connects to itself: added here, then a project is started straight from the share
   const shares = useShares();
   const [nasOpen, setNasOpen] = useState(false);
@@ -130,7 +166,7 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
     try {
       const list = await probeShare({ host: nasForm.host, user: nasForm.user, password: nasForm.password, id: nasEditing?.id });
       setNasShares(list);
-    } catch (e) { setNasErr(String(e)); }
+    } catch (e) { setNasErr(errText(t, i18n.language, e)); }
     setNasBusy(null);
   };
   const [nasBusy, setNasBusy] = useState<string | null>(null);
@@ -139,8 +175,13 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
   const [nasRemoving, setNasRemoving] = useState<Share | null>(null);
   const nasDo = async (sh: Share, f: () => Promise<void>) => {
     setNasBusy(sh.id); setNasMsg(null);
-    try { await f(); } catch (e) { setNasMsg({ id: sh.id, text: String(e) }); }
+    try { await f(); } catch (e) { setNasMsg({ id: sh.id, text: errText(t, i18n.language, e) }); }
     setNasBusy(null);
+  };
+  /** 没连上的那台为什么没连上：密码不对（去"编辑…"里改）、没权限、连不上；说不清就是"未连接"。 */
+  const nasWhy = (sh: Share) => {
+    const k = errKind(sh.error);
+    return k === "auth" ? t("settings.nasWhyAuth") : k === "denied" ? t("settings.nasWhyDenied") : k === "net" ? t("settings.nasWhyNet") : t("settings.nasOffline");
   };
   const nasSubmit = async () => {
     setNasBusy("new"); setNasErr(null);
@@ -148,7 +189,7 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
       if (nasEditing) await updateShare({ id: nasEditing.id, name: nasForm.name, host: nasForm.host, user: nasForm.user, password: nasForm.password, remember: nasForm.remember });
       else await addShare({ name: nasForm.name, host: nasForm.host, user: nasForm.user, password: nasForm.password, remember: nasForm.remember });
       setNasOpen(false); setNasForm(blankNas); setNasShares(null); setNasEditing(null);
-    } catch (e) { setNasErr(String(e)); }
+    } catch (e) { setNasErr(errText(t, i18n.language, e)); }
     setNasBusy(null);
   };
   // 备份：和"我的设置与喜好"同一份内容，自动存到用户自己的云存储；可以有多个目标（现在只有 Cloudflare R2 一种），各有名字；Secret 只进钥匙串
@@ -253,6 +294,18 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
     if (!ok) setRefFailed(true);
     else invoke<PrefsInfo>("prefs_info").then(setPrefs).catch(() => {});
   };
+  // 诊断信息：版本、系统、去掉密码与令牌的设置、最近的日志和崩溃记录，写成一个本地文本文件，发不发由用户自己决定
+  const [diagBusy, setDiagBusy] = useState(false);
+  const [diagMsg, setDiagMsg] = useState<{ text: string; path?: string } | null>(null);
+  const exportDiagnostics = async () => {
+    const stamp = new Date().toISOString().slice(0, 10);
+    const out = await save({ defaultPath: `fleetinggleam-diagnostics-${stamp}.txt`, filters: [{ name: "Text", extensions: ["txt"] }] });
+    if (!out) return;
+    setDiagBusy(true); setDiagMsg(null);
+    try { const path = await invoke<string>("diagnostics_export", { out }); setDiagMsg({ text: t("settings.diagDone", { path: path || out }), path: path || out }); }
+    catch (e) { setDiagMsg({ text: t("settings.diagFailed", { error: errText(t, i18n.language, e) }) }); }
+    setDiagBusy(false);
+  };
   const clipLabel = !info ? "—" : info.clip === null ? t("settings.off") : info.clip.startsWith("gpu") || info.clip.startsWith("coreml") ? t("settings.clipGpu") : t("settings.clipCpu");
   const learnStatus = !prefs || prefs.labels === 0 ? t("settings.learnNone") : t("settings.learnStatus", { n: prefs.labels, k: prefs.keeps });
 
@@ -270,6 +323,27 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
           <label><span>Access Key ID</span><input className="title-input wide" value={bkForm.access_key} spellCheck={false} onChange={(e) => setBkForm({ ...bkForm, access_key: e.target.value })} /></label>
           <label><span>Secret Access Key</span><input className="title-input wide" type="password" value={bkForm.secret} placeholder={bkEditing?.has_secret ? t("settings.backupSecretKept") : ""} onChange={(e) => setBkForm({ ...bkForm, secret: e.target.value })} /></label>
           {bkErr && <p className="error">{t("settings.backupFailed", { error: bkErr })}</p>}
+        </div>
+      </Modal>
+      <Modal open={resetAsk} onClose={() => setResetAsk(false)} title={t("settings.learnResetTitle")}
+        footer={(<><button className="btn" onClick={() => setResetAsk(false)}>{t("organize.cancel")}</button>
+          <button className="btn danger" autoFocus onClick={resetPrefs}>{t("settings.learnResetAction")}</button></>)}>
+        <p>{t("settings.learnResetBody", { labels: prefs?.labels ?? 0, refs: prefs?.refs ?? 0 })}</p>
+      </Modal>
+      <Modal open={!!mirrorAsk} onClose={() => setMirrorAsk(null)} title={t("settings.mirrorClearTitle", { name: mirrorAsk?.name ?? "" })}
+        footer={(<><button className="btn" onClick={() => setMirrorAsk(null)}>{t("organize.cancel")}</button>
+          <button className="btn primary" autoFocus onClick={() => mirrorAsk && clearMirror(mirrorAsk)}>{t("settings.mirrorClearAction", { size: bytes(mirrorAsk?.bytes ?? 0) })}</button></>)}>
+        <p>{t("settings.mirrorClearBody")}</p>
+      </Modal>
+      <Modal open={proxyOpen} onClose={() => setProxyOpen(false)} title={t("settings.proxy")}
+        footer={(<>{proxy?.manual && <button className="btn" onClick={() => proxySave(null)}>{t("settings.proxyUseSystem")}</button>}
+          <button className="btn" onClick={() => setProxyOpen(false)}>{t("settings.nasCancel")}</button>
+          <button className="btn primary" onClick={() => proxySave(proxyText.trim() || null)}>{t("settings.proxySave")}</button></>)}>
+        <div className="nas-form">
+          <p className="ash small">{t("settings.proxyHow")}</p>
+          <label><span>{t("settings.proxyField")}</span><input className="title-input wide" value={proxyText} placeholder={proxy?.system ?? t("settings.proxyHint")} spellCheck={false} autoFocus
+            onChange={(e) => { setProxyText(e.target.value); setProxyErr(null); }} onKeyDown={(e) => { if (e.key === "Enter") void proxySave(proxyText.trim() || null); }} /></label>
+          {proxyErr && <p className="error">{proxyErr}</p>}
         </div>
       </Modal>
       <Modal open={!!bkRemoving} onClose={() => setBkRemoving(null)} title={t("settings.backupRemoveTitle", { name: bkRemoving?.name ?? "" })}
@@ -396,7 +470,7 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
               </Row>
               {prefs && (prefs.labels > 0 || prefs.refs > 0) && (
                 <Row label={t("settings.learnReset")} desc={t("settings.learned", { count: prefs.labels + prefs.refs, n: prefs.labels + prefs.refs })}>
-                  <button className="btn" onClick={resetPrefs}>{prefsReset ? t("settings.learnResetDone") : t("settings.learnReset")}</button>
+                  <button className="btn" onClick={() => setResetAsk(true)}>{prefsReset ? t("settings.learnResetDone") : t("settings.learnReset")}</button>
                 </Row>
               )}
             </Group>
@@ -407,15 +481,31 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
               </div>
               {packs.map((p) => (
                 <Row key={p.id} label={t(`models.name.${p.id}`)} desc={`${p.bundled ? t("models.bundled") : p.installed ? t("models.have") : t("models.none")} · ${t(`models.desc.${p.id}`)}`}>
-                  {p.bundled ? null : p.installed
+                  {p.bundled ? null : downloading.includes(p.id)
+                    ? <button className="btn mono" onClick={showGate}>{gatePct}%</button>
+                    : p.installed
                     ? <button className="btn" onClick={async () => { await removePack(p.id); release(p.id); }}>{t("models.remove")}</button>
                     : <button className="btn" onClick={async () => { if ((await ensurePack(p.id)) !== "cancelled") adopt(p.id); }}>{t("models.get")}</button>}
                 </Row>
               ))}
+              {proxy && (
+                <Row label={t("settings.proxy")} desc={proxyDesc}>
+                  <button className="btn" onClick={() => { setProxyText(proxy.manual ?? ""); setProxyErr(null); setProxyOpen(true); }}>{t("settings.proxyEdit")}</button>
+                </Row>
+              )}
               <Row label={t("settings.cache")} desc={t("settings.cacheDesc")}>
                 <span className="mono ash cachesize">{cache === null ? "—" : bytes(cache)}</span>
                 <button className="btn" onClick={clear} disabled={!cache}>{cleared ? t("settings.cleared") : t("settings.clear")}</button>
               </Row>
+              {mirrors.length > 0 && (
+                <div className="srow-wrap"><div className="srow"><div className="stext"><b>{t("settings.mirror")}</b><p className="ash">{mirrorMsg ?? t("settings.mirrorDesc")}</p></div></div></div>
+              )}
+              {mirrors.map((m) => (
+                <Row key={m.id} label={m.name}>
+                  <span className="mono ash cachesize">{m.bytes ? bytes(m.bytes) : "—"}</span>
+                  <button className="btn" disabled={!m.bytes} onClick={() => setMirrorAsk(m)}>{t("settings.mirrorClear")}</button>
+                </Row>
+              ))}
               <Row label={t("settings.privacy")} desc={t("settings.privacyBody")} />
             </Group>
 
@@ -459,7 +549,7 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
                 <button className="btn" onClick={() => { setNasErr(null); setNasShares(null); setNasEditing(null); setNasForm(blankNas); setNasOpen(true); }}>{t("settings.nasAdd")}</button>
               </Row>
               {shares.map((sh) => (
-                <Row key={sh.id} label={sh.name} desc={`${sh.enabled && sh.connected ? "●" : "○"} ${!sh.enabled ? t("settings.nasDisabled") : sh.connected ? t("settings.nasConnected") : nasBusy === sh.id ? t("settings.nasConnecting") : t("settings.nasOffline")} · ${sh.host} · ${sh.user || t("settings.nasGuest")}${nasMsg?.id === sh.id ? ` · ${nasMsg.text}` : ""}`}>
+                <Row key={sh.id} label={sh.name} desc={`${sh.enabled && sh.connected ? "●" : "○"} ${!sh.enabled ? t("settings.nasDisabled") : sh.connected ? t("settings.nasConnected") : nasBusy === sh.id ? t("settings.nasConnecting") : nasWhy(sh)} · ${sh.host} · ${sh.user || t("settings.nasGuest")}${nasMsg?.id === sh.id ? ` · ${nasMsg.text}` : ""}`}>
                   <span className="sctl-pair">
                     <button className="switch" role="switch" aria-checked={sh.enabled} aria-label={t("settings.nasEnabled")} title={t("settings.nasEnabled")} disabled={nasBusy === sh.id} onClick={() => nasDo(sh, () => setShareEnabled(sh.id, !sh.enabled))} />
                     <RowMenu label={t("more.open")}>
@@ -499,6 +589,12 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
               })()}
               <Row label={t("settings.aboutVersion")}>
                 <span className="mono ash">{version ? `v${version} (${__BUILD__})` : ""}</span>
+              </Row>
+              <Row label={t("settings.diag")} desc={diagMsg?.text ?? t("settings.diagDesc")} info={<p className="ash">{t("settings.diagInfo")}</p>}>
+                <span className="sctl-pair">
+                  {diagMsg?.path && <button className="btn" onClick={() => invoke("reveal", { path: diagMsg.path }).catch(() => {})}>{t("organize.showInFinder")}</button>}
+                  <button className="btn" disabled={diagBusy} onClick={exportDiagnostics}>{diagBusy ? t("settings.diagBusy") : t("settings.diagBtn")}</button>
+                </span>
               </Row>
             </Group>
           </motion.div>

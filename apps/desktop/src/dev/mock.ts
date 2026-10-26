@@ -55,6 +55,8 @@ const FOLDERS: Record<string, { count: number; seedOffset: number }> = {
   "/mock/Porto": { count: 22, seedOffset: 5 },
   "/mock/Big": { count: 300, seedOffset: 2 }, // for performance checks; pre-analysed so it opens instantly
   "/mock/Huge": { count: 3000, seedOffset: 3 }, // 3000 photos: windowing and lazy-loading checks
+  "/mock/Samples": { count: 10, seedOffset: 7 }, // 起始屏的"试试示例照片"（samples_folder）
+  "/mock/nas/n1/photos/Lisbon": { count: 12, seedOffset: 1 }, // NAS「Home NAS」上的项目（本机镜像），离线时照样打开
 };
 type Src = { path: string; seed: number; shift: number; w: number; h: number };
 const SRC: Src[] = [];
@@ -66,7 +68,7 @@ for (const [dir, { count, seedOffset }] of Object.entries(FOLDERS)) {
   }
 }
 const inDirs = (dirs: string[]) => SRC.filter((s) => dirs.some((d) => s.path.startsWith(d + "/")));
-const cached = new Set<string>(SRC.filter((s) => s.path.startsWith("/mock/Big/") || s.path.startsWith("/mock/Huge/")).map((s) => s.path));
+const cached = new Set<string>(SRC.filter((s) => s.path.startsWith("/mock/Big/") || s.path.startsWith("/mock/Huge/") || s.path.startsWith("/mock/nas/")).map((s) => s.path));
 
 function makePhotos(list: Src[]): Photo[] {
   const rand = rng(7);
@@ -95,7 +97,9 @@ function makePhotos(list: Src[]): Photo[] {
 
 document.documentElement.dataset.mock = "1"; // the browser has no native vibrancy, so give the sidebar a base colour
 const w = window as unknown as Record<string, unknown>;
-const packState: Record<"standard" | "high" | "ultra" | "search" | "eyes" | "faces" | "scenetext", boolean> = { standard: true, high: false, ultra: false, search: false, eyes: false, faces: true, scenetext: true };
+// `?fresh`：一台刚装好的电脑，一个模型都没下（看第一次分析的询问框）
+const fresh = new URLSearchParams(location.search).has("fresh");
+const packState: Record<"standard" | "high" | "ultra" | "search" | "eyes" | "faces" | "scenetext", boolean> = { standard: !fresh, high: false, ultra: false, search: false, eyes: false, faces: !fresh, scenetext: !fresh };
 const emit = (event: string, payload: unknown) => (listeners.get(event) ?? []).forEach((h) => cbs.get(h)?.({ event, id: 0, payload }));
 // lets a test play the part of the native layer (e.g. `__mockEmit("hdr-view", {...})`)
 (window as unknown as { __mockEmit?: typeof emit }).__mockEmit = emit;
@@ -170,6 +174,9 @@ async function scan(dirs: string[], quiet: boolean, live?: { keep_ratio?: number
 }
 
 let dialogCalls = 0;
+let dlCancel = false;
+const mirrorBytes: Record<string, number> = {};
+let exportCancel = false;
 let labels = 0, keeps = 0;
 /** The same shape prefs.rs sends: counts, whether the taste is in use, and the marks on the way to its full say. */
 const prefsOf = (labels: number, keeps: number, refs = 0, refs_from = "") => {
@@ -218,14 +225,15 @@ w.__TAURI_INTERNALS__ = {
         const list = inDirs(args.dirs as string[]);
         await sleep(250);
         const files = list.map((s) => ({ path: s.path, width: s.w, height: s.h, cached: cached.has(s.path) }));
-        return { files, bytes: files.filter((f) => !f.cached).length * 9_000_000, uncached: files.filter((f) => !f.cached).length };
+        const offline = !!(window as unknown as { __mockNasDown?: string }).__mockNasDown && (args.dirs as string[]).some((d) => d.startsWith("/mock/nas/"));
+        return { files, bytes: files.filter((f) => !f.cached).length * 9_000_000, uncached: files.filter((f) => !f.cached).length, offline };
       }
       case "scan_project": return scan(args.dirs as string[], !!args.quiet, args.live as { keep_ratio?: number; overrides?: Record<string, string> } | null, !!args.force);
       case "scan_cancel": return null;
       case "projects_load": return localStorage.getItem("fg.projects");
       case "projects_save": localStorage.setItem("fg.projects", String(args.json)); return null;
       case "projects_quarantine": localStorage.removeItem("fg.projects"); return "fg.projects.corrupt";
-      case "nas_list": return [...mockShares];
+      case "nas_list": { const down = (window as unknown as { __mockNasDown?: string }).__mockNasDown; return mockShares.map((s) => ({ ...s, connected: s.connected && !down, error: down ?? null })); }
       case "nas_add": {
         await sleep(600);
         if (String(args.url).includes("bad")) throw "the server cannot be reached (65)";
@@ -237,7 +245,11 @@ w.__TAURI_INTERNALS__ = {
       case "nas_remove": { const i = mockShares.findIndex((s) => s.id === args.id); if (i >= 0) mockShares.splice(i, 1); return [...mockShares]; }
       case "nas_connect": { await sleep(500); const s = mockShares.find((x) => x.id === args.id); if (s) s.connected = true; return [...mockShares]; }
       case "nas_disconnect": { const s = mockShares.find((x) => x.id === args.id); if (s) s.connected = false; return [...mockShares]; }
-      case "nas_ensure": return [];
+      // `window.__mockNasDown = "auth:…"`（或 net: / denied:）：Home NAS 连不上，原因按约定的前缀给
+      case "nas_ensure": {
+        const down = (window as unknown as { __mockNasDown?: string }).__mockNasDown;
+        return mockShares.filter((s) => (args.dirs as string[]).some((d) => d.startsWith(s.local + "/"))).map((s) => ({ ...s, connected: s.connected && !down, error: down ?? null }));
+      }
       case "backup_status": return bkSync();
       case "backup_save_target": {
         await sleep(700);
@@ -252,6 +264,9 @@ w.__TAURI_INTERNALS__ = {
       case "backup_now": await sleep(900); mockBackup.targets.forEach((x) => { x.last_ok = Math.floor(Date.now() / 1000); x.last_error = null; }); return bkSync();
       case "backup_restore": await sleep(900); return [{ styles: 2, examples: 40, refs: 10, skipped: 0 }, { theme: "system" }];
       case "nas_probe": { await sleep(600); if (String(args.host).includes("bad")) throw "the server cannot be reached"; return ["photos", "backup", "media"]; }
+      // NAS 副本（第 31 条）：Home NAS 的镜像占 12.4 GB，清掉就是 0
+      case "nas_mirror_usage": return mockShares.map((s) => ({ id: s.id, name: s.name, bytes: mirrorBytes[s.id] ?? 12_400_000_000 }));
+      case "nas_mirror_clear": { const freed = mirrorBytes[String(args.id)] ?? 12_400_000_000; mirrorBytes[String(args.id)] = 0; await sleep(400); return freed; }
       case "nas_browse": {
         // 假的共享：根下两个年份文件夹，每个里面有几张照片
         await sleep(300);
@@ -295,12 +310,25 @@ w.__TAURI_INTERNALS__ = {
         return prefsInfo();
       }
       case "export_photos": {
+        // 每张 300 ms，可以中途停（export_cancel）；第 2 张"目标里已经有了"，第 4、6 张按约定的错误码失败
         const paths = args.paths as string[];
-        for (let i = 0; i < paths.length; i++) { emit("export-progress", { done: i + 1, total: paths.length }); await sleep(60); }
+        exportCancel = false;
+        let copied = 0, skipped = 0, cancelled = false;
+        const failed: { path: string; error: string }[] = [];
+        for (let i = 0; i < paths.length; i++) {
+          if (exportCancel) { cancelled = true; break; }
+          await sleep(300);
+          if (i === 1) skipped++;
+          else if (i === 3) failed.push({ path: paths[i], error: "space:9400000:1200000" });
+          else if (i === 5) failed.push({ path: paths[i], error: "denied:Operation not permitted (os error 1)" });
+          else copied++;
+          emit("export-progress", { done: i + 1, total: paths.length });
+        }
         // 落在 NAS 镜像里的：假装传到了 NAS 上
         const nas = String(args.dest).match(/\/nas\/[^/]+\/(.+)$/);
-        return nas ? { copied: paths.length, skipped: 0, dest: `smb://nas.local/${nas[1]}`, remote: true } : { copied: paths.length, skipped: 0, dest: args.dest };
+        return nas ? { copied, skipped, failed, cancelled, dest: `smb://nas.local/${nas[1]}`, remote: true } : { copied, skipped, failed, cancelled, dest: args.dest };
       }
+      case "export_cancel": exportCancel = true; return null;
       case "trash_photos": {
         const paths = args.paths as string[];
         for (const p of paths) { const i = SRC.findIndex((s) => s.path === p); if (i >= 0) SRC.splice(i, 1); cached.delete(p); }
@@ -316,11 +344,19 @@ w.__TAURI_INTERNALS__ = {
       case "packs_status": return (["standard", "high", "ultra", "search", "eyes", "faces", "scenetext"] as const).map((id) => ({ id, installed: packState[id], bytes: 0 }));
       case "pack_size": return { standard: 266_000_000, high: 609_000_000, ultra: 870_000_000, search: 139_000_000, eyes: 7_000_000, faces: 39_000_000, scenetext: 400_000_000 }[String(args.id) as "standard"];
       case "pack_download": {
-        for (let i = 1; i <= 10; i++) { await sleep(150); emit("model-progress", { pack: args.id, file: "x", done: i * 60_900_000, total: 609_000_000 }); }
+        // 约 8 秒下完，可以取消；`window.__mockDlErr = "space:300000000:120000000"`（或 verify: / net:）让它在半路按约定的错误码失败
+        dlCancel = false;
+        for (let i = 1; i <= 40; i++) {
+          await sleep(200);
+          if (dlCancel) throw "cancelled";
+          const err = (window as unknown as { __mockDlErr?: string }).__mockDlErr;
+          if (err && i === (err.startsWith("space:") ? 1 : 20)) throw err;
+          emit("model-progress", { pack: args.id, file: "x", done: i * 15_225_000, total: 609_000_000 });
+        }
         packState[String(args.id) as "standard"] = true;
         return null;
       }
-      case "pack_cancel": return null;
+      case "pack_cancel": dlCancel = true; return null;
       case "pack_remove": packState[String(args.id) as "standard"] = false; return null;
       // Real Tauri IPC always hands back a freshly JSON-deserialized array, so `useSyncExternalStore`'s
       // reference check sees a change on every call; mutating mockStyles in place and returning it directly
@@ -363,6 +399,23 @@ w.__TAURI_INTERNALS__ = {
         else { labels = 0; keeps = 0; }
         return prefsInfo();
       }
+      // 网络代理（proxy.rs）：系统的写死一个，手填的记在 localStorage；认不出来的照 proxy.rs 的错误码
+      case "proxy_info": return { system: "http://127.0.0.1:7890", manual: localStorage.getItem("fg.mock.proxy"), active: localStorage.getItem("fg.mock.proxy") ?? "http://127.0.0.1:7890" };
+      case "proxy_set": {
+        const raw = String(args.manual ?? "").trim();
+        if (!raw) localStorage.removeItem("fg.mock.proxy");
+        else {
+          const m = raw.match(/^(?:(\w+):\/\/)?([^/:\s]+):(\d+)\/?$/);
+          if (m?.[1] && !/^https?$/i.test(m[1])) throw `unsupported:${m[1]}`;
+          if (!m) throw raw.includes(":") ? "host" : "port";
+          localStorage.setItem("fg.mock.proxy", `http://${m[2]}:${m[3]}`);
+        }
+        return { system: "http://127.0.0.1:7890", manual: localStorage.getItem("fg.mock.proxy"), active: localStorage.getItem("fg.mock.proxy") ?? "http://127.0.0.1:7890" };
+      }
+      case "samples_folder": return "/mock/Samples";
+      case "plugin:dialog|save": return "/Users/me/Desktop/fleetinggleam-diagnostics.txt";
+      case "diagnostics_export": await sleep(500); return String(args.out);
+      case "diagnostics_dir": return "/Users/me/Library/Application Support/com.fleetinggleam.app/logs";
       case "set_locale": return null;
       case "cache_size": return 48_300_000;
       case "clear_cache": return null;

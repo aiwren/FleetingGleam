@@ -394,6 +394,16 @@ input[type=range]::-webkit-slider-thumb { appearance: none; width: 14px; height:
 .nav-bottom { list-style: none; padding: 0; margin: auto 0 0; }
 .nav-bottom + .privacy { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
 .sidebar li kbd { margin-left: auto; }
+/* NAS 连不上、从本机镜像打开时顶部那一句（Culling） */
+.nas-detail { margin-left: 8px; }
+/* 导出结果里没导出的那几张：文件名 · 原因 */
+.export-failed li { gap: 12px; }
+.export-failed li .ash { text-align: right; }
+/* 起始屏：新建项目 + 试试示例照片 */
+.empty-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+/* 转到后台的模型下载（DownloadNav） */
+.nav-dl { margin-top: 6px; }
+.nav-dl .nav-text { font-variant-numeric: tabular-nums; }
 
 /* ---------- settings page ---------- */
 .settings-layout { display: flex; justify-content: center; gap: 32px; width: 80%; min-width: 640px; max-width: 1400px; margin: 0 auto; }

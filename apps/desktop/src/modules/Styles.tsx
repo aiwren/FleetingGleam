@@ -77,6 +77,8 @@ export default function Styles({ active, from, onBack }: { active: boolean; from
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<Sort>("name");
   const [confirming, setConfirming] = useState<StyleInfo | null>(null);
+  /** 等着确认清空的风格（清空只丢学到的内容，风格和用它的项目都在）。 */
+  const [clearing, setClearing] = useState<StyleInfo | null>(null);
   const [creating, setCreating] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -179,7 +181,7 @@ export default function Styles({ active, from, onBack }: { active: boolean; from
                         {hasData && <span className={`ktag ${s.info.active ? "on" : ""}`}>{s.info.active ? t("styles.active") : t("styles.warming")}</span>}
                         <RowMenu label={t("styles.more", { name: displayName(s) })}>
                           {!s.is_default && <button role="menuitem" onClick={() => setDefaultStyle(s.id)}><i aria-hidden />{t("styles.makeDefault")}</button>}
-                          {hasData && <button role="menuitem" onClick={() => resetStyle(s.id)}><i aria-hidden />{t("styles.reset")}</button>}
+                          {hasData && <button role="menuitem" onClick={() => setClearing(s)}><i aria-hidden />{t("styles.reset")}</button>}
                           {!s.is_default && <button role="menuitem" className="danger" onClick={() => setConfirming(s)}><i aria-hidden />{t("styles.delete")}</button>}
                         </RowMenu>
                       </div>
@@ -206,6 +208,16 @@ export default function Styles({ active, from, onBack }: { active: boolean; from
       </section>
 
       <NewStyleDialog open={creating} onClose={() => setCreating(false)} onCreate={create} />
+
+      <Modal open={!!clearing} onClose={() => setClearing(null)} title={clearing ? t("styles.confirmResetTitle", { name: displayName(clearing) }) : ""}
+        footer={(
+          <>
+            <button className="btn" onClick={() => setClearing(null)}>{t("organize.cancel")}</button>
+            <button className="btn danger" autoFocus onClick={() => { if (clearing) void resetStyle(clearing.id); setClearing(null); }}>{t("styles.confirmResetAction")}</button>
+          </>
+        )}>
+        {clearing && <p>{t("styles.confirmResetBody", { labels: clearing.info.labels, refs: clearing.info.refs })}</p>}
+      </Modal>
 
       <Modal open={!!confirming} onClose={() => setConfirming(null)} title={confirming ? t("styles.confirmDeleteTitle", { name: confirming.name.trim() || t("styles.defaultName") }) : ""}
         footer={(

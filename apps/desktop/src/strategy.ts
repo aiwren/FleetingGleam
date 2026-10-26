@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { PackId, packInstalled, refreshPacks } from "./models";
+import { PackId, ensurePacks, packInstalled, refreshPacks } from "./models";
 import { EyeMethod, getSettings, Quality, setSettings } from "./settings";
 
 /**
@@ -35,9 +35,20 @@ export async function predictTier(): Promise<Quality> {
   return capableOfHigh(await getMachine()) ? "high" : "fast";
 }
 
-/** The analysis for this app, settled on (and remembered) the first time it is needed. */
-export async function resolveTier(): Promise<Quality> {
-  const tier = await predictTier();
+/**
+ * 第一次分析前把模型定下来：先问要不要下（大的那档可以"先用标准模型"），**下好了**才记住档位——
+ * 下载被取消时什么都不记，下次照样按这台电脑来挑（以前在下载前就写，取消一次就被锁死）。返回定下的档位，取消时 null。
+ */
+export async function settleTier(): Promise<Quality | null> {
+  const settled = getSettings().tier;
+  let tier = await predictTier();
+  // 还没定过、又是大模型：询问框里给"先用标准模型"
+  let answer = await ensurePacks(analysisPacks(tier), !settled && tier !== "fast");
+  if (answer === "standard") {
+    tier = "fast";
+    answer = await ensurePacks(analysisPacks(tier));
+  }
+  if (answer === "cancelled" || answer === "standard") return null;
   if (!getSettings().tier) setSettings({ tier });
   return tier;
 }
