@@ -37,7 +37,7 @@ fn yes() -> bool {
 }
 
 /// 设置页看到的一台 NAS。
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ShareStatus {
     pub id: String,
     pub name: String,
@@ -47,6 +47,9 @@ pub struct ShareStatus {
     /// 镜像文件夹：从这台 NAS 新建的项目，文件夹都在它下面。
     pub local: String,
     pub connected: bool,
+    /// 没连上时最后一次连接的错误（带 `errors` 约定的前缀：`auth:` 密码不对、`net:` 连不上、`denied:` 没权限）；连着时为 null。
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 /// 浏览共享时的一项：只有文件夹和照片，别的都不列。

@@ -99,7 +99,11 @@ pub struct Probe {
     pub files: Vec<ProbeFile>,
     pub bytes: u64,
     pub uncached: usize,
+    /// 项目在 NAS 上、这次连不上：没同步，照片是本机镜像里上次同步的那些（界面说"显示上次同步的照片"，NAS 上的整理操作置灰）。
+    #[serde(default)]
+    pub offline: bool,
 }
+
 
 /// 分析一个项目要的参数（和桌面端 `scan_project` 命令的参数一样）。
 #[derive(Deserialize, Clone, Default, Debug)]
@@ -373,6 +377,8 @@ pub struct Engine {
     scene_job: AtomicU64,
     /// NAS 共享的连接，住在自己的线程里（见 nas.rs）。
     nas: nas::Pool,
+    /// 每台 NAS 最后一次连接失败的原因（带前缀），连上就清掉；`ShareStatus.error` 给界面分开说"密码不对"和"连不上"。
+    nas_errors: Mutex<HashMap<String, String>>,
     downloads: Downloads,
     /// Writes of `projects.json` are serialised and go through a temporary file and a rename.
     projects_write: Mutex<()>,
@@ -427,6 +433,7 @@ impl Engine {
             scene_sentences: Mutex::new(None),
             scene_job: AtomicU64::new(0),
             nas: nas::Pool::start(),
+            nas_errors: Mutex::new(HashMap::new()),
             downloads: Downloads::default(),
             projects_write: Mutex::new(()),
             device: Mutex::new(String::new()),
@@ -521,7 +528,7 @@ impl Engine {
         let tag = scorer::analysis_tag(scorer::resolve(&self.paths.models, compute != Some("cpu"), Quality::parse(quality)));
         // 离开项目时页面会 `scan_cancel`，正在从 NAS 拉照片的探测也就跟着停
         let gen = self.cancel_gen.load(Ordering::Relaxed);
-        self.nas_sync_dirs(dirs, gen, None)?;
+        let offline = self.nas_sync_dirs(dirs, gen, None)?;
         // 先按扩展名和大小列出文件（不读文件）；缓存里认识的（没变过）尺寸直接查表，是否"已分析"按当前模型的 tag 看。
         // 其余的文件头只读一次：读不出来的（损坏、扩展名不对）剔除，读出来的尺寸直接用——以前筛一遍、取尺寸又读一遍，
         // 手机上几千张 HEIC 要等很久，界面上一直是"正在读取文件夹…"。边读边发 "probe-progress"。
@@ -559,7 +566,7 @@ impl Engine {
         // Size of what still needs analysing, which is what the confirmation screen talks about.
         let bytes = files.iter().zip(&out).filter(|(_, o)| !o.cached).filter_map(|(p, _)| std::fs::metadata(p).ok()).map(|m| m.len()).sum();
         let uncached = out.iter().filter(|f| !f.cached).count();
-        Ok(Probe { files: out, bytes, uncached })
+        Ok(Probe { files: out, bytes, uncached, offline })
     }
 
     /// Analyses whatever is new or changed, reuses the cache for the rest, then groups and scores every photo
@@ -586,7 +593,7 @@ impl Engine {
         let vision_cell: std::cell::OnceCell<Option<Box<dyn SystemVision>>> = std::cell::OnceCell::new();
 
         let cancelled = || !self.scan_live(gen, &a.key, job);
-        // 镜像里可能有探测之后才到 NAS 上的新照片；再对一次远端，没变化时只是几次目录列表
+        // 镜像里可能有探测之后才到 NAS 上的新照片；再对一次远端，没变化时只是几次目录列表。NAS 连不上就分析镜像里已有的
         self.nas_sync_dirs(&a.dirs, gen, Some((a.key.clone(), job)))?;
         let mut hits: Vec<Photo> = Vec::new();
         let mut jobs: Vec<(PathBuf, u64, i64)> = Vec::new();
@@ -1273,13 +1280,31 @@ impl Engine {
 
     pub fn nas_list(&self) -> Vec<nas::ShareStatus> {
         let dir = &self.paths.data;
+        let errors = self.nas_errors.lock().unwrap_or_else(|e| e.into_inner()).clone();
         nas::load(dir)
             .iter()
-            .map(|s| nas::ShareStatus { id: s.id.clone(), name: s.name.clone(), host: s.host.clone(), user: s.user.clone(), enabled: s.enabled, local: nas::local_dir(dir, &s.id).to_string_lossy().into_owned(), connected: self.nas.is_connected(&s.id) })
+            .map(|s| {
+                let connected = self.nas.is_connected(&s.id);
+                let error = if connected { None } else { errors.get(&s.id).cloned() };
+                nas::ShareStatus { id: s.id.clone(), name: s.name.clone(), host: s.host.clone(), user: s.user.clone(), enabled: s.enabled, local: nas::local_dir(dir, &s.id).to_string_lossy().into_owned(), connected, error }
+            })
             .collect()
     }
 
-    /// 没连着就用记住的密码连上；没有记住的密码就说明缺什么。停用的不连。
+    /// 记下一次连接的结果：失败记原因（带前缀），成功清掉。
+    fn note_nas<T>(&self, id: &str, r: &Result<T, String>) {
+        let mut errors = self.nas_errors.lock().unwrap_or_else(|e| e.into_inner());
+        match r {
+            Ok(_) => {
+                errors.remove(id);
+            }
+            Err(e) => {
+                errors.insert(id.to_string(), e.clone());
+            }
+        }
+    }
+
+    /// 没连着就用记住的密码连上；没有记住的密码就说明缺什么。停用的不连。错误前面是 NAS 的名字，前缀（`auth:` 等）仍在最前。
     fn nas_connect_saved(&self, s: &nas::Share) -> Result<(), String> {
         if self.nas.is_connected(&s.id) {
             return Ok(());
@@ -1287,17 +1312,27 @@ impl Engine {
         if !s.enabled {
             return Err(format!("the NAS \"{}\" is turned off in Settings", s.name));
         }
-        let pw = nas::saved_password(&self.paths.data, s).ok_or_else(|| format!("the NAS \"{}\" needs its password: connect it in Settings", s.name))?;
-        self.nas.connect(s, &pw).map_err(|e| format!("{}: {e}", s.name))
+        let r = match nas::saved_password(&self.paths.data, s) {
+            Some(pw) => self.nas.connect(s, &pw).map_err(|e| crate::errors::context(&s.name, &e)),
+            None => Err(format!("auth:the NAS \"{}\" needs its password: connect it in Settings", s.name)),
+        };
+        self.note_nas(&s.id, &r);
+        r
     }
 
     /// 项目文件夹里落在共享镜像上的，先把远端同步进来（进度发 "nas-progress"）；`scan_cancel`（或分析时这个项目的任务被顶掉）就停。
-    fn nas_sync_dirs(self: &Arc<Self>, dirs: &[String], gen: u64, job: Option<(String, u64)>) -> Result<(), String> {
+    /// NAS 连不上（或同步中途断了）不算错：记一笔、跳过它，调用方用镜像里已有的照片，返回值为真（"离线"）。只有取消是错误。
+    fn nas_sync_dirs(self: &Arc<Self>, dirs: &[String], gen: u64, job: Option<(String, u64)>) -> Result<bool, String> {
         let data = &self.paths.data;
         let shares = nas::load(data);
+        let mut offline = false;
         for d in dirs {
             let Some((s, rel)) = nas::share_of_path(data, &shares, Path::new(d)) else { continue };
-            self.nas_connect_saved(s)?;
+            if let Err(e) = self.nas_connect_saved(s) {
+                crate::platform::log(&format!("NAS 连不上，用本机镜像里上次同步的照片：{e}"));
+                offline = true;
+                continue;
+            }
             let local = nas::local_dir(data, &s.id);
             // 进度与取消在 NAS 的线程上回调，所以各拿一份引擎的引用
             let (emit, watch) = (self.clone(), self.clone());
@@ -1305,9 +1340,20 @@ impl Engine {
             let r = self.nas.sync(&s.id, &rel, &local, move |p| emit.emit("nas-progress", &p), move || {
                 watch.cancel_gen.load(Ordering::Relaxed) != gen || job.as_ref().map_or(false, |(k, j)| !watch.scan_live(gen, k, *j))
             });
-            r.map_err(|e| if e.contains("ancelled") { "cancelled".to_string() } else { format!("{}: {e}", s.name) })?;
+            match r {
+                Ok(()) => {}
+                Err(e) if e.contains("ancelled") => return Err(crate::errors::CANCELLED.to_string()),
+                Err(e) => {
+                    let e = crate::errors::context(&s.name, &e);
+                    crate::platform::log(&format!("NAS 同步没完成，用本机镜像里已有的照片：{e}"));
+                    if !self.nas.is_connected(&s.id) {
+                        self.note_nas::<()>(&s.id, &Err(e));
+                    }
+                    offline = true;
+                }
+            }
         }
-        Ok(())
+        Ok(offline)
     }
 
     /// 添加或编辑 NAS 时的"测试连接"：连上这台服务器，返回它的共享名；什么都不记。编辑时密码留空就用记住的。
@@ -1336,7 +1382,9 @@ impl Engine {
         // 密码留空 = 用记住的（账号没变时）
         let same_account = next.host == old.host && next.user == old.user;
         let pw = if password.is_empty() { if same_account { nas::saved_password(dir, &old).unwrap_or_default() } else { String::new() } } else { password.to_string() };
-        self.nas.connect(&next, &pw)?;
+        let r = self.nas.connect(&next, &pw);
+        self.note_nas(id, &r);
+        r?;
         if !same_account {
             nas::forget_password(dir, &old);
         }
@@ -1377,6 +1425,7 @@ impl Engine {
         if let Some(s) = list.iter().find(|s| s.id == id).cloned() {
             self.nas.disconnect(&s.id);
             nas::forget_password(dir, &s);
+            self.nas_errors.lock().unwrap_or_else(|e| e.into_inner()).remove(&s.id);
             let _ = std::fs::remove_dir_all(nas::local_dir(dir, &s.id));
             list.retain(|x| x.id != id);
             nas::save(dir, &list)?;
@@ -1390,7 +1439,9 @@ impl Engine {
         let s = nas::load(dir).into_iter().find(|s| s.id == id).ok_or("unknown share")?;
         match password.filter(|p| !p.is_empty()) {
             Some(pw) => {
-                self.nas.connect(&s, pw)?;
+                let r = self.nas.connect(&s, pw);
+                self.note_nas(&s.id, &r);
+                r?;
                 nas::remember_password(dir, &s, pw)?;
             }
             None => self.nas_connect_saved(&s)?,
@@ -1477,7 +1528,7 @@ impl Engine {
 
     /// 上传到 NAS 上的文件夹（`共享/路径`）：连上（用记住的密码），逐张写过去，进度照样发 "export-progress"。
     fn export_to_nas(self: &Arc<Self>, s: &nas::Share, rel: &str, paths: &[String]) -> Result<ExportResult, String> {
-        self.nas_connect_saved(s).map_err(|e| format!("{}: {e}", s.name))?;
+        self.nas_connect_saved(s)?;
         let files: Vec<PathBuf> = paths.iter().map(PathBuf::from).filter(|p| analyze::is_image(p) && p.is_file()).collect();
         let not_photos = paths.len() - files.len();
         let total = paths.len();
@@ -1486,7 +1537,7 @@ impl Engine {
         let copied = results.iter().filter(|r| r.is_ok()).count();
         if copied == 0 {
             if let Some(Err(e)) = results.iter().find(|r| r.is_err()) {
-                return Err(format!("{}: {e}", s.name));
+                return Err(crate::errors::context(&s.name, e));
             }
         }
         Ok(ExportResult { copied, skipped: total - copied, dest: nas::share_url(s, rel), remote: true })
@@ -2383,6 +2434,35 @@ mod tests {
         let r = e.export_photos(&paths, &out.to_string_lossy()).unwrap();
         assert_eq!((r.copied, r.skipped, r.remote), (2, 0, false));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// NAS 连不上：探测与分析不报错，用镜像里上次同步的照片，探测说 offline；连接错误带前缀进 `ShareStatus.error`。
+    #[test]
+    fn a_project_on_an_unreachable_nas_opens_from_the_mirror() {
+        let (e, root, _) = engine("nas-offline");
+        let share = nas::Share { id: "n1".into(), name: "Home NAS".into(), host: "127.0.0.1".into(), user: "me".into(), enabled: true };
+        nas::save(&e.paths.data, std::slice::from_ref(&share)).unwrap();
+        let dir = nas::local_dir(&e.paths.data, "n1").join("photos").join("2026");
+        photos(&dir, 3);
+        let dirs = vec![dir.to_string_lossy().into_owned()];
+        let p = e.probe_folder(&dirs, Some("cpu"), Some("fast")).expect("no error while the NAS is away");
+        assert!(p.offline);
+        assert_eq!(p.files.len(), 3, "上次同步的照片");
+        let status = e.nas_ensure(&dirs);
+        assert_eq!(status.len(), 1);
+        assert!(!status[0].connected);
+        assert!(status[0].error.as_deref().map_or(false, |x| x.starts_with("auth:")), "{:?}", status[0].error);
+        let photos = e.scan_project(ScanArgs { key: "k".into(), dirs: dirs.clone(), compute: Some("cpu".into()), quiet: true, ..Default::default() }).expect("analyses the mirror");
+        assert_eq!(photos.len(), 3);
+        // 本机的文件夹不是离线
+        let local = root.join("local");
+        photos_in(&local);
+        assert!(!e.probe_folder(&[local.to_string_lossy().into_owned()], Some("cpu"), Some("fast")).unwrap().offline);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn photos_in(dir: &Path) {
+        photos(dir, 2);
     }
 
     /// 手机上的整条分析流水线（交叉编译成 arm64 测试程序推到手机上跑，调并行度用）：
