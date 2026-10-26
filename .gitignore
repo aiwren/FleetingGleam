@@ -13,6 +13,8 @@ target
 # models never go into the repo (see docs/MODELS.md); the few small converted files that ship with the app are in packages/core/model-data/
 apps/desktop/models/
 *.onnx
+# 随应用编进去的小模型（整包不到 10 MB，modelfiles.rs 用 include_bytes! 读）要进仓库，否则别处编不过
+!packages/core/model-data/*.onnx
 .env
 .env.*
 !.env.example
