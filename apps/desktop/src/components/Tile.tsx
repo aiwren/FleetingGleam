@@ -82,15 +82,16 @@ function Tile({ path, ratio, photo, stage, state, reveal, dim, box, manual, grou
 
   return (
     <motion.div
-      ref={ref} id={`t-${path}`} layout="position" role="button" tabIndex={interactive ? 0 : -1}
+      ref={ref} id={`t-${path}`} role="button" tabIndex={interactive ? 0 : -1}
       className={`tile ${photo ? state : "pending"} ${!photo && stage ? "busy" : ""} ${interactive ? "live" : ""} ${groupEnd ? "gend" : ""} ${showScore ? "showscore" : ""}`}
       style={{ position: "absolute", left: box.left, top: box.top, width: box.width, height: box.height, ["--r" as string]: ratio }}
       initial={firstTime ? { opacity: 0, scale: 0.94 } : false}
-      animate={{ opacity: dim ? 0.62 : 1, scale: 1 }}
+      // 位置由墙的绝对定位给出，不再开 layout 投影（每次渲染每个格子都要量一遍）：只在格子换了位置时让 left / top 滑过去
+      animate={{ opacity: dim ? 0.62 : 1, scale: 1, left: box.left, top: box.top }}
       exit={{ opacity: 0, scale: 0.94 }}
       whileHover={interactive ? { opacity: 1 } : undefined}
       whileTap={interactive ? { scale: 0.985, transition: SPRING.tap } : undefined}
-      transition={{ layout: SPRING.glide, opacity: { duration: DUR.slow, delay: stagger }, scale: { ...SPRING.soft, delay: stagger } }}
+      transition={{ left: SPRING.glide, top: SPRING.glide, opacity: { duration: DUR.slow, delay: stagger }, scale: { ...SPRING.soft, delay: stagger } }}
       onKeyDown={onKey}
       onClick={() => interactive && onSelect(path)}
       onDoubleClick={() => { if (interactive) { onSelect(path); onOpen(path); } }}
