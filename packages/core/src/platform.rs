@@ -35,8 +35,15 @@ pub trait SystemImages: Send + Sync {
     fn prefers_native(&self) -> bool {
         false
     }
+    /// 大图预览（查看器、单张、对比用的那张）里，非原生格式（HEIC / AVIF / RAW…）的长边上限。默认 30000，也就是不缩：
+    /// Mac 上 RAW 的大图要全像素（放大看细节），ImageIO 渲染也不怕大；手机上一张 48 MP 的 HEIC 整张解出来是 190 MB 的位图，
+    /// 还会预取好几张，Android 给 2560，和原生格式一样。
+    fn preview_max(&self) -> u32 {
+        30000
+    }
     /// 直接解到内存：照片摆正、缩到长边不超过 `max`、SDR 的像素，连同原图的显示尺寸（宽、高）。有这条路的实现（macOS 常驻的
-    /// ImageIO 边车：JPEG 在 DCT 域缩放，比整张解出来再缩快好几倍）分析优先走它；默认没有（None），调用方按老路子解。
+    /// ImageIO 边车：JPEG 在 DCT 域缩放，比整张解出来再缩快好几倍；Android 的 BitmapFactory：按 2 的幂跳着解，像素经 UniFFI 回来，
+    /// 不再压一张 JPEG 写盘再解回来）分析优先走它；默认没有（None），调用方按老路子解。
     /// 解不了这张（格式不认、文件坏了）也是 None，调用方会再试别的路。
     fn decode(&self, _src: &Path, _max: u32) -> Option<(DynamicImage, u32, u32)> {
         None
@@ -74,6 +81,11 @@ pub trait SystemVision: Send + Sync {
     /// 直接看内存里的像素（摆正、长边 1024 的分析副本）。只有 `takes_pixels` 为真才会被调用；默认没有这条路。
     fn analyze_pixels(&self, _img: &DynamicImage) -> Option<VisionOut> {
         None
+    }
+    /// 这套信号自己按 MediaPipe 量表量眼睛（`VisionOut::eyes_mediapipe` 总为真，Android 的人脸流水线）：分析时不用再加载引擎的
+    /// MediaPipe 眼睛模型。默认不（Mac 的 Vision 只给眼睛框，睁眼值由引擎的模型量）。
+    fn measures_eyes(&self) -> bool {
+        false
     }
 }
 
@@ -148,7 +160,7 @@ pub fn http_agent(connect: std::time::Duration, read: std::time::Duration) -> ur
     if let Some(p) = proxy() {
         match ureq::Proxy::new(&p) {
             Ok(px) => b = b.proxy(px),
-            Err(e) => eprintln!("proxy {p} ignored: {e}"),
+            Err(e) => log(&format!("proxy {p} ignored: {e}")),
         }
     }
     b.build()

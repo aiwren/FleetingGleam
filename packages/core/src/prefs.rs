@@ -87,7 +87,7 @@ fn read_or_quarantine<T: serde::de::DeserializeOwned + Default>(path: &std::path
         Ok(v) => v,
         Err(e) => {
             let aside = crate::quarantine_name(path);
-            eprintln!("{}: {e}; set aside as {}", path.display(), aside.display());
+            crate::platform::log(&format!("{}: {e}; set aside as {}", path.display(), aside.display()));
             let _ = std::fs::rename(path, &aside);
             T::default()
         }

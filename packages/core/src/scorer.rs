@@ -214,7 +214,7 @@ impl CpuSpec {
             return None;
         }
         // 标记文件早就说过"可以"时，上面的闭包没跑，池还要建
-        pool.or_else(|| self.build_with(1, true).map_err(|e| eprintln!("{}: {e}", crate::onnx::accelerator())).ok())
+        pool.or_else(|| self.build_with(1, true).map_err(|e| crate::platform::log(&format!("{}: {e}", crate::onnx::accelerator()))).ok())
     }
 }
 
@@ -288,7 +288,7 @@ fn gpu_encoder(model_dir: &Path, file: &str, spec: &CpuSpec) -> Option<Box<dyn G
     let gpu = match factory.from_onnx(&bytes) {
         Ok(g) => g,
         Err(e) => {
-            eprintln!("GPU encoder not used: {e}");
+            crate::platform::log(&format!("GPU encoder not used: {e}"));
             return None;
         }
     };
@@ -308,12 +308,12 @@ fn gpu_encoder(model_dir: &Path, file: &str, spec: &CpuSpec) -> Option<Box<dyn G
             Some(gpu)
         }
         Ok(false) => {
-            eprintln!("GPU encoder disagrees with ONNX Runtime: not used");
+            crate::platform::log(&format!("GPU encoder disagrees with ONNX Runtime: not used"));
             let _ = std::fs::write(&bad_marker, b"bad");
             None
         }
         Err(e) => {
-            eprintln!("GPU encoder not used: {e}");
+            crate::platform::log(&format!("GPU encoder not used: {e}"));
             None
         }
     }
@@ -460,7 +460,7 @@ impl ClipScorer {
                         Ok(v) => break 'run v,
                         Err(e) => {
                             // from now on the CPU does it
-                            eprintln!("GPU encoder: {e}; using the CPU");
+                            crate::platform::log(&format!("GPU encoder: {e}; using the CPU"));
                             self.gpu_ok.store(false, Ordering::Relaxed);
                         }
                     }

@@ -6,6 +6,8 @@
 //! UltraFace 是现成的 ONNX（MIT），先用它，以后换检测器只动这个文件和清单。
 
 use std::path::Path;
+use std::sync::Arc;
+
 use crate::onnx::Pool;
 
 use image::imageops::FilterType;
@@ -125,16 +127,43 @@ impl FacePipeline {
     }
 }
 
-/// 注册给 `platform::set_vision` 的工厂：模型齐了（`detect` + `eyes` 包）就起一条流水线，否则没有视觉信号。
-/// 流水线本身线程安全（会话各自加锁），`workers` 用不上。
+/// 注册给 `platform::set_vision` 的工厂：模型齐了（`detect` + `eyes` 包）就给一条流水线，否则没有视觉信号。
+/// 流水线本身线程安全（会话各自加锁），`workers` 用不上。加载一次（几个 ONNX 会话）就留着，以后每次分析共用同一条，
+/// 不再每次 `scan_project` 重新建会话；换了模型文件夹才重新加载。
 pub struct Factory;
+
+static LOADED: std::sync::Mutex<Option<(std::path::PathBuf, Arc<FacePipeline>)>> = std::sync::Mutex::new(None);
 
 impl crate::platform::VisionFactory for Factory {
     fn start(&self, model_dir: &Path, _workers: usize, _cpu_only: bool) -> Option<Box<dyn SystemVision>> {
         if !available(model_dir) {
             return None;
         }
-        FacePipeline::load(model_dir).map_err(|e| eprintln!("faces disabled: {e}")).ok().map(|p| Box::new(p) as Box<dyn SystemVision>)
+        let mut loaded = LOADED.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((_, p)) = loaded.as_ref().filter(|(dir, _)| dir == model_dir) {
+            return Some(Box::new(Shared(p.clone())));
+        }
+        let p = Arc::new(FacePipeline::load(model_dir).map_err(|e| crate::platform::log(&format!("人脸流水线没加载：{e}"))).ok()?);
+        *loaded = Some((model_dir.to_path_buf(), p.clone()));
+        Some(Box::new(Shared(p)))
+    }
+}
+
+/// 工厂交出去的是共用的那条流水线。
+struct Shared(Arc<FacePipeline>);
+
+impl SystemVision for Shared {
+    fn analyze(&self, path: &Path) -> Option<VisionOut> {
+        self.0.analyze(path)
+    }
+    fn takes_pixels(&self) -> bool {
+        true
+    }
+    fn analyze_pixels(&self, img: &DynamicImage) -> Option<VisionOut> {
+        self.0.analyze_pixels(img)
+    }
+    fn measures_eyes(&self) -> bool {
+        true
     }
 }
 
@@ -152,6 +181,11 @@ impl SystemVision for FacePipeline {
     fn analyze_pixels(&self, img: &DynamicImage) -> Option<VisionOut> {
         Some(self.analyze_image(img))
     }
+
+    /// 网格模型就在流水线里，眼睛已经按 MediaPipe 量表量好了。
+    fn measures_eyes(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]
@@ -163,6 +197,24 @@ mod tests {
         assert!((iou(&[0.0, 0.0, 1.0, 1.0], &[0.0, 0.0, 1.0, 1.0]) - 1.0).abs() < 1e-6);
         assert!((iou(&[0.0, 0.0, 1.0, 1.0], &[0.5, 0.0, 1.0, 1.0]) - 1.0 / 3.0).abs() < 1e-6);
         assert_eq!(iou(&[0.0, 0.0, 0.5, 0.5], &[0.5, 0.5, 0.5, 0.5]), 0.0);
+    }
+
+    /// 工厂只加载一次：同一个模型文件夹再要一条流水线，拿到的是同一条（随应用的检测器与网格模型不用文件夹也能加载）。
+    #[test]
+    fn the_factory_hands_out_one_pipeline() {
+        use crate::platform::VisionFactory;
+        let dir = std::env::temp_dir().join(format!("fg-facepipe-shared-{}", std::process::id()));
+        if !available(&dir) {
+            return;
+        }
+        let a = Factory.start(&dir, 1, true).expect("pipeline");
+        let held = || LOADED.lock().unwrap().as_ref().map(|(_, p)| Arc::strong_count(p)).unwrap_or(0);
+        let before = held();
+        let b = Factory.start(&dir, 1, true).expect("pipeline");
+        assert_eq!(held(), before + 1, "the second one shares the first");
+        assert!(a.measures_eyes() && b.measures_eyes());
+        drop((a, b));
+        assert_eq!(held(), before - 1, "only the factory keeps it");
     }
 
     /// 和 Apple Vision 的结果对一对：FG_CACHE=<analysis-cache.json>（Mac 端分析过的照片，缩略图在本机），抽 FG_N（默认 60）张，

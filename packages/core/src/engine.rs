@@ -57,6 +57,13 @@ pub struct Progress {
     pub total: usize,
 }
 
+/// 一张分析失败、被跳过的照片（"scan-skip"）。
+#[derive(Serialize)]
+struct Skip<'a> {
+    path: &'a str,
+    error: &'a str,
+}
+
 #[derive(Serialize, Clone)]
 struct Stage<'a> {
     path: &'a str,
@@ -455,7 +462,7 @@ impl Engine {
         if guard.is_none() && mediapipe::available(&self.paths.models) {
             match mediapipe::MediapipeEyes::load(&self.paths.models) {
                 Ok(m) => *guard = Some(Arc::new(m)),
-                Err(e) => eprintln!("MediaPipe eyes disabled: {e}"),
+                Err(e) => crate::platform::log(&format!("MediaPipe eyes disabled: {e}")),
             }
         }
         guard.clone()
@@ -467,7 +474,7 @@ impl Engine {
         if guard.is_none() && faces::available(&self.paths.models) {
             match faces::FaceEmbedder::load(&self.paths.models) {
                 Ok(m) => *guard = Some(Arc::new(m)),
-                Err(e) => eprintln!("face recognition disabled: {e}"),
+                Err(e) => crate::platform::log(&format!("face recognition disabled: {e}")),
             }
         }
         guard.clone()
@@ -478,13 +485,23 @@ impl Engine {
         crate::platform::vision()?.start(&self.paths.models, workers, cpu_only)
     }
 
+    /// 分析要不要引擎的 MediaPipe 眼睛模型：只在按 MediaPipe 量、而视觉信号自己不量的时候（Mac 的 Vision 只给框）。
+    /// Android 的人脸流水线自带一份同样的网格模型，再加载一份就是两份内存；没有视觉信号就没有脸，也用不上。
+    fn eyes_model_for(&self, method: EyeMethod, vision: Option<&dyn SystemVision>) -> Option<Arc<mediapipe::MediapipeEyes>> {
+        if method == EyeMethod::Mediapipe && vision.map_or(false, |v| !v.measures_eyes()) {
+            self.mediapipe_eyes()
+        } else {
+            None
+        }
+    }
+
     /// 启动后在后台做的事：把启用的 NAS 都连上，修剪缩略图旁边的草稿文件。
     pub fn start_background(self: &Arc<Self>) {
         let e = self.clone();
         std::thread::spawn(move || {
             for s in nas::load(&e.paths.data).into_iter().filter(|s| s.enabled) {
                 if let Err(err) = e.nas_connect_saved(&s) {
-                    eprintln!("NAS {}: {err}", s.name);
+                    crate::platform::log(&format!("NAS {}: {err}", s.name));
                 }
             }
             e.emit("nas-changed", &());
@@ -561,8 +578,9 @@ impl Engine {
         std::fs::create_dir_all(&cache_dir).map_err(|e| e.to_string())?;
         let model_dir = self.paths.models.clone();
         let tag = scorer::analysis_tag(scorer::resolve(&model_dir, !cpu_only, want));
-        let mp = if eye_method == EyeMethod::Mediapipe { self.mediapipe_eyes() } else { None };
         let fe = self.face_embedder();
+        // 一次分析只起一套系统视觉信号（Mac 是 Vision 边车，Android 是人脸流水线），分析、补量眼睛、补看人脸三段共用；用到才起
+        let vision_cell: std::cell::OnceCell<Option<Box<dyn SystemVision>>> = std::cell::OnceCell::new();
 
         let cancelled = || !self.scan_live(gen, &a.key, job);
         // 镜像里可能有探测之后才到 NAS 上的新照片；再对一次远端，没变化时只是几次目录列表
@@ -633,8 +651,8 @@ impl Engine {
                             c.put(sz, mt, &tag, p);
                         }
                     }
-                    c.save();
-                });
+                    c.save()
+                }).write();
             }
         }
 
@@ -658,8 +676,9 @@ impl Engine {
                 JudgeGuard(j, Some(h))
             });
             // Models are only loaded when there is real work: re-opening a cached project is instant.
-            let scorer = ClipScorer::load(&model_dir, !cpu_only, want).map_err(|e| eprintln!("AI disabled: {e}")).ok();
-            let vision = self.start_vision(vision_workers(), cpu_only);
+            let scorer = ClipScorer::load(&model_dir, !cpu_only, want).map_err(|e| crate::platform::log(&format!("AI disabled: {e}"))).ok();
+            let vision = vision_cell.get_or_init(|| self.start_vision(vision_workers(), cpu_only)).as_deref();
+            let mp = self.eyes_model_for(eye_method, vision);
             if !quiet {
                 self.emit(
                     "scan-info",
@@ -684,8 +703,8 @@ impl Engine {
                             c.put(sz, mt, &tag, p);
                         }
                     }
-                    c.save();
-                });
+                    c.save()
+                }).write();
             };
             // 自己的线程池（比核数多一半，见 `scan_threads`）；建不出来就用公共的
             let pool = rayon::ThreadPoolBuilder::new().num_threads(scan_threads()).build().ok();
@@ -716,7 +735,7 @@ impl Engine {
                         }
                         self.emit("scan-stage", &Stage { path: &key, stage, pct, thumb: thumb.map(|t| t.0), width: thumb.map(|t| t.1), height: thumb.map(|t| t.2) });
                     };
-                    let r = analyze::analyze(p, &cache_dir, scorer.as_ref().map(|s| s as &dyn AiScorer), vision.as_deref(), eye_method, mp.as_deref(), fe.as_deref(), &on_stage);
+                    let r = analyze::analyze(p, &cache_dir, scorer.as_ref().map(|s| s as &dyn AiScorer), vision, eye_method, mp.as_deref(), fe.as_deref(), &on_stage);
                     lap("start");
                     let d = done.fetch_add(1, Ordering::Relaxed) + 1;
                     if !quiet {
@@ -729,13 +748,13 @@ impl Engine {
                         self.emit("scan-progress", &Progress { done: d, total });
                     }
                     if let Ok(photo) = &r {
-                        // a batch is written once there are 100 and half a minute has passed (writing the file takes longer the bigger the
-                        // project), and in any case once a minute: a small project, or a slow format, must not lose everything on a quit
+                        // 攒够 25 张或过了 10 秒就落一批：落盘现在只是往日志末尾追加这几条（见 cache.rs），不再随项目变大而变慢，
+                        // 所以可以勤一点，中途退出丢得少
                         let batch = {
                             let mut g = pending.lock().unwrap_or_else(|e| e.into_inner());
                             g.0.push(photo.clone());
                             let age = g.1.elapsed();
-                            if (g.0.len() >= 100 && age >= std::time::Duration::from_secs(30)) || age >= std::time::Duration::from_secs(60) {
+                            if g.0.len() >= 25 || age >= std::time::Duration::from_secs(10) {
                                 g.1 = std::time::Instant::now();
                                 Some(std::mem::take(&mut g.0))
                             } else {
@@ -746,7 +765,13 @@ impl Engine {
                             save_batch(&batch);
                         }
                     }
-                    r.map_err(|e| eprintln!("skip: {e}")).ok()
+                    // 分析不了的照片（坏文件、这台机器解不了的格式）以前只在 stderr 留一行，界面上它就"消失"了：
+                    // 记进日志（Android 进 logcat），再告诉界面是哪张、为什么
+                    r.map_err(|error| {
+                        crate::platform::log(&format!("分析失败，跳过：{key}：{error}"));
+                        self.emit("scan-skip", &Skip { path: &key, error: &error });
+                    })
+                    .ok()
                 })
                 .collect::<Vec<Photo>>();
             fresh = match &pool {
@@ -779,12 +804,13 @@ impl Engine {
         // 没有（现在分析不再存副本）就从原图现解一张（见 `analyze::look_again`）。
         let mut hits = hits;
         if hits.iter().any(|p| p.face_count > 0 && !analyze::eyes_current(p.eye_method.as_deref(), eye_method)) {
-            if let Some(v) = self.start_vision(vision_workers(), cpu_only) {
+            if let Some(v) = vision_cell.get_or_init(|| self.start_vision(vision_workers(), cpu_only)).as_deref() {
+                let mp = self.eyes_model_for(eye_method, Some(v));
                 let measured: Vec<(usize, (f32, &'static str))> = hits
                     .par_iter()
                     .enumerate()
                     .filter(|(_, p)| p.face_count > 0 && !analyze::eyes_current(p.eye_method.as_deref(), eye_method) && !cancelled())
-                    .filter_map(|(i, p)| analyze::measure_eyes(Path::new(&p.path), &cache_dir, &*v, eye_method, mp.as_deref()).map(|e| (i, e)))
+                    .filter_map(|(i, p)| analyze::measure_eyes(Path::new(&p.path), &cache_dir, v, eye_method, mp.as_deref()).map(|e| (i, e)))
                     .collect();
                 if !measured.is_empty() {
                     for (i, (e, tag)) in &measured {
@@ -798,8 +824,8 @@ impl Engine {
                                 c.put(sz, mt, &tag, &hits[*i]);
                             }
                         }
-                        c.save();
-                    });
+                        c.save()
+                    }).write();
                 }
             }
         }
@@ -808,14 +834,14 @@ impl Engine {
         if let (Some(f), Ok(pool)) = (fe.as_deref(), rayon::ThreadPoolBuilder::new().num_threads(2).build()) {
             let total = hits.iter().filter(|p| !p.faces_done).count();
             if total > 0 {
-                if let Some(v) = self.start_vision(vision_workers(), cpu_only) {
+                if let Some(v) = vision_cell.get_or_init(|| self.start_vision(vision_workers(), cpu_only)).as_deref() {
                     let counter = AtomicUsize::new(0);
                     let found: Vec<(usize, Vec<[f32; 4]>, Vec<Vec<f32>>)> = pool.install(|| {
                         hits.par_iter()
                             .enumerate()
                             .filter(|(_, p)| !p.faces_done && !cancelled())
                             .filter_map(|(i, p)| {
-                                let r = analyze::measure_faces(Path::new(&p.path), &cache_dir, &*v, f).map(|(b, e)| (i, b, e));
+                                let r = analyze::measure_faces(Path::new(&p.path), &cache_dir, v, f).map(|(b, e)| (i, b, e));
                                 self.emit("people-progress", &Progress { done: counter.fetch_add(1, Ordering::Relaxed) + 1, total });
                                 r
                             })
@@ -834,12 +860,14 @@ impl Engine {
                                     c.put(sz, mt, &tag, &hits[*i]);
                                 }
                             }
-                            c.save();
-                        });
+                            c.save()
+                        }).write();
                     }
                 }
             }
         }
+        // 视觉信号到这里用完了（Mac 上是几个边车进程），不留到分组结束
+        drop(vision_cell);
         // Photos analysed before HDR and motion were looked at: their HDR thumbnail and motion clip are made now (the helper runs one
         // process per photo, so this gets a pool of its own, like the faces above).
         if let Ok(pool) = rayon::ThreadPoolBuilder::new().num_threads(4).build() {
@@ -869,8 +897,8 @@ impl Engine {
                             c.put(sz, mt, &tag, &hits[*i]);
                         }
                     }
-                    c.save();
-                });
+                    c.save()
+                }).write();
             }
         }
         if cancelled() {
@@ -974,9 +1002,11 @@ impl Engine {
                 analyze::apply_rotation(p, deg, &cache_dir)?;
                 p.clone()
             };
-            c.save();
-            Ok::<Photo, String>(out)
+            // 只追加这一条到日志，在锁外写
+            Ok::<(Photo, cache::Pending), String>((out, c.save()))
         })?;
+        let (p, pending) = p;
+        pending.write();
         let mut last = self.last_photos.lock().unwrap_or_else(|e| e.into_inner());
         for (_, list) in last.iter_mut() {
             if let Some(q) = list.iter_mut().find(|q| q.path == path) {
@@ -1482,7 +1512,7 @@ impl Engine {
                         }
                     }
                     Err(e) => {
-                        eprintln!("recycle on {}: {e}", s.name);
+                        crate::platform::log(&format!("recycle on {}: {e}", s.name));
                         r.failed.push(p);
                     }
                 }
@@ -1524,6 +1554,16 @@ impl Engine {
             return Ok(path.to_string());
         }
         let out = analyze::cache_name(src, ".l.jpg", &dir);
+        let turned = analyze::cache_name(src, &format!(".l.r{rot}.jpg"), &dir);
+        // 以前 Android 上 HEIC / AVIF 的大图按原尺寸渲染（几十 MB 一张）：比这个平台的上限大的作废重做，转过的那张也跟着重做
+        let oversized = || {
+            let limit = crate::platform::images().filter(|_| !imageio::is_native(src)).map_or(u32::MAX, |s| s.preview_max());
+            limit < u32::MAX && image::image_dimensions(&out).map_or(false, |(w, h)| w.max(h) > limit)
+        };
+        if out.exists() && oversized() {
+            let _ = std::fs::remove_file(&out);
+            let _ = std::fs::remove_file(&turned);
+        }
         if !out.exists() {
             let tmp = out.with_extension("tmp");
             analyze::large_preview(src, &tmp)?;
@@ -1532,7 +1572,6 @@ impl Engine {
         if rot == 0 {
             return Ok(out.to_string_lossy().into_owned());
         }
-        let turned = analyze::cache_name(src, &format!(".l.r{rot}.jpg"), &dir);
         if !turned.exists() {
             analyze::rotate_jpeg(&out, &turned, rot, 88)?;
         }
@@ -1697,7 +1736,7 @@ impl Engine {
             done += chunk.len();
             self.emit("search-index-progress", &Progress { done, total });
         }
-        self.with_cache(|c| c.save());
+        self.with_cache(|c| c.save()).write();
         Ok(total)
     }
 
@@ -1872,13 +1911,11 @@ impl Engine {
     /// 清晰块和实况片段。`keep` 是还在的项目（含回收站里的）的文件夹，那里面的照片不动。返回忘掉了几张。
     /// （作者 2026-10-23：删了项目、清空回收站，再用同一个相册建项目，结果还是直接出来——分析结果是按照片存的、不跟项目走。）
     pub fn forget_folders(&self, dirs: &[String], keep: &[String]) -> usize {
-        let gone = self.with_cache(|c| {
+        let (gone, pending) = self.with_cache(|c| {
             let g = c.forget_under(dirs, keep);
-            if !g.is_empty() {
-                c.save();
-            }
-            g
+            (g, c.save())
         });
+        pending.write();
         if gone.is_empty() {
             return 0;
         }
@@ -2173,6 +2210,32 @@ mod tests {
             let img = if i == n - 1 { image::imageops::blur(&img, 6.0) } else { img };
             img.save(dir.join(format!("p{i}.jpg"))).unwrap();
         }
+    }
+
+    /// 分析失败的照片不再悄悄消失：发 "scan-skip"，带路径和原因。
+    #[test]
+    fn a_photo_that_cannot_be_analysed_is_reported() {
+        let (e, root, events) = engine("skip");
+        let dir = root.join("photos");
+        photos(&dir, 2);
+        // 只有文件头、没有图像数据的 JPEG：读得出尺寸，解不出来。塞几段注释让它够大，不被当成小图标跳过
+        let bytes = std::fs::read(dir.join("p0.jpg")).unwrap();
+        let sos = bytes.windows(2).position(|w| w == [0xff, 0xda]).unwrap();
+        let mut broken = bytes[..2].to_vec();
+        for _ in 0..4 {
+            broken.extend_from_slice(&[0xff, 0xfe, 0xff, 0xff]);
+            broken.extend(std::iter::repeat(b'x').take(0xffff - 2));
+        }
+        broken.extend_from_slice(&bytes[2..sos]);
+        std::fs::write(dir.join("broken.jpg"), &broken).unwrap();
+        let out = e.scan_project(ScanArgs { key: "k".into(), dirs: vec![dir.to_string_lossy().into_owned()], ..Default::default() }).unwrap();
+        let broken = dir.join("broken.jpg").to_string_lossy().into_owned();
+        assert_eq!(out.len(), 2);
+        let skips: Vec<serde_json::Value> = events.0.lock().unwrap().iter().filter(|(n, _)| n == "scan-skip").map(|(_, v)| v.clone()).collect();
+        assert_eq!(skips.len(), 1, "{skips:?}");
+        assert_eq!(skips[0]["path"], broken.as_str());
+        assert!(!skips[0]["error"].as_str().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// 探测、分析（第二次走缓存）、取舍、项目文件：桌面端与 Android 走的就是这一条。

@@ -65,6 +65,39 @@ pub trait ImageHelper: Send + Sync {
     fn render(&self, path: String, out: String, max: u32) -> String;
     /// 一块区域（摆正后的比例坐标，左上为原点），宽至多 `out_w`，存成 JPEG。
     fn crop(&self, path: String, out: String, x: f64, y: f64, w: f64, h: f64, out_w: u32) -> String;
+    /// 直接解到内存：摆正、长边不超过 `max` 的像素，连同原图的显示尺寸。分析走这条路，不再先压一张 JPEG 写盘、再由核心库解回来。
+    /// 解不了给 null，核心库退回 `render`。
+    fn decode(&self, path: String, max: u32) -> Option<Pixels>;
+}
+
+/// `ImageHelper::decode` 的回答：一张解到内存的照片。
+#[derive(uniffi::Record)]
+pub struct Pixels {
+    /// 这张像素的宽高（摆正后，长边不超过请求的 `max`）。
+    pub width: u32,
+    pub height: u32,
+    /// 原图的显示尺寸（方向已套用）。
+    pub full_width: u32,
+    pub full_height: u32,
+    /// `width * height * 4` 字节 RGBA：Android 的 ARGB_8888 位图在内存里就是这个顺序，Kotlin 侧原样拷出来、不逐像素转换；
+    /// 透明度在这边丢掉（照片都不透明）。
+    pub rgba: Vec<u8>,
+}
+
+/// RGBA 原地收成 RGB（不另分配）：第 i 个像素从 4i 挪到 3i，3i 总不在还没读的 4i 之后。
+fn rgba_to_rgb(mut v: Vec<u8>, w: u32, h: u32) -> Option<image::RgbImage> {
+    let n = w as usize * h as usize;
+    if n == 0 || v.len() < n * 4 {
+        return None;
+    }
+    for i in 0..n {
+        let (s, d) = (i * 4, i * 3);
+        v[d] = v[s];
+        v[d + 1] = v[s + 1];
+        v[d + 2] = v[s + 2];
+    }
+    v.truncate(n * 3);
+    image::RgbImage::from_raw(w, h, v)
 }
 
 struct AndroidImages(Arc<dyn ImageHelper>);
@@ -88,6 +121,15 @@ impl fg_core::platform::SystemImages for AndroidImages {
     }
     fn prefers_native(&self) -> bool {
         true
+    }
+    /// 手机上 HEIC / AVIF 的大图也只要 2560：整张解出来几百 MB，查看器要原图时直接显示原文件（见 `large_preview` 的 `full`）。
+    fn preview_max(&self) -> u32 {
+        2560
+    }
+    fn decode(&self, src: &Path, max: u32) -> Option<(image::DynamicImage, u32, u32)> {
+        let p = self.0.decode(src.to_string_lossy().into_owned(), max)?;
+        let img = rgba_to_rgb(p.rgba, p.width, p.height)?;
+        Some((image::DynamicImage::ImageRgb8(img), p.full_width, p.full_height))
     }
 }
 
@@ -379,6 +421,45 @@ mod tests {
         assert!(e.call("nope".into(), "{}".into()).is_err());
         assert!(e.call("probe_folder".into(), "not json".into()).is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Kotlin 交过来的 RGBA 原地收成 RGB：每个像素的颜色不变，透明度丢掉；字节不够的不收。
+    #[test]
+    fn rgba_pixels_become_rgb() {
+        let (w, h) = (5u32, 3u32);
+        let rgba: Vec<u8> = (0..w * h).flat_map(|i| [i as u8, (i * 7) as u8, (i * 13) as u8, 200]).collect();
+        let rgb = rgba_to_rgb(rgba.clone(), w, h).unwrap();
+        for (i, p) in rgb.pixels().enumerate() {
+            assert_eq!(p.0, [rgba[i * 4], rgba[i * 4 + 1], rgba[i * 4 + 2]]);
+        }
+        assert!(rgba_to_rgb(rgba[..10].to_vec(), w, h).is_none());
+        assert!(rgba_to_rgb(Vec::new(), 0, 0).is_none());
+    }
+
+    /// 手机上量第 8 条的核心库这一半（Kotlin 那一半用 app_process 跑的小程序量）：老路每张要把 Kotlin 写的 1024px JPEG 解回来再删掉，
+    /// 新路只把交过来的 RGBA 收成 RGB。`FG_JPEGS=<一批 1024px 的 JPEG>`；文件先拷一份再量，原文件不动。
+    #[test]
+    #[ignore = "timing only, on a device: FG_JPEGS"]
+    fn decode_handoff_cost() {
+        let Ok(dir) = std::env::var("FG_JPEGS") else { return };
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().map_or(false, |e| e == "jpg")).collect();
+        files.sort();
+        let (mut old, mut new, mut n) = (0f64, 0f64, 0usize);
+        for f in &files {
+            let copy = f.with_extension("copy");
+            std::fs::copy(f, &copy).unwrap();
+            let t = std::time::Instant::now();
+            let img = image::open(&copy).unwrap();
+            let _ = std::fs::remove_file(&copy);
+            old += t.elapsed().as_secs_f64() * 1000.0;
+            let rgba = img.to_rgba8().into_raw();
+            let t = std::time::Instant::now();
+            let rgb = rgba_to_rgb(rgba, img.width(), img.height()).unwrap();
+            new += t.elapsed().as_secs_f64() * 1000.0;
+            assert_eq!(rgb.as_raw(), img.to_rgb8().as_raw());
+            n += 1;
+        }
+        println!("{n} photos: old (open the JPEG + delete) {:.1} ms/photo, new (RGBA to RGB) {:.1} ms/photo", old / n as f64, new / n as f64);
     }
 
     /// 两端一致性的固定用例（路线图阶段 B 第 6 步）：和核心库的同名测试比同一份基准。在 Mac 上 `cargo test -p fleetinggleam-android` 跑一次，
