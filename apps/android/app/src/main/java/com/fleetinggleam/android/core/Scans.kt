@@ -13,7 +13,8 @@ import com.fleetinggleam.android.service.AnalysisService
  * 分析在手机上要考虑的两件事（桌面端没有）：
  * - **前台服务**：分析可能要几分钟到几十分钟，用户切到别的应用时系统不能把它停掉，所以分析期间应用挂一个前台服务（通知栏里有进度和"停止"）。
  * - **发热与电量**：手机过热（THERMAL_STATUS_SEVERE 及以上）或没在充电且电量不到 15% 时先停下——已分析的照片都在缓存里，什么都不丢；
- *   降温到 LIGHT 以下、或接上电源 / 电量回到 20% 以上，就从停下的地方接着分析。
+ *   降温到 LIGHT 以下、或接上电源 / 电量回到 20% 以上，就从停下的地方接着分析。停下期间前台服务不撤（通知写"已暂停（n/N）"），
+ *   不然接着分析时应用在后台、系统不让再启前台服务，就续不上了。
  */
 object Scans {
     private lateinit var app: Context
@@ -63,9 +64,9 @@ object Scans {
         else -> Pause.None
     }
 
-    /** 一次有进度的分析开始了：挂上前台服务。 */
+    /** 一次有进度的分析开始了：挂上前台服务（暂停期间留着的那个就接着用，不从后台再启一次）。 */
     fun started(ctx: Context, projectName: String) {
-        if (running) return
+        if (running) { blocker().takeIf { it != Pause.None }?.let { Session.pauseFor(it) }; return }
         running = true
         val i = Intent(ctx, AnalysisService::class.java).putExtra(AnalysisService.EXTRA_NAME, projectName)
         runCatching { ContextCompat.startForegroundService(ctx, i) }

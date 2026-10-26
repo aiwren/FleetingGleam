@@ -116,7 +116,11 @@
   "scan": {
    "landing": "Photos land here as they are analysed",
    "timeoutTitle": "The analysis has stopped for now",
-   "timeoutBody": "{{done}} of {{total}} photos are analysed. Android lets a background analysis run for only 6 hours a day; open the app to carry on, nothing analysed so far is lost."
+   "timeoutBody": "{{done}} of {{total}} photos are analysed. Android lets a background analysis run for only 6 hours a day; open the app to carry on, nothing analysed so far is lost.",
+   "pausedHot": "The phone is too hot, paused ({{done}}/{{total}})",
+   "pausedBattery": "The battery is low, paused ({{done}}/{{total}})",
+   "pausedHotBody": "It carries on by itself once the phone cools down",
+   "pausedBatteryBody": "It carries on by itself once the phone is charging"
   },
   "cmp": {
    "keepNth": "Keep #{{n}}",

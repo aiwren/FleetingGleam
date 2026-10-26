@@ -116,7 +116,11 @@
   "scan": {
    "landing": "分析出结果的照片会陆续落到这里",
    "timeoutTitle": "分析先停在这里了",
-   "timeoutBody": "已分析 {{done}} 张（共 {{total}} 张）。系统一天只让后台分析跑 6 小时，打开应用就能接着分析，分析过的都还在。"
+   "timeoutBody": "已分析 {{done}} 张（共 {{total}} 张）。系统一天只让后台分析跑 6 小时，打开应用就能接着分析，分析过的都还在。",
+   "pausedHot": "手机太热，已暂停（{{done}}/{{total}}）",
+   "pausedBattery": "电量太低，已暂停（{{done}}/{{total}}）",
+   "pausedHotBody": "降温后自动接着分析",
+   "pausedBatteryBody": "充上电后自动接着分析"
   },
   "cmp": {
    "keepNth": "留第 {{n}} 张",

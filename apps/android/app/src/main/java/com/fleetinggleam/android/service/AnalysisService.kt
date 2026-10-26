@@ -14,10 +14,12 @@ import com.fleetinggleam.android.MainActivity
 import com.fleetinggleam.android.R
 import com.fleetinggleam.android.core.Core
 import com.fleetinggleam.android.core.Fg
+import com.fleetinggleam.android.core.Pause
 import com.fleetinggleam.android.core.Progress
 import com.fleetinggleam.android.core.Scans
 import com.fleetinggleam.android.core.Session
 import com.fleetinggleam.android.core.t
+import kotlinx.coroutines.launch
 
 /**
  * 分析期间的前台服务：让系统知道应用在干活，用户切走也不会被停掉；通知栏里显示进度（和应用里的横幅同一个数），带一个"停止分析"。
@@ -29,12 +31,16 @@ class AnalysisService : Service() {
     private var wake: android.os.PowerManager.WakeLock? = null
     private var name = ""
     private var lastShown = 0L
+    private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main)
+    private var pauseJob: kotlinx.coroutines.Job? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
             Session.stopScan()
+            // 暂停中点"停止"：不再等着接着分析，服务随之撤掉
+            Session.dropPause()
             return START_NOT_STICKY
         }
         name = intent?.getStringExtra(EXTRA_NAME) ?: name
@@ -54,18 +60,32 @@ class AnalysisService : Service() {
             val now = System.currentTimeMillis()
             if (now - lastShown < 400 && p.done < p.total) return@listen
             lastShown = now
-            nm.notify(ID, build(p))
+            if (Session.paused.value == Pause.None) nm.notify(ID, build(p))
         }
+        // 太热 / 电量低停下时服务留着：通知改成"已暂停（n/N）"，接着分析时换回进度
+        pauseJob?.cancel()
+        pauseJob = scope.launch { Session.paused.collect { nm.notify(ID, build(Session.progress.value)) } }
         return START_NOT_STICKY
     }
 
     private fun build(p: Progress): Notification {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_IMMUTABLE)
         val stop = PendingIntent.getService(this, 1, Intent(this, AnalysisService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE)
+        val pause = Session.paused.value
+        val title = when (pause) {
+            Pause.Hot -> t("android.scan.pausedHot", "done" to p.done, "total" to p.total)
+            Pause.Battery -> t("android.scan.pausedBattery", "done" to p.done, "total" to p.total)
+            Pause.None -> if (name.isNotEmpty()) "${t("cull.analyzing")} · $name" else t("cull.analyzing")
+        }
+        val text = when (pause) {
+            Pause.Hot -> t("android.scan.pausedHotBody")
+            Pause.Battery -> t("android.scan.pausedBatteryBody")
+            Pause.None -> if (p.total > 0) "${p.done} / ${p.total}" else t("cull.loadingModel")
+        }
         return NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_gleam)
-            .setContentTitle(if (name.isNotEmpty()) "${t("cull.analyzing")} · $name" else t("cull.analyzing"))
-            .setContentText(if (p.total > 0) "${p.done} / ${p.total}" else t("cull.loadingModel"))
+            .setContentTitle(title)
+            .setContentText(text)
             .setProgress(p.total.coerceAtLeast(0), p.done.coerceAtLeast(0), p.total == 0)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -100,6 +120,8 @@ class AnalysisService : Service() {
     }
 
     override fun onDestroy() {
+        pauseJob?.cancel()
+        pauseJob = null
         off?.invoke()
         off = null
         wake?.let { if (it.isHeld) it.release() }

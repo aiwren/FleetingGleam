@@ -305,10 +305,13 @@ object Session {
         }
     }
 
-    /** 这次分析结束了（完成、停下或出错）：不再算"正在分析"，前台服务撤掉。 */
+    /**
+     * 这次分析结束了（完成、停下或出错）：不再算"正在分析"，前台服务撤掉。因为太热 / 电量低停下的除外：前台服务留着、通知改成"已暂停"，
+     * 好转后接着分析时还用它——那时应用多半在后台，系统不让从后台再启前台服务（审查第 29 条）。
+     */
     private fun finishRunning() {
         running.value = null
-        Scans.stopped()
+        if (paused.value == Pause.None || pausedProject == null) Scans.stopped()
     }
 
     /** "开始分析"：应用定下模型；它要的（含眼睛与人物）第一次在一个问题里下载。另一个项目还在分析时先问一句。 */
@@ -321,7 +324,7 @@ object Session {
             val tier = Strategy.resolveTier()
             if (Models.ensurePacks(Strategy.analysisPacks(tier), optional = setOf(PackIds.DETECT, PackIds.EYES, PackIds.FACES)) == Answer.Cancelled) return@launch
             if (tok != token) return@launch
-            paused.value = Pause.None
+            paused.value = Pause.None; pausedProject = null
             runScan(project, files.value.size, quiet = false, tok = tok)
         }
     }
@@ -364,8 +367,11 @@ object Session {
     fun resumeAfterPause() {
         if (paused.value == Pause.None) return
         paused.value = Pause.None
-        val p = pausedProject ?: return
+        val p = pausedProject
         pausedProject = null
+        // 留着的前台服务：接着分析时还用它；没接上（项目没了、下载被取消、页面换了）就撤掉，别一直挂着"已暂停"
+        scope.launch { delay(30_000); if (running.value == null && paused.value == Pause.None) Scans.stopped() }
+        if (p == null) return
         val project = Projects.store.value.projects.firstOrNull { it.id == p.id && it.trashed == null } ?: return
         if (current()?.id == project.id) { if (phase.value == Phase.Ready) startScan(); return }
         // 那个项目已经不在眼前：在后台接着分析（先把文件列表拿回来，回到它时照片墙要用）
