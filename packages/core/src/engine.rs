@@ -1101,7 +1101,7 @@ impl Engine {
     pub fn taste_apply(&self, pack: taste::Pack) -> Result<(taste::Summary, serde_json::Value), String> {
         let (summary, touched) = {
             let mut styles = self.prefs.lock().unwrap_or_else(|e| e.into_inner());
-            taste::unpack(&mut styles, &pack)?
+            self.with_cache(|c| taste::unpack(&mut styles, &pack, |k| c.embedding(k)))?
         };
         for id in &touched {
             self.retrain_outside_lock(Some(id));
