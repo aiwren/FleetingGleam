@@ -222,7 +222,7 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, re
                 val p = shown[page]
                 val isOrigin = page == start
                 ZoomPage(
-                    p, active = page == pager.currentPage,
+                    p, active = page == pager.currentPage, resident = page == pager.currentPage || page == pager.settledPage,
                     clip = if (page == pager.currentPage) clip else null, clipRun = playing, quiet = quiet, onClipEnd = { clip = null },
                     onScale = { if (page == pager.currentPage) scale = it },
                     onTap = { chrome = !chrome },
@@ -320,17 +320,23 @@ private fun fitRect(ratio: Float, w: Float, h: Float): androidx.compose.ui.geome
  * 一页：照片按比例放在中间，可以缩放、平移。缩放画的是照片本身（不是放大一张位图），清晰的部分到了再叠上去。
  */
 @Composable
-private fun ZoomPage(p: Photo, active: Boolean, clip: String?, clipRun: Int, quiet: Boolean, onClipEnd: () -> Unit, onScale: (Float) -> Unit, onTap: () -> Unit, modifier: Modifier) {
+private fun ZoomPage(p: Photo, active: Boolean, resident: Boolean, clip: String?, clipRun: Int, quiet: Boolean, onClipEnd: () -> Unit, onScale: (Float) -> Unit, onTap: () -> Unit, modifier: Modifier) {
     val ctx = LocalContext.current
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     // 以缩略图的路径为键：照片转过之后缩略图换了文件，大图、清晰块和缩放都从头来
     val zoom = remember(p.thumb) { Animatable(1f) }
     val pan = remember(p.thumb) { Animatable(Offset.Zero, Offset.VectorConverter) }
-    var large by remember(p.thumb) { mutableStateOf(Large.ready(p.path, true)) }
+    // 大图解码的最长边：屏幕长边 × 2（再细由下面的清晰块接手），封顶 4096。一张 4096² 就是 64 MB，以前左右两页也各解一张
+    val decodeMax = remember { ctx.resources.displayMetrics.let { min(4096, max(it.widthPixels, it.heightPixels) * 2) } }
+    // 大图只给眼前这一页（翻页途中还看得到的上一页也留着）；左右预备的那两页先只放缩略图，翻到了再解
+    var large by remember(p.thumb) { mutableStateOf(if (active) Large.ready(p.path, true) else null) }
     var sharp by remember(p.thumb) { mutableStateOf(false) }
     var detail by remember(p.thumb) { mutableStateOf<Pair<String, androidx.compose.ui.geometry.Rect>?>(null) }
-    LaunchedEffect(p.thumb, active) { if (large == null && active) large = Large.get(p.path, full = true) ?: Large.get(p.path) }
+    LaunchedEffect(p.thumb, active, resident) {
+        if (!resident) { large = null; sharp = false; detail = null; return@LaunchedEffect }
+        if (large == null && active) large = Large.get(p.path, full = true) ?: Large.get(p.path)
+    }
     LaunchedEffect(zoom.value) { if (active) onScale(zoom.value) }
 
     BoxWithConstraints(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -351,11 +357,11 @@ private fun ZoomPage(p: Photo, active: Boolean, clip: String?, clipRun: Int, qui
                 else { zoom.snapTo(n); pan.snapTo(o) }
             }
         }
-        // 清晰的部分：放大到比已经解码的（最长边 4096）还细时，按屏幕上那一块从原图解出来
+        // 清晰的部分：放大到比已经解码的（最长边 decodeMax）还细时，按屏幕上那一块从原图解出来
         LaunchedEffect(zoom.value, pan.value, active) {
             if (!active) return@LaunchedEffect
             val long = max(p.width, p.height).toFloat()
-            val have = min(long, 4096f)
+            val have = min(long, decodeMax.toFloat())
             val s = zoom.value
             // 原图不比已解码的大，或者屏幕上画出来的还没超过已解码的像素：不用再取
             if (long <= have * 1.05f || max(fit.width, fit.height) * s <= have * 0.9f) {
@@ -417,7 +423,8 @@ private fun ZoomPage(p: Photo, active: Boolean, clip: String?, clipRun: Int, qui
         ) {
             AsyncImage(File(p.thumb), null, Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
             large?.let { src ->
-                val req = remember(src) { ImageRequest.Builder(ctx).data(File(src)).size(4096, 4096).build() }
+                // 不进 Coil 的内存缓存：几十 MB 一张，进去就把墙上那些 480 px 的缩略图挤出去，退回墙上又得重解
+                val req = remember(src) { ImageRequest.Builder(ctx).data(File(src)).size(decodeMax, decodeMax).memoryCachePolicy(coil3.request.CachePolicy.DISABLED).build() }
                 AsyncImage(req, p.name, Modifier.fillMaxSize().graphicsLayer { alpha = if (sharp) 1f else 0f }, contentScale = ContentScale.FillBounds, onSuccess = { sharp = true })
             }
             detail?.let { (src, g) ->
