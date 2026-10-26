@@ -1526,6 +1526,16 @@ impl Engine {
             return Ok(path.to_string());
         }
         let out = analyze::cache_name(src, ".l.jpg", &dir);
+        let turned = analyze::cache_name(src, &format!(".l.r{rot}.jpg"), &dir);
+        // 以前 Android 上 HEIC / AVIF 的大图按原尺寸渲染（几十 MB 一张）：比这个平台的上限大的作废重做，转过的那张也跟着重做
+        let oversized = || {
+            let limit = crate::platform::images().filter(|_| !imageio::is_native(src)).map_or(u32::MAX, |s| s.preview_max());
+            limit < u32::MAX && image::image_dimensions(&out).map_or(false, |(w, h)| w.max(h) > limit)
+        };
+        if out.exists() && oversized() {
+            let _ = std::fs::remove_file(&out);
+            let _ = std::fs::remove_file(&turned);
+        }
         if !out.exists() {
             let tmp = out.with_extension("tmp");
             analyze::large_preview(src, &tmp)?;
@@ -1534,7 +1544,6 @@ impl Engine {
         if rot == 0 {
             return Ok(out.to_string_lossy().into_owned());
         }
-        let turned = analyze::cache_name(src, &format!(".l.r{rot}.jpg"), &dir);
         if !turned.exists() {
             analyze::rotate_jpeg(&out, &turned, rot, 88)?;
         }

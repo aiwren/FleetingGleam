@@ -122,6 +122,10 @@ impl fg_core::platform::SystemImages for AndroidImages {
     fn prefers_native(&self) -> bool {
         true
     }
+    /// 手机上 HEIC / AVIF 的大图也只要 2560：整张解出来几百 MB，查看器要原图时直接显示原文件（见 `large_preview` 的 `full`）。
+    fn preview_max(&self) -> u32 {
+        2560
+    }
     fn decode(&self, src: &Path, max: u32) -> Option<(image::DynamicImage, u32, u32)> {
         let p = self.0.decode(src.to_string_lossy().into_owned(), max)?;
         let img = rgba_to_rgb(p.rgba, p.width, p.height)?;

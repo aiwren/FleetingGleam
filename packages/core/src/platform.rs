@@ -35,6 +35,12 @@ pub trait SystemImages: Send + Sync {
     fn prefers_native(&self) -> bool {
         false
     }
+    /// 大图预览（查看器、单张、对比用的那张）里，非原生格式（HEIC / AVIF / RAW…）的长边上限。默认 30000，也就是不缩：
+    /// Mac 上 RAW 的大图要全像素（放大看细节），ImageIO 渲染也不怕大；手机上一张 48 MP 的 HEIC 整张解出来是 190 MB 的位图，
+    /// 还会预取好几张，Android 给 2560，和原生格式一样。
+    fn preview_max(&self) -> u32 {
+        30000
+    }
     /// 直接解到内存：照片摆正、缩到长边不超过 `max`、SDR 的像素，连同原图的显示尺寸（宽、高）。有这条路的实现（macOS 常驻的
     /// ImageIO 边车：JPEG 在 DCT 域缩放，比整张解出来再缩快好几倍；Android 的 BitmapFactory：按 2 的幂跳着解，像素经 UniFFI 回来，
     /// 不再压一张 JPEG 写盘再解回来）分析优先走它；默认没有（None），调用方按老路子解。

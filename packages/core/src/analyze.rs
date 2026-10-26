@@ -312,8 +312,9 @@ pub fn load_for_embedding(src: &Path) -> Result<DynamicImage, String> {
 /// A large (long edge 2560) upright JPEG for the full-size viewer: far cheaper for the webview to decode than a 20 MP original.
 pub fn large_preview(src: &Path, out: &Path) -> Result<(), String> {
     // The system decoder first: it scales while decoding (several times faster than decoding in full) and keeps the photo's colour profile,
-    // so wide-gamut photos are not drained of colour. RAW and the like only go this way.
-    if crate::imageio::available() && crate::imageio::render(src, out, if crate::imageio::is_native(src) { 2560 } else { 30000 }, true).is_ok() {
+    // so wide-gamut photos are not drained of colour. RAW and the like only go this way, at the platform's own limit (see `preview_max`).
+    let max = |s: &dyn crate::platform::SystemImages| if crate::imageio::is_native(src) { 2560 } else { s.preview_max() };
+    if crate::platform::images().map_or(false, |s| s.render(src, out, max(s), true).is_ok()) {
         return Ok(());
     }
     if !crate::imageio::is_native(src) {
