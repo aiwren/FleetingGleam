@@ -189,7 +189,8 @@ object Session {
         }
         // 离开的那个项目：只停它自己的读取 / 分析。正在分析的那个转到后台接着跑（通知栏照常显示进度）
         attached = false
-        if (left != null && left != run?.id) runCatching { Core.callBlocking("scan_cancel", args("key" to left)) }
+        // 同样不在调用方的线程上等引擎（"重试"按钮、重新授权会从主线程进来）
+        if (left != null && left != run?.id) scope.launch { runCatching { Core.call("scan_cancel", args("key" to left)) } }
         undoStack.clear(); undoCount.value = 0
         error.value = null; celebrate.value = false; dirty.value = 0; nasProg.value = null; peopleProg.value = null; mediaProg.value = null
         if (run == null && pausedProject == null) paused.value = Pause.None
@@ -325,8 +326,14 @@ object Session {
         }
     }
 
-    /** 停下正在跑的那次分析（不管页面开着哪个项目：通知栏的"停止"也走这里）。 */
-    fun stopScan() { running.value?.let { r -> runCatching { Core.callBlocking("scan_cancel", args("key" to r.id)) } } }
+    /**
+     * 停下正在跑的那次分析（不管页面开着哪个项目：通知栏的"停止"也走这里）。调用方多在主线程（停止按钮、通知栏、温度回调），
+     * 而 scan_cancel 要等引擎的锁，所以放到 IO 上发出去，这里立刻返回；停下之后 `running` 会变回 null。
+     */
+    fun stopScan() {
+        val r = running.value ?: return
+        scope.launch { runCatching { Core.call("scan_cancel", args("key" to r.id)) } }
+    }
 
     /** 问过了：先停下另一个项目的分析（分析过的都在缓存里，回到它时接着来），再分析这个。 */
     fun stopOtherAndStart() {
