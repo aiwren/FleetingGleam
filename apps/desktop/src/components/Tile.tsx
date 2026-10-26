@@ -31,7 +31,8 @@ type Props = {
   /** 分析中：第一次判出来也播动效。 */
   stamp?: boolean;
   /** Stable functions that take the photo's path, so a tile only re-renders when something about *it* changed. */
-  onSelect: (path: string) => void;
+  /** `range` = Shift 点击（成段多选），`toggle` = ⌘ 点击（加进 / 拿出多选）。 */
+  onSelect: (path: string, how?: "range" | "toggle") => void;
   onOpen: (path: string) => void;
   onDecide: (path: string, s: State | null) => void;
 };
@@ -93,7 +94,7 @@ function Tile({ path, ratio, photo, stage, state, reveal, dim, box, manual, grou
       whileTap={interactive ? { scale: 0.985, transition: SPRING.tap } : undefined}
       transition={{ left: SPRING.glide, top: SPRING.glide, opacity: { duration: DUR.slow, delay: stagger }, scale: { ...SPRING.soft, delay: stagger } }}
       onKeyDown={onKey}
-      onClick={() => interactive && onSelect(path)}
+      onClick={(e) => interactive && onSelect(path, e.shiftKey ? "range" : e.metaKey || e.ctrlKey ? "toggle" : undefined)}
       onDoubleClick={() => { if (interactive) { onSelect(path); onOpen(path); } }}
       aria-label={photo?.name ?? path.split("/").pop()}>
       <span className="tile-in">

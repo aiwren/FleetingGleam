@@ -129,6 +129,7 @@ const en = {
     faceValue: "{{count}} · quality {{q}}", noFace: "None",
     clip: "Highlights / shadows clipped", size: "Size", mates: "Similar shots",
     hintMove: "Navigate", hintZoom: "Zoom", space: "Space",
+    multi: "{{count}} selected: P / R / X mark them all, ⌘Z undoes the batch",
     pref: "Personal taste",
     look: "Picture",
     sharpLevel: { good: "Sharp", ok: "Fair", soft: "Soft" },

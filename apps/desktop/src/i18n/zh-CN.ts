@@ -127,6 +127,7 @@ const zh = {
     faceValue: "{{count}} 张 · 质量 {{q}}", noFace: "无",
     clip: "过曝 / 欠曝", size: "尺寸", mates: "同组照片",
     hintMove: "切换", hintZoom: "放大", space: "空格",
+    multi: "已选 {{count}} 张：P / R / X 一起改，⌘Z 一次撤回",
     pref: "个人偏好",
     look: "画面",
     sharpLevel: { good: "清晰", ok: "一般", soft: "偏糊" },

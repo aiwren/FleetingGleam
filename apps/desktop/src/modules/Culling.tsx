@@ -40,6 +40,7 @@ type ViewMode = "all" | State;
 type Phase = "idle" | "probing" | "ready" | "scanning" | "loading" | "done";
 type SortBy = "group" | "order" | "time" | "score";
 type Item = { path: string; ratio: number };
+const NONE: ReadonlySet<string> = new Set();
 
 function EditableTitle({ value, tip, onCommit }: { value: string; tip: string; onCommit: (v: string) => void }) {
   const [editing, setEditing] = useState(false);
@@ -109,6 +110,12 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const [panelOpen, setPanelOpen] = useState(() => { try { return localStorage.getItem("fg.filterpanel") !== "0"; } catch { return true; } });
   const togglePanel = () => setPanelOpen((v) => { const n = !v; try { localStorage.setItem("fg.filterpanel", n ? "1" : "0"); } catch { /* storage unavailable */ } return n; });
   const [selected, setSelected] = useState<string | null>(null);
+  /** 多选（⌘ 点击追加、Shift 点击 / Shift+方向键成段）：空集合 = 只有 `selected` 那一张。非空时 `selected` 也在里面，是焦点。 */
+  const [multi, setMulti] = useState<ReadonlySet<string>>(NONE);
+  const multiRef = useRef(multi);
+  multiRef.current = multi;
+  /** 成段多选的起点：最近一次单独点选（或 ⌘ 点击）的那张。 */
+  const anchor = useRef<string | null>(null);
   const [zoomed, setZoomed] = useState(false);
   const [celebrate, setCelebrate] = useState(false);
   const [dirty, setDirty] = useState(0);
@@ -134,7 +141,8 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
   const [searchRev, setSearchRev] = useState(0);
   const [previews, setPreviews] = useState<Record<string, string>>({});
-  const undoStack = useRef<{ path: string; prev: State | undefined }[]>([]);
+  /** 每一步是一批（多选一起改判的那些），撤销一次撤回整批。 */
+  const undoStack = useRef<{ path: string; prev: State | undefined }[][]>([]);
   const [hintUses, setHintUses] = useState(() => { try { return Number(localStorage.getItem("fg.hint.dock") ?? 0); } catch { return 0; } });
   const bumpHint = (n: number) => { setHintUses((u) => { const v = Math.max(u, n === 99 ? 99 : u + 1); try { localStorage.setItem("fg.hint.dock", String(v)); } catch { /* ignore */ } return v; }); };
 
@@ -268,7 +276,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     const left = enteredId.current;
     enteredId.current = project?.id ?? null;
     undoStack.current = []; // the marks that could be undone belonged to the project just left
-    setSelected(null); setQuery(""); setZoomed(false); setError(null); setMode("all"); setSceneFilter(null); setPersonFilter(null); setSceneView(false); setCelebrate(false); setDirty(0); setNasProg(null);
+    setSelected(null); setMulti(NONE); anchor.current = null; setQuery(""); setZoomed(false); setError(null); setMode("all"); setSceneFilter(null); setPersonFilter(null); setSceneView(false); setCelebrate(false); setDirty(0); setNasProg(null);
     setBgDone((d) => (d && project && d.id === project.id ? null : d));
     // 回到正在分析的那个项目（文件夹没变）：接上，照片墙和进度都还在，不重来
     if (project && run && run.id === project.id && run.folders.join("|") === project.folders.join("|")) {
@@ -618,10 +626,41 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   // 分析中分组还没定，不列同组
   const groupMates = useMemo(() => (sel && phase === "done" ? photos.filter((p) => p.group === sel.group) : []), [sel, photos, phase]);
 
-  const select = useCallback((path: string) => setSelected(path), []);
+  const select = useCallback((path: string) => { anchor.current = path; setMulti(NONE); setSelected(path); }, []);
   // What the tiles get: functions whose identity never changes, so a tile is redrawn only when its own photo, mark or position changed.
   const openSceneView = useCallback(() => setSceneView(true), []);
-  const tileSelect = useCallback((path: string) => { clickedPath.current = path; setSelected(path); }, []);
+  const pickRef = useRef(pickable);
+  pickRef.current = pickable;
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+  /** 从起点到 `path`（含两端），按墙上的顺序。 */
+  const rangeTo = useCallback((path: string) => {
+    const list = pickRef.current;
+    const a = list.findIndex((p) => p.path === (anchor.current ?? path)), b = list.findIndex((p) => p.path === path);
+    if (a < 0 || b < 0) return new Set([path]);
+    return new Set(list.slice(Math.min(a, b), Math.max(a, b) + 1).map((p) => p.path));
+  }, []);
+  /** 选到 `path`；`extend` 时从起点连成一段（Shift）。 */
+  const goTo = useCallback((path: string, extend = false) => {
+    if (!extend) { select(path); return; }
+    if (!anchor.current) anchor.current = selectedRef.current ?? path;
+    setMulti(rangeTo(path));
+    setSelected(path);
+  }, [select, rangeTo]);
+  const tileSelect = useCallback((path: string, how?: "range" | "toggle") => {
+    clickedPath.current = path;
+    if (how === "range") { goTo(path, true); return; }
+    if (how === "toggle") {
+      // ⌘ 点击：加进来或拿出去；拿掉的是焦点那张，焦点落到还选着的最后一张
+      const set = new Set(multiRef.current.size ? multiRef.current : selectedRef.current ? [selectedRef.current] : []);
+      if (set.has(path)) set.delete(path); else set.add(path);
+      anchor.current = path;
+      setMulti(set.size > 1 ? set : NONE);
+      setSelected(set.has(path) ? path : [...set].pop() ?? null);
+      return;
+    }
+    select(path);
+  }, [goTo, select]);
   /** 把一张照片顺时针（dir = 1）或逆时针转 90°：核心库换缩略图与显示尺寸（原文件不动），这里只替换手里那张。 */
   const rotate = useCallback((path: string, dir: 1 | -1) => {
     const cur = photos.find((p) => p.path === path);
@@ -635,49 +674,85 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
       })
       .catch(() => { /* not analysed yet, or not in Tauri */ });
   }, [photos]);
-  const decide = useCallback((path: string, st: State | null, fromUndo = false) => {
+  /** 改判一批照片：`changes` 里每张各自的新状态（null = 交还系统建议）；`fromUndo` 时不进撤销栈。 */
+  const mark = useCallback((changes: { path: string; state: State | null }[], fromUndo = false) => {
     // only photos of the project in view: a stale key press or undo must not write another project's path into this one
     // （分析中是已经出结果的那些）
     const scanningNow = phase === "scanning";
-    if (!project || !(scanningNow ? results.current.has(path) : photos.some((p) => p.path === path))) return;
-    const prev = project.overrides[path];
+    const list = changes.filter((c) => (scanningNow ? results.current.has(c.path) : byPath.has(c.path)));
+    if (!project || list.length === 0) return;
     const next = { ...project.overrides };
-    if (st === null) delete next[path]; else next[path] = st;
-    localPatch.current = !scanningNow && st !== null && project.keepCap === undefined && !project.onePerGroup ? { path, state: st, photos } : null;
+    const undo = list.map((c) => ({ path: c.path, prev: project.overrides[c.path] }));
+    for (const c of list) { if (c.state === null) delete next[c.path]; else next[c.path] = c.state; }
+    const one = list.length === 1 ? list[0] : null;
+    localPatch.current = one && one.state !== null && !scanningNow && project.keepCap === undefined && !project.onePerGroup ? { path: one.path, state: one.state, photos } : null;
     updateProject(project.id, { overrides: next });
     // Only explicit keep / reject teach the taste model; "review" and "cleared" mean "not sure". With learning off, nothing is recorded at all.
     if (getSettings().learn && project.learn !== false) {
-      invoke("record_label", { path, label: st === null || st === "review" ? null : st === "keep", style: project?.style }).catch(() => { /* not in Tauri */ });
+      for (const c of list) invoke("record_label", { path: c.path, label: c.state === null || c.state === "review" ? null : c.state === "keep", style: project?.style }).catch(() => { /* not in Tauri */ });
     }
     setDirty((d) => d + 1);
     if (!fromUndo) {
-      undoStack.current.push({ path, prev });
+      undoStack.current.push(undo);
       if (undoStack.current.length > 50) undoStack.current.shift();
       bumpHint(1);
     }
+  }, [project, photos, byPath, phase]);
+  /** 把一张或一批照片标成 `st`。 */
+  const decide = useCallback((target: string | string[], st: State | null) => {
+    const paths = Array.isArray(target) ? target : [target];
+    mark(paths.map((path) => ({ path, state: st })));
     // In a filtered view a decision can move the photo elsewhere. Move on to a neighbour instead of losing the selection.
     if (st && mode !== "all" && st !== mode) {
-      const i = pickable.findIndex((p) => p.path === path);
-      const nb = pickable[i + 1] ?? pickable[i - 1];
-      setSelected(nb && nb.path !== path ? nb.path : null);
+      const gone = new Set(paths);
+      const at = paths.map((p) => pickable.findIndex((x) => x.path === p)).filter((i) => i >= 0);
+      if (!at.length) return;
+      const hi = Math.max(...at), lo = Math.min(...at);
+      const nb = pickable.slice(hi + 1).find((p) => !gone.has(p.path)) ?? pickable.slice(0, lo).reverse().find((p) => !gone.has(p.path));
+      anchor.current = nb?.path ?? null;
+      setMulti(NONE);
+      setSelected(nb?.path ?? null);
     }
-  }, [project, mode, pickable, photos, phase]);
+  }, [mark, mode, pickable]);
+  /** 眼下选着的照片：多选时是那一批（只算还在墙上的），不然是焦点那一张。 */
+  const selection = useCallback((): string[] => {
+    if (multi.size > 1) return pickable.filter((p) => multi.has(p.path)).map((p) => p.path);
+    return selected && pickable.some((p) => p.path === selected) ? [selected] : [];
+  }, [multi, pickable, selected]);
+  const decideSel = useCallback((st: State | null) => { const s = selection(); if (s.length) decide(s, st); }, [selection, decide]);
   const decideRef = useRef(decide);
   decideRef.current = decide;
-  const tileDecide = useCallback((path: string, st: State | null) => decideRef.current(path, st), []);
+  // 格子上的按钮：点的是多选里的一张就整批改
+  const tileDecide = useCallback((path: string, st: State | null) => {
+    const m = multiRef.current;
+    decideRef.current(m.size > 1 && m.has(path) ? [...m] : path, st);
+  }, []);
   const undoLast = useCallback(() => {
     const e = undoStack.current.pop();
-    if (e) decide(e.path, e.prev ?? null, true);
-  }, [decide]);
-  const move = useCallback((d: number) => {
+    if (e) mark(e.map((x) => ({ path: x.path, state: x.prev ?? null })), true);
+  }, [mark]);
+  const move = useCallback((d: number, extend = false) => {
     if (!pickable.length) return;
     const i = Math.min(pickable.length - 1, Math.max(0, (selIndex < 0 ? (d > 0 ? -1 : 0) : selIndex) + d));
-    select(pickable[i].path);
-  }, [pickable, selIndex, select]);
+    goTo(pickable[i].path, extend);
+  }, [pickable, selIndex, goTo]);
+  /** ↑ ↓ PageUp PageDown：按墙上的行走（分析中只落在出了结果的格子上）；Home / End：第一张 / 最后一张。 */
+  const moveRow = useCallback((key: string, extend: boolean) => {
+    if (!pickable.length) return;
+    const first = pickable[0].path, last = pickable[pickable.length - 1].path;
+    if (key === "home" || key === "end" || !sel) { goTo(key === "end" || (!sel && (key === "arrowup" || key === "pageup")) ? last : first, extend); return; }
+    const ok = phase === "scanning" ? (k: string) => results.current.has(k) : undefined;
+    const down = key === "arrowdown" || key === "pagedown";
+    const to = key.startsWith("page") ? wallRef.current?.pageStep(sel.path, down ? 1 : -1, ok) : wallRef.current?.rowStep(sel.path, down ? 1 : -1, ok);
+    // 翻页翻到头：落在第一张 / 最后一张
+    if (to) goTo(to, extend);
+    else if (key.startsWith("page")) goTo(down ? last : first, extend);
+  }, [pickable, sel, phase, goTo]);
 
   useEffect(() => {
     // 分析中也能选、能改判（整理和重新分析留到分析完）
     if (!active || zoomed || (phase !== "done" && phase !== "scanning")) return;
+    const onWall = phase === "scanning" || layout === "justified" || layout === "grid";
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement).tagName;
       if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || isModalOpen()) return;
@@ -685,16 +760,18 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
       if ((e.metaKey || e.ctrlKey) && k === "z") { e.preventDefault(); undoLast(); return; }
       if ((e.metaKey || e.ctrlKey) && (e.key === "]" || e.key === "[")) { if (sel) { e.preventDefault(); rotate(sel.path, e.key === "]" ? 1 : -1); } return; }
       if (phase === "done" && layout === "compare" && ["arrowright", "arrowleft", "p", "r", "x"].includes(k)) return; // Compare handles these itself (groups; the photo under the pointer)
-      if (k === "arrowright") { e.preventDefault(); move(1); }
-      else if (k === "arrowleft") { e.preventDefault(); move(-1); }
+      if (k === "escape" && multi.size) { setMulti(NONE); return; }
+      if (k === "arrowright") { e.preventDefault(); move(1, e.shiftKey); }
+      else if (k === "arrowleft") { e.preventDefault(); move(-1, e.shiftKey); }
+      else if (onWall && ["arrowup", "arrowdown", "pageup", "pagedown", "home", "end"].includes(k)) { e.preventDefault(); moveRow(k, e.shiftKey); }
       else if (k === " " && sel) { e.preventDefault(); openViewer(sel.path); }
-      else if (k === "p" && sel) decide(sel.path, "keep");
-      else if (k === "r" && sel) decide(sel.path, "review");
-      else if (k === "x" && sel) decide(sel.path, "reject");
+      else if (k === "p") decideSel("keep");
+      else if (k === "r") decideSel("review");
+      else if (k === "x") decideSel("reject");
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, zoomed, phase, layout, move, sel, decide, rotate, undoLast, openViewer]);
+  }, [active, zoomed, phase, layout, move, moveRow, sel, multi, decideSel, rotate, undoLast, openViewer]);
 
   // Single and Compare always show a photo: fall back to the first one when nothing (or something filtered out) is selected.
   useEffect(() => {
@@ -937,7 +1014,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
             : <p className="ash pad">{t("cull.emptyView")}</p>)}
 
           {showWall && !(phase === "done" && sceneView) && !(phase === "done" && (layout === "single" || layout === "compare")) && (
-            <Wall ref={wallRef} scrollRef={scrollRef} widthDelta={wallDelta} items={wallItems} selected={selected} layout={layout === "grid" ? "grid" : "justified"} render={(i, box) => {
+            <Wall ref={wallRef} scrollRef={scrollRef} widthDelta={wallDelta} items={wallItems} selected={selected} marked={multi.size > 1 ? multi : null} layout={layout === "grid" ? "grid" : "justified"} render={(i, box) => {
               const it = items[i];
               const photo = scanning ? results.current.get(it.path) : shown[i];
               // 分析中：照片一出结果就按眼下的判定盖章（后来的照片会改变分组和排名，分析完换成正式的）
@@ -974,7 +1051,8 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
                   {sel ? (
                     <motion.div key="body" className="inspector-body" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.2, ease: EASE_OUT }}>
                       {/* 没有预览缩略图：它就是墙上带焦点框的那一张（M8.1）；名字行右边一个"放大" */}
-                      <PhotoVerdict photo={sel} decision={decision} onDecide={(st) => decide(sel.path, st)} reasonText={reasonText}
+                      {multi.size > 1 && <p className="ash multi-note">{t("inspector.multi", { count: selection().length })}</p>}
+                      <PhotoVerdict photo={sel} decision={decision} onDecide={decideSel} reasonText={reasonText}
                         scoreTip={<InfoPop title={t("inspector.overall")} width={280}><p className="ash">{t("inspector.scoreTip")}</p></InfoPop>}
                         onZoom={() => openViewer(sel.path)} />
                       {groupMates.length > 1 && (
