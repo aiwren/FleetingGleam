@@ -106,6 +106,21 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
   }, [active]);
 
   const bytes = (b: number) => fmtBytes(i18n.language, b);
+  // 网络代理：系统的（启动时读）和手填的（优先）；下载模型、云备份走它
+  type ProxyInfo = { system: string | null; manual: string | null; active: string | null };
+  const [proxy, setProxy] = useState<ProxyInfo | null>(null);
+  const [proxyOpen, setProxyOpen] = useState(false);
+  const [proxyText, setProxyText] = useState("");
+  const [proxyErr, setProxyErr] = useState<string | null>(null);
+  useEffect(() => {
+    if (active) invoke<ProxyInfo>("proxy_info").then((v) => setProxy(v && typeof v === "object" ? v : null)).catch(() => setProxy(null));
+  }, [active]);
+  const proxySave = async (manual: string | null) => {
+    setProxyErr(null);
+    try { setProxy(await invoke<ProxyInfo>("proxy_set", { manual })); setProxyOpen(false); }
+    catch (e) { const [code, scheme] = String(e).split(":"); setProxyErr(t(`settings.proxyBad.${code}`, { scheme, defaultValue: String(e) })); }
+  };
+  const proxyDesc = !proxy ? "" : proxy.manual ? t("settings.proxyManual", { url: proxy.manual }) : proxy.system ? t("settings.proxySystem", { url: proxy.system }) : t("settings.proxyDirect");
   const clear = async () => {
     try { await invoke("clear_cache"); setCache(0); setCleared(true); bumpCacheRev(); } catch { /* ignore */ }
   };
@@ -272,6 +287,17 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
           {bkErr && <p className="error">{t("settings.backupFailed", { error: bkErr })}</p>}
         </div>
       </Modal>
+      <Modal open={proxyOpen} onClose={() => setProxyOpen(false)} title={t("settings.proxy")}
+        footer={(<>{proxy?.manual && <button className="btn" onClick={() => proxySave(null)}>{t("settings.proxyUseSystem")}</button>}
+          <button className="btn" onClick={() => setProxyOpen(false)}>{t("settings.nasCancel")}</button>
+          <button className="btn primary" onClick={() => proxySave(proxyText.trim() || null)}>{t("settings.proxySave")}</button></>)}>
+        <div className="nas-form">
+          <p className="ash small">{t("settings.proxyHow")}</p>
+          <label><span>{t("settings.proxyField")}</span><input className="title-input wide" value={proxyText} placeholder={proxy?.system ?? t("settings.proxyHint")} spellCheck={false} autoFocus
+            onChange={(e) => { setProxyText(e.target.value); setProxyErr(null); }} onKeyDown={(e) => { if (e.key === "Enter") void proxySave(proxyText.trim() || null); }} /></label>
+          {proxyErr && <p className="error">{proxyErr}</p>}
+        </div>
+      </Modal>
       <Modal open={!!bkRemoving} onClose={() => setBkRemoving(null)} title={t("settings.backupRemoveTitle", { name: bkRemoving?.name ?? "" })}
         footer={(<><button className="btn" onClick={() => setBkRemoving(null)}>{t("settings.nasCancel")}</button>
           <button className="btn primary" onClick={() => bkRemoving && bkRemove(bkRemoving)}>{t("settings.backupRemoveConfirm")}</button></>)}>
@@ -412,6 +438,11 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
                     : <button className="btn" onClick={async () => { if ((await ensurePack(p.id)) !== "cancelled") adopt(p.id); }}>{t("models.get")}</button>}
                 </Row>
               ))}
+              {proxy && (
+                <Row label={t("settings.proxy")} desc={proxyDesc}>
+                  <button className="btn" onClick={() => { setProxyText(proxy.manual ?? ""); setProxyErr(null); setProxyOpen(true); }}>{t("settings.proxyEdit")}</button>
+                </Row>
+              )}
               <Row label={t("settings.cache")} desc={t("settings.cacheDesc")}>
                 <span className="mono ash cachesize">{cache === null ? "—" : bytes(cache)}</span>
                 <button className="btn" onClick={clear} disabled={!cache}>{cleared ? t("settings.cleared") : t("settings.clear")}</button>

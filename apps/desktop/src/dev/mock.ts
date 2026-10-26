@@ -363,6 +363,19 @@ w.__TAURI_INTERNALS__ = {
         else { labels = 0; keeps = 0; }
         return prefsInfo();
       }
+      // 网络代理（proxy.rs）：系统的写死一个，手填的记在 localStorage；认不出来的照 proxy.rs 的错误码
+      case "proxy_info": return { system: "http://127.0.0.1:7890", manual: localStorage.getItem("fg.mock.proxy"), active: localStorage.getItem("fg.mock.proxy") ?? "http://127.0.0.1:7890" };
+      case "proxy_set": {
+        const raw = String(args.manual ?? "").trim();
+        if (!raw) localStorage.removeItem("fg.mock.proxy");
+        else {
+          const m = raw.match(/^(?:(\w+):\/\/)?([^/:\s]+):(\d+)\/?$/);
+          if (m?.[1] && !/^https?$/i.test(m[1])) throw `unsupported:${m[1]}`;
+          if (!m) throw raw.includes(":") ? "host" : "port";
+          localStorage.setItem("fg.mock.proxy", `http://${m[2]}:${m[3]}`);
+        }
+        return { system: "http://127.0.0.1:7890", manual: localStorage.getItem("fg.mock.proxy"), active: localStorage.getItem("fg.mock.proxy") ?? "http://127.0.0.1:7890" };
+      }
       case "set_locale": return null;
       case "cache_size": return 48_300_000;
       case "clear_cache": return null;
