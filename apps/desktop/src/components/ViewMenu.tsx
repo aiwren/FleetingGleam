@@ -45,14 +45,14 @@ export default function ViewMenu<L extends string, S extends string>({ layout, l
                 </button>
               ))}
             </div>
-            <h4>{t("cull.sortAria")}</h4>
-            <div className="vmlist">
+            {sorts.length > 0 && <h4>{t("cull.sortAria")}</h4>}
+            {sorts.length > 0 && <div className="vmlist">
               {sorts.map((s) => (
                 <button key={s.id} role="menuitemradio" aria-checked={sort === s.id} className={sort === s.id ? "on" : ""} onClick={() => { onSort(s.id); setOpen(false); }}>
                   <i aria-hidden />{s.label}
                 </button>
               ))}
-            </div>
+            </div>}
           </motion.div>
         )}
       </AnimatePresence>
