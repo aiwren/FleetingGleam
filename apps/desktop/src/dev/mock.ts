@@ -128,19 +128,23 @@ function judge(photos: Photo[], keepRatio: number, overrides: Record<string, str
   return out;
 }
 
-async function scan(dirs: string[], quiet: boolean, live?: { keep_ratio?: number; overrides?: Record<string, string> } | null, force = false): Promise<Photo[]> {
+/** 和 lib.rs 的 scan_project 一样：真正的分析不再整包回照片，只回事件送过之后又变了的字段（这里就是分组、打分那几样）。 */
+const slim = (photos: Photo[]) => photos.map((p) => ({ path: p.path, score: p.score, group: p.group, scene: p.scene, group_best: p.group_best }));
+
+async function scan(dirs: string[], quiet: boolean, live?: { keep_ratio?: number; overrides?: Record<string, string> } | null, force = false): Promise<Photo[] | ReturnType<typeof slim>> {
   const list = inDirs(dirs);
   // "重新分析"：当作都没分析过
   if (force) list.forEach((s) => cached.delete(s.path));
   const photos = makePhotos(list);
   lastPhotos = photos;
   const todo = photos.filter((p) => !cached.has(p.path));
-  if (quiet || todo.length === 0) { list.forEach((s) => cached.add(s.path)); return photos; }
+  if (quiet) { list.forEach((s) => cached.add(s.path)); return photos; }
   const total = photos.length;
   let done = total - todo.length;
   emit("scan-info", { cpu_only: false, clip: "coreml-fp16", model: "ViT-L/14", vision: true, cores: 10 });
   emit("scan-progress", { done, total });
   { const known = photos.filter((p) => cached.has(p.path)); for (let i = 0; i < known.length; i += 250) emit("scan-photos", known.slice(i, i + 250)); }
+  if (todo.length === 0) return slim(photos);
   const order = todo.map((p) => photos.indexOf(p));
   // 边分析边判（引擎的判定线程）：每隔一会儿把已出结果的照片整体判一遍，只发变化的
   const judged = new Map<string, string>();
@@ -174,7 +178,7 @@ async function scan(dirs: string[], quiet: boolean, live?: { keep_ratio?: number
   await Promise.all([worker(), worker(), worker(), worker()]);
   clearInterval(judgeTimer);
   judgeNow();
-  return photos;
+  return slim(photos);
 }
 
 let dialogCalls = 0;

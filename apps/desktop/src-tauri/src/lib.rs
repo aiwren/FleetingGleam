@@ -29,7 +29,69 @@ struct WebviewEvents(AppHandle);
 
 impl engine::Events for WebviewEvents {
     fn emit(&self, event: &str, payload: serde_json::Value) {
+        if event == "scan-photo" || event == "scan-photos" {
+            remember_sent(&payload);
+        }
         let _ = self.0.emit(event, payload);
+    }
+}
+
+/// 分析中经 "scan-photo" / "scan-photos" 送到前端的照片（按路径）：scan_project 结束时只回传送过之后又变了的字段
+/// （分组、打分、补量的眼睛和人脸……），不再把几千张照片整包再传一遍（审查第二批）。只在有真正的分析在跑时记。
+#[derive(Default)]
+struct Sent {
+    scans: usize,
+    photos: HashMap<String, serde_json::Map<String, serde_json::Value>>,
+}
+
+fn sent() -> &'static Mutex<Sent> {
+    static SENT: std::sync::OnceLock<Mutex<Sent>> = std::sync::OnceLock::new();
+    SENT.get_or_init(Mutex::default)
+}
+
+fn remember_sent(payload: &serde_json::Value) {
+    let mut s = sent().lock().unwrap_or_else(|e| e.into_inner());
+    if s.scans == 0 {
+        return;
+    }
+    let one = |s: &mut Sent, v: &serde_json::Value| {
+        if let Some(o) = v.as_object() {
+            if let Some(path) = o.get("path").and_then(|p| p.as_str()) {
+                s.photos.insert(path.to_string(), o.clone());
+            }
+        }
+    };
+    match payload {
+        serde_json::Value::Array(list) => list.iter().for_each(|v| one(&mut s, v)),
+        v => one(&mut s, v),
+    }
+}
+
+/// 一次真正的分析期间（含被取消、出错的那些）记着送过的照片；最后一个结束时清掉。
+struct SentScan;
+
+impl SentScan {
+    fn begin() -> Self {
+        sent().lock().unwrap_or_else(|e| e.into_inner()).scans += 1;
+        SentScan
+    }
+}
+
+impl Drop for SentScan {
+    fn drop(&mut self) {
+        let mut s = sent().lock().unwrap_or_else(|e| e.into_inner());
+        s.scans = s.scans.saturating_sub(1);
+        if s.scans == 0 {
+            s.photos = HashMap::new();
+        }
+    }
+}
+
+/// 一张照片的最终记录，减去事件里送过、而且没变的字段（`path` 总在）；没送过的照整张给。
+fn slim(full: serde_json::Value, sent: Option<&serde_json::Map<String, serde_json::Value>>) -> serde_json::Value {
+    match (full, sent) {
+        (serde_json::Value::Object(full), Some(sent)) => serde_json::Value::Object(full.into_iter().filter(|(k, v)| k == "path" || sent.get(k) != Some(v)).collect()),
+        (full, _) => full,
     }
 }
 
@@ -106,11 +168,25 @@ async fn probe_folder(app: AppHandle, dirs: Vec<String>, compute: Option<String>
 }
 
 #[tauri::command]
-async fn scan_project(app: AppHandle, key: String, dirs: Vec<String>, compute: Option<String>, quality: Option<String>, learn: bool, quiet: bool, style: Option<String>, force: Option<bool>, eye_method: Option<String>, live: Option<fg_core::engine::LiveArgs>) -> Result<Vec<Photo>, String> {
+/// 安静读取（从缓存打开）回完整的照片；真正的分析只回每张在事件之后又变了的字段（见 `slim`），前端和事件攒下的合起来。
+async fn scan_project(app: AppHandle, key: String, dirs: Vec<String>, compute: Option<String>, quality: Option<String>, learn: bool, quiet: bool, style: Option<String>, force: Option<bool>, eye_method: Option<String>, live: Option<fg_core::engine::LiveArgs>) -> Result<Vec<serde_json::Value>, String> {
     let e = engine(&app);
     let args = ScanArgs { key, dirs, compute, quality, learn, quiet, style, force: force.unwrap_or(false), eye_method, live };
     let _awake = power::Awake::begin("FleetingGleam: analysing photos");
-    blocking(move || e.scan_project(args)).await?
+    let _sent = (!quiet).then(SentScan::begin);
+    let photos: Vec<Photo> = blocking(move || e.scan_project(args)).await??;
+    let mut s = sent().lock().unwrap_or_else(|e| e.into_inner());
+    Ok(photos
+        .into_iter()
+        .map(|p| {
+            let v = serde_json::to_value(&p).unwrap_or_default();
+            if quiet {
+                v
+            } else {
+                slim(v, s.photos.remove(&p.path).as_ref())
+            }
+        })
+        .collect())
 }
 
 /// 带 key 只停那个项目的分析 / 读取（离开项目时它自己的停，后台分析的那个照跑）；不带就全停。
@@ -753,6 +829,27 @@ pub fn run() {
 #[cfg(test)]
 mod compact_tests {
     use super::*;
+
+    #[test]
+    fn slim_keeps_only_what_changed_since_the_event() {
+        let full = serde_json::json!({ "path": "/a.jpg", "name": "a.jpg", "thumb": "/t/a.jpg", "score": 0.8, "group": 3, "people": [0] });
+        let sent = serde_json::json!({ "path": "/a.jpg", "name": "a.jpg", "thumb": "/t/a.jpg", "score": 0.6, "group": 0, "people": [] });
+        let out = slim(full.clone(), sent.as_object());
+        assert_eq!(out, serde_json::json!({ "path": "/a.jpg", "score": 0.8, "group": 3, "people": [0] }));
+        // 没送过的照整张给
+        assert_eq!(slim(full.clone(), None), full);
+    }
+
+    #[test]
+    fn sent_photos_are_only_kept_while_a_scan_runs() {
+        remember_sent(&serde_json::json!({ "path": "/x.jpg" }));
+        assert!(!sent().lock().unwrap().photos.contains_key("/x.jpg"), "没有分析在跑时不记");
+        let guard = SentScan::begin();
+        remember_sent(&serde_json::json!([{ "path": "/x.jpg" }, { "path": "/y.jpg" }]));
+        assert!(sent().lock().unwrap().photos.contains_key("/y.jpg"));
+        drop(guard);
+        assert!(sent().lock().unwrap().photos.is_empty());
+    }
 
     fn d(state: decide::State, manual: bool) -> decide::Decision {
         decide::Decision { state, manual, reasons: Vec::new() }

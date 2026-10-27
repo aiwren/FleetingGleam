@@ -264,7 +264,10 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
       // 边分析边判用和分析完一样的参数
       const liveArgs = quiet ? null : { keep_ratio: proj.keepCap ?? 1, pick_mode: proj.pickMode ?? "diverse", one_per_group: proj.onePerGroup ?? false, overrides: proj.overrides ?? {} };
       if (!quiet) scanOverrides.current = proj.overrides ?? {};
-      const res = await invoke<Photo[]>("scan_project", { key: proj.id, dirs: proj.folders, compute: "auto", quality: currentTier(), style: proj.style, learn: getSettings().learn && proj.learn !== false, quiet, force, eyeMethod: eyeMethodNow(), live: liveArgs });
+      const got = await invoke<(Partial<Photo> & { path: string })[]>("scan_project", { key: proj.id, dirs: proj.folders, compute: "auto", quality: currentTier(), style: proj.style, learn: getSettings().learn && proj.learn !== false, quiet, force, eyeMethod: eyeMethodNow(), live: liveArgs });
+      // 安静读取回的是完整的照片；真正的分析只回事件里没送过、或送过之后又变了的字段（分组、打分……，见 lib.rs 的 slim），
+      // 和事件攒下的合起来，不再把几千张照片整包再传一遍（审查第二批）
+      const res: Photo[] = quiet ? (got as Photo[]) : got.map((r) => { const p = results.current.get(r.path); return (p ? { ...p, ...r } : r) as Photo; });
       if (!quiet) { running.current = null; setRunningId(null); }
       const cover = [...res].sort((a, b) => b.score - a.score).slice(0, 4).map((p) => p.thumb);
       if (!mine()) {
