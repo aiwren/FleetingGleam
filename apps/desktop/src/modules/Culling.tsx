@@ -36,6 +36,7 @@ import ReadyStage from "./ReadyStage";
 import ProjectSettings from "./ProjectSettings";
 import ProjectHome from "./ProjectHome";
 import Viewer from "./Viewer";
+import { historyKey, setHistoryHandler } from "../history";
 
 type ViewMode = "all" | State;
 type Phase = "idle" | "probing" | "ready" | "scanning" | "loading" | "done";
@@ -45,12 +46,13 @@ type Item = { path: string; ratio: number };
 type CompactDecisions = { rev: number; paths?: string[]; states: string; manual: number[] };
 const STATE_OF: Record<string, State> = { k: "keep", r: "review", x: "reject" };
 const manualReason = (st: State): Reason => ({ k: "reason.manual", p: { stateKey: `state.${st}` } });
-type UndoStep = { path: string; prev: State | undefined }[];
+/** 撤销栈的一步：一批改判（每张改前改后的手动标记，undefined = 系统建议），或转了一张照片。 */
+type HistoryStep = { kind: "mark"; items: { path: string; prev: State | undefined; next: State | undefined }[] } | { kind: "rotate"; path: string; dir: 1 | -1 };
 /**
  * 离开项目时这一屏的样子（审查第二批：以前离开再回来一切归零）：筛选、选中、滚动位置和撤销栈，按项目记在这次运行里。
  * 回到项目、照片出来以后原样放回去。
  */
-type ViewMemo = { mode: ViewMode; sceneFilter: number | null; personFilter: number | null; selected: string | null; scroll: number; undo: UndoStep[] };
+type ViewMemo = { mode: ViewMode; sceneFilter: number | null; personFilter: number | null; selected: string | null; scroll: number; undo: HistoryStep[]; redo: HistoryStep[] };
 const viewMemo = new Map<string, ViewMemo>();
 const NONE: ReadonlySet<string> = new Set();
 /** 分析中筛选栏没有场景和人物：给同一个空数组，别让 FilterPanel 的 memo 每帧被新的 [] 打穿。 */
@@ -167,9 +169,10 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const [searchRev, setSearchRev] = useState(0);
   const [previews, setPreviews] = useState<Record<string, string>>({});
   /** 每一步是一批（多选一起改判的那些），撤销一次撤回整批。 */
-  const undoStack = useRef<UndoStep[]>([]);
+  const undoStack = useRef<HistoryStep[]>([]);
+  const redoStack = useRef<HistoryStep[]>([]);
   /** 眼下这一屏的筛选与选中（每次渲染更新），和照片墙是不是正显示着（只有那时记的才有意义）。 */
-  const viewNow = useRef<{ shown: boolean; memo: Omit<ViewMemo, "undo"> }>({ shown: false, memo: { mode: "all", sceneFilter: null, personFilter: null, selected: null, scroll: 0 } });
+  const viewNow = useRef<{ shown: boolean; memo: Omit<ViewMemo, "undo" | "redo"> }>({ shown: false, memo: { mode: "all", sceneFilter: null, personFilter: null, selected: null, scroll: 0 } });
   /** 回到项目后等照片出来再放回去的选中与滚动位置。 */
   const restoreView = useRef<{ selected: string | null; scroll: number } | null>(null);
   const [hintUses, setHintUses] = useState(() => { try { return Number(localStorage.getItem("fg.hint.dock") ?? 0); } catch { return 0; } });
@@ -313,9 +316,10 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     const left = enteredId.current;
     enteredId.current = project?.id ?? null;
     // 离开的那个项目：记下筛选、选中、滚动和撤销栈；要进的这个有记下的就照着放回（选中与滚动等照片出来再放，见下）
-    if (left && viewNow.current.shown) viewMemo.set(left, { ...viewNow.current.memo, undo: undoStack.current });
+    if (left && viewNow.current.shown) viewMemo.set(left, { ...viewNow.current.memo, undo: undoStack.current, redo: redoStack.current });
     const memo = project ? viewMemo.get(project.id) : undefined;
     undoStack.current = memo?.undo ?? [];
+    redoStack.current = memo?.redo ?? [];
     restoreView.current = memo && (memo.selected || memo.scroll) ? { selected: memo.selected, scroll: memo.scroll } : null;
     setSelected(null); setMulti(NONE); anchor.current = null; setQuery(""); setZoomed(false); setError(null); setMode(memo?.mode ?? "all"); setSceneFilter(memo?.sceneFilter ?? null); setPersonFilter(memo?.personFilter ?? null); setSceneView(false); setCelebrate(false); setDirty(0); setNasProg(null); setOffline(null);
     setBgDone((d) => (d && project && d.id === project.id ? null : d));
@@ -754,28 +758,39 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     }
     select(path);
   }, [goTo, select]);
-  /** 把一张照片顺时针（dir = 1）或逆时针转 90°：核心库换缩略图与显示尺寸（原文件不动），这里只替换手里那张。 */
-  const rotate = useCallback((path: string, dir: 1 | -1) => {
+  /** 记一步新的操作：进撤销栈（最多 50 步），重做栈作废。 */
+  const pushHistory = useCallback((step: HistoryStep) => {
+    undoStack.current.push(step);
+    if (undoStack.current.length > 50) undoStack.current.shift();
+    redoStack.current = [];
+  }, []);
+  /**
+   * 把一张照片顺时针（dir = 1）或逆时针转 90°：核心库换缩略图与显示尺寸（原文件不动），这里只替换手里那张。
+   * 转成了才进撤销栈（`fromHistory` 时是撤销 / 重做在转，不进）。返回是不是转了。
+   */
+  const rotate = useCallback((path: string, dir: 1 | -1, fromHistory = false): boolean => {
     const cur = photos.find((p) => p.path === path);
-    if (!cur) return;
+    if (!cur) return false;
     const deg = ((((cur.rotation ?? 0) + 90 * dir) % 360) + 360) % 360;
     invoke<Photo | null>("set_rotation", { path, deg })
       .then((p) => {
         if (!p) return;
         forgetLarge(path);
         setPhotos((ps) => ps.map((x) => (x.path === p.path ? { ...x, thumb: p.thumb, width: p.width, height: p.height, rotation: p.rotation } : x)));
+        if (!fromHistory) pushHistory({ kind: "rotate", path, dir });
       })
       .catch(() => { /* not analysed yet, or not in Tauri */ });
-  }, [photos]);
-  /** 改判一批照片：`changes` 里每张各自的新状态（null = 交还系统建议）；`fromUndo` 时不进撤销栈。返回是不是真改了。 */
-  const mark = useCallback((changes: { path: string; state: State | null }[], fromUndo = false): boolean => {
+    return true;
+  }, [photos, pushHistory]);
+  /** 改判一批照片：`changes` 里每张各自的新状态（null = 交还系统建议）；`fromHistory`（撤销 / 重做）时不进撤销栈。返回是不是真改了。 */
+  const mark = useCallback((changes: { path: string; state: State | null }[], fromHistory = false): boolean => {
     // only photos of the project in view: a stale key press or undo must not write another project's path into this one
     // （分析中是已经出结果的那些）
     const scanningNow = phase === "scanning";
     const list = changes.filter((c) => (scanningNow ? results.current.has(c.path) : byPath.has(c.path)));
     if (!project || list.length === 0) return false;
     const next = { ...project.overrides };
-    const undo = list.map((c) => ({ path: c.path, prev: project.overrides[c.path] }));
+    const step: HistoryStep = { kind: "mark", items: list.map((c) => ({ path: c.path, prev: project.overrides[c.path], next: c.state ?? undefined })) };
     for (const c of list) { if (c.state === null) delete next[c.path]; else next[c.path] = c.state; }
     const one = list.length === 1 ? list[0] : null;
     localPatch.current = one && one.state !== null && !scanningNow && project.keepCap === undefined && !project.onePerGroup ? { path: one.path, state: one.state, photos } : null;
@@ -785,13 +800,12 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
       for (const c of list) invoke("record_label", { path: c.path, label: c.state === null || c.state === "review" ? null : c.state === "keep", style: project?.style }).catch(() => { /* not in Tauri */ });
     }
     setDirty((d) => d + 1);
-    if (!fromUndo) {
-      undoStack.current.push(undo);
-      if (undoStack.current.length > 50) undoStack.current.shift();
+    if (!fromHistory) {
+      pushHistory(step);
       bumpHint(1);
     }
     return true;
-  }, [project, photos, byPath, phase]);
+  }, [project, photos, byPath, phase, pushHistory]);
   /** 把一张或一批照片标成 `st`。 */
   const decide = useCallback((target: string | string[], st: State | null) => {
     const paths = Array.isArray(target) ? target : [target];
@@ -835,12 +849,32 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
       return n.size > 1 ? n : NONE;
     });
   }, [mode, sceneFilter, personFilter, hits]);
-  // 一条撤销可能一张都落不下（分析失败、没出结果的照片）：不算一次，接着弹下一条，而不是按一下什么都没发生（审查第 60 条）
+  /** 把一步撤回（`undo`）或重做（`redo`）。返回是不是落下了（照片都不在了就落不下）。 */
+  const applyStep = useCallback((s: HistoryStep, how: "undo" | "redo"): boolean => {
+    if (s.kind === "rotate") return rotate(s.path, how === "undo" ? (s.dir === 1 ? -1 : 1) : s.dir, true);
+    return mark(s.items.map((x) => ({ path: x.path, state: (how === "undo" ? x.prev : x.next) ?? null })), true);
+  }, [rotate, mark]);
+  // 一条撤销可能一张都落不下（分析失败、没出结果的照片）：不算一次，接着弹下一条，而不是按一下什么都没发生（审查第 60 条）。
+  // 撤回的那步进重做栈；新的操作会清掉重做栈
   const undoLast = useCallback(() => {
     for (let e = undoStack.current.pop(); e; e = undoStack.current.pop()) {
-      if (mark(e.map((x) => ({ path: x.path, state: x.prev ?? null })), true)) return;
+      if (applyStep(e, "undo")) { redoStack.current.push(e); return; }
     }
-  }, [mark]);
+  }, [applyStep]);
+  const redoLast = useCallback(() => {
+    for (let e = redoStack.current.pop(); e; e = redoStack.current.pop()) {
+      if (applyStep(e, "redo")) { undoStack.current.push(e); return; }
+    }
+  }, [applyStep]);
+  // ⌘Z / ⌘⇧Z 和"编辑"菜单的撤销 / 重做（history.ts）：分析中、分析完，开着大图也算；对话框开着时不动
+  useEffect(() => {
+    if (!active || (phase !== "done" && phase !== "scanning")) return;
+    const guard = (f: () => void) => () => { if (!isModalOpen()) f(); };
+    const off = setHistoryHandler({ undo: guard(undoLast), redo: guard(redoLast) });
+    const onKey = (e: KeyboardEvent) => { historyKey(e); };
+    window.addEventListener("keydown", onKey);
+    return () => { off(); window.removeEventListener("keydown", onKey); };
+  }, [active, phase, undoLast, redoLast]);
   const move = useCallback((d: number, extend = false) => {
     if (!pickable.length) return;
     const i = Math.min(pickable.length - 1, Math.max(0, (selIndex < 0 ? (d > 0 ? -1 : 0) : selIndex) + d));
@@ -867,7 +901,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
       const tag = (e.target as HTMLElement).tagName;
       if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || isModalOpen()) return;
       const k = e.key.toLowerCase();
-      if ((e.metaKey || e.ctrlKey) && k === "z") { e.preventDefault(); undoLast(); return; }
+      if ((e.metaKey || e.ctrlKey) && k === "z") return; // 撤销 / 重做在上面单独处理（开着大图时也要能用）
       if ((e.metaKey || e.ctrlKey) && (e.key === "]" || e.key === "[")) { if (sel) { e.preventDefault(); rotate(sel.path, e.key === "]" ? 1 : -1); } return; }
       if (phase === "done" && layout === "compare" && ["arrowright", "arrowleft", "p", "r", "x"].includes(k)) return; // Compare handles these itself (groups; the photo under the pointer)
       if (k === "escape" && multi.size) { setMulti(NONE); return; }
@@ -881,7 +915,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, zoomed, phase, layout, move, moveRow, sel, multi, decideSel, rotate, undoLast, openViewer]);
+  }, [active, zoomed, phase, layout, move, moveRow, sel, multi, decideSel, rotate, openViewer]);
 
   // Single and Compare always show a photo: fall back to the first one when nothing (or something filtered out) is selected.
   useEffect(() => {

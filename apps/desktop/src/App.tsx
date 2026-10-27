@@ -16,6 +16,7 @@ import { purgeExpired, setActive, useProjectsStatus } from "./projects";
 import { refreshShares } from "./nas";
 import { watchForBackup } from "./backup";
 import { DUR, SPRING } from "./motion";
+import { editHistory } from "./history";
 import logo from "./assets/logo.png";
 import "./App.css";
 
@@ -83,6 +84,8 @@ export default function App() {
       if (e.payload === "toggle-inspector") toggleInspector();
       if (e.payload === "open-settings") setModuleId("settings");
       if (e.payload === "open-folder") newProject();
+      // 编辑菜单的撤销 / 重做：文本框里是文字的撤销，别处是照片墙的撤销栈
+      if (e.payload === "undo" || e.payload === "redo") editHistory(e.payload);
     });
     return () => { un.then((f) => f()); };
   }, []);

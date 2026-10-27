@@ -662,13 +662,15 @@ struct MenuText {
     open: &'static str,
     sidebar: &'static str,
     inspector: &'static str,
+    undo: &'static str,
+    redo: &'static str,
 }
 
 fn menu_text(locale: &str) -> MenuText {
     if locale.starts_with("zh") {
-        MenuText { settings: "设置…", file: "文件", edit: "编辑", view: "视图", window: "窗口", open: "打开文件夹…", sidebar: "显示/隐藏侧边栏", inspector: "显示/隐藏检查器" }
+        MenuText { settings: "设置…", file: "文件", edit: "编辑", view: "视图", window: "窗口", open: "打开文件夹…", sidebar: "显示/隐藏侧边栏", inspector: "显示/隐藏检查器", undo: "撤销", redo: "重做" }
     } else {
-        MenuText { settings: "Settings…", file: "File", edit: "Edit", view: "View", window: "Window", open: "Open Folder…", sidebar: "Toggle Sidebar", inspector: "Toggle Inspector" }
+        MenuText { settings: "Settings…", file: "File", edit: "Edit", view: "View", window: "Window", open: "Open Folder…", sidebar: "Toggle Sidebar", inspector: "Toggle Inspector", undo: "Undo", redo: "Redo" }
     }
 }
 
@@ -678,6 +680,9 @@ fn build_menu(app: &AppHandle, locale: &str) -> tauri::Result<tauri::menu::Menu<
     let sidebar = MenuItemBuilder::with_id("toggle-sidebar", tx.sidebar).accelerator("CmdOrCtrl+Alt+S").build(app)?;
     let inspector = MenuItemBuilder::with_id("toggle-inspector", tx.inspector).accelerator("CmdOrCtrl+Alt+I").build(app)?;
     let settings = MenuItemBuilder::with_id("open-settings", tx.settings).accelerator("CmdOrCtrl+,").build(app)?;
+    // 撤销 / 重做交给前端（history.ts）：文本框里是文字的撤销，别处是照片墙的撤销栈（系统自带的那两项只对文本框有效）
+    let undo = MenuItemBuilder::with_id("undo", tx.undo).accelerator("CmdOrCtrl+Z").build(app)?;
+    let redo = MenuItemBuilder::with_id("redo", tx.redo).accelerator("CmdOrCtrl+Shift+Z").build(app)?;
     let app_menu = SubmenuBuilder::new(app, "FleetingGleam")
         .about(None)
         .separator()
@@ -693,8 +698,8 @@ fn build_menu(app: &AppHandle, locale: &str) -> tauri::Result<tauri::menu::Menu<
         .build()?;
     let file = SubmenuBuilder::new(app, tx.file).item(&open).separator().close_window().build()?;
     let edit = SubmenuBuilder::new(app, tx.edit)
-        .undo()
-        .redo()
+        .item(&undo)
+        .item(&redo)
         .separator()
         .cut()
         .copy()

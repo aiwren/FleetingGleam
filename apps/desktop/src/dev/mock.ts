@@ -353,7 +353,15 @@ w.__TAURI_INTERNALS__ = {
       }
       case "reveal": return null;
       case "large_preview": return (args.path as string);
-      case "set_rotation": return null;
+      // 转一张：角度记下、宽高按转过的对调（模拟的缩略图本身不转）
+      case "set_rotation": {
+        const p = lastPhotos.find((x) => x.path === args.path);
+        if (!p) return null;
+        const deg = Number(args.deg), odd = Math.abs(deg - (p.rotation ?? 0)) % 180 === 90;
+        const q = { ...p, rotation: deg, width: odd ? p.height : p.width, height: odd ? p.width : p.height };
+        lastPhotos = lastPhotos.map((x) => (x.path === q.path ? q : x));
+        return q;
+      }
       case "backup_peek": return null;
       case "photo_info": return { format: "JPEG", bytes: 9_400_000, color_space: "sRGB", bit_depth: "8, 8, 8", camera: "FUJIFILM X-T5", lens: "XF35mmF1.4 R", focal: "35 mm", aperture: "f/2", shutter: "1/250 s", iso: "400", software: null, taken: "2026-04-17 18:22:31" };
       case "machine_info": return { memory_gb: 32, cores: 10 };
