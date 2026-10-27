@@ -138,12 +138,42 @@ object Media {
 
     private val IMAGE_EXT = setOf("jpg", "jpeg", "jpe", "png", "webp")
 
+    /** 原处文件夹里的一项（`DocumentsContract` 直接查出来的）。 */
+    private data class Entry(val docId: String, val name: String, val dir: Boolean, val size: Long, val modified: Long)
+
+    private val ENTRY_COLS = arrayOf(
+        DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE,
+        DocumentsContract.Document.COLUMN_SIZE, DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+    )
+
+    /**
+     * 列原处文件夹的一层。null = 没列出来：cursor 为 null、查询抛异常、提供方说还在加载或出错（网盘离线、权限收回）；
+     * 空列表 = 真的是空的（审查第 56 条：以前用 `DocumentFile.listFiles()`，它把失败也吞成空数组，只好把"空"一律当"没列出来"，
+     * 原处真删空的文件夹就永远删不掉镜像）。
+     */
+    private fun listLevel(ctx: Context, tree: Uri, docId: String): List<Entry>? = try {
+        ctx.contentResolver.query(DocumentsContract.buildChildDocumentsUriUsingTree(tree, docId), ENTRY_COLS, null, null, null)?.use { c ->
+            val extras = c.extras
+            if (extras != null && (extras.getBoolean(DocumentsContract.EXTRA_LOADING) || extras.getString(DocumentsContract.EXTRA_ERROR) != null)) return@use null
+            val out = ArrayList<Entry>(c.count.coerceAtLeast(0))
+            while (c.moveToNext()) {
+                val id = c.getString(0) ?: continue
+                out.add(Entry(id, c.getString(1) ?: "", c.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR,
+                    if (c.isNull(3)) 0L else c.getLong(3), if (c.isNull(4)) 0L else c.getLong(4)))
+            }
+            out
+        }
+    } catch (e: Exception) {
+        android.util.Log.w("FleetingGleam", "列原处文件夹失败：${e.message}")
+        null
+    }
+
     /**
      * 项目文件夹里落在镜像上的，先从原处同步：拉新增或变了的照片（按大小 + 修改时间比），删掉原处已没有的。进度经 `onProgress(done, total, name)` 报出。
-     * `cancelled()` 为真就停。没有镜像的文件夹什么都不做。
+     * `cancelled()` 为真就停。没有镜像的文件夹什么都不做。会读网盘、写闪存，调用方放在 IO 线程上。
      *
-     * 列举失败绝不能当成"原处空了"：`DocumentFile.listFiles()` 在权限被收回、网盘离线时吞掉异常返回空数组，照着删会把镜像整个清空。所以
-     * 先核对持久权限（没了抛 [SafExpired]）；某一层列出来是空的、镜像里对应那层却有照片，就当这一层没列出来，它下面一张都不删。
+     * 列举失败绝不能当成"原处空了"，照着删会把镜像整个清空。所以先核对持久权限（没了抛 [SafExpired]）；每一层用 `DocumentsContract` 查，
+     * 查不出来（见 [listLevel]）就当这一层没列出来，它下面一张都不删；查出来是空的才是真空。
      */
     fun syncMirrors(ctx: Context, dirs: List<String>, onProgress: (Int, Int, String) -> Unit, cancelled: () -> Boolean) {
         val all = mirrors(ctx)
@@ -151,35 +181,31 @@ object Media {
             val m = all.firstOrNull { d == mirrorDir(ctx, it.id).absolutePath || d.startsWith(mirrorDir(ctx, it.id).absolutePath + "/") } ?: continue
             val uri = Uri.parse(m.uri)
             if (!granted(ctx, uri)) throw SafExpired(m)
-            val tree = DocumentFile.fromTreeUri(ctx, uri) ?: continue
+            val rootId = runCatching { DocumentsContract.getTreeDocumentId(uri) }.getOrNull() ?: continue
             val root = mirrorDir(ctx, m.id)
             // 先把原处的照片列全（递归，跳过隐藏的），再比
-            data class Src(val doc: DocumentFile, val rel: String)
+            data class Src(val uri: Uri, val size: Long, val modified: Long, val rel: String)
             val found = mutableListOf<Src>()
             // 没列出来的那些层（相对路径）：镜像里它们下面的照片保留
             val unsure = mutableListOf<String>()
-            fun hasImages(dir: File) = dir.isDirectory && dir.walkTopDown().any { it.isFile && it.extension.lowercase() in IMAGE_EXT }
-            fun walk(f: DocumentFile, rel: String) {
-                val kids = runCatching { f.listFiles() }.getOrNull()
-                if (kids.isNullOrEmpty()) {
-                    if (kids == null || hasImages(if (rel.isEmpty()) root else File(root, rel))) unsure.add(rel)
-                    return
-                }
-                for (c in kids) {
-                    val name = c.name ?: continue
-                    if (name.startsWith(".")) continue
-                    if (c.isDirectory) walk(c, if (rel.isEmpty()) name else "$rel/$name")
-                    else if (name.substringAfterLast('.', "").lowercase() in IMAGE_EXT && c.length() >= 8 * 1024) found.add(Src(c, if (rel.isEmpty()) name else "$rel/$name"))
+            fun walk(docId: String, rel: String) {
+                val kids = listLevel(ctx, uri, docId) ?: run { unsure.add(rel); return }
+                for (k in kids) {
+                    if (k.name.isEmpty() || k.name.startsWith(".")) continue
+                    val r = if (rel.isEmpty()) k.name else "$rel/${k.name}"
+                    if (k.dir) walk(k.docId, r)
+                    else if (k.name.substringAfterLast('.', "").lowercase() in IMAGE_EXT && k.size >= 8 * 1024)
+                        found.add(Src(DocumentsContract.buildDocumentUriUsingTree(uri, k.docId), k.size, k.modified, r))
                 }
             }
-            if (tree.canRead()) walk(tree, "") else unsure.add("")
+            walk(rootId, "")
             if ("" in unsure) {
                 // 整个文件夹都没列出来（网盘离线之类）：镜像原样留着，照片照常能看
                 android.util.Log.w("FleetingGleam", "镜像 ${m.name}：原处列不出来，跳过同步")
                 continue
             }
             val keep = found.map { File(root, it.rel).absolutePath }.toHashSet()
-            val todo = found.filter { s -> val f = File(root, s.rel); !(f.exists() && f.length() == s.doc.length() && f.lastModified() == s.doc.lastModified()) }
+            val todo = found.filter { s -> val f = File(root, s.rel); !(f.exists() && f.length() == s.size && f.lastModified() == s.modified) }
             var done = 0
             onProgress(0, todo.size, m.name)
             for (s in todo) {
@@ -187,9 +213,9 @@ object Media {
                 val out = File(root, s.rel)
                 out.parentFile?.mkdirs()
                 val part = File(out.parentFile, ".${out.name}.part")
-                ctx.contentResolver.openInputStream(s.doc.uri)?.use { input -> part.outputStream().use { input.copyTo(it) } }
+                ctx.contentResolver.openInputStream(s.uri)?.use { input -> part.outputStream().use { input.copyTo(it) } }
                 part.renameTo(out)
-                out.setLastModified(s.doc.lastModified())
+                out.setLastModified(s.modified)
                 onProgress(++done, todo.size, m.name)
             }
             // 原处已经没有的，从镜像里删掉（没列出来的那些层除外）
