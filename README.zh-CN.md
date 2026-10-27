@@ -2,7 +2,7 @@
 
 # FleetingGleam（惊鸿）
 
-**一款在你自己电脑上运行的照片筛选软件。** 把几千张照片里同一瞬间的连拍分好组，挑出每组最好的一张，并告诉你为什么。照片不会离开你的电脑。
+**一款在你自己的 Mac 和安卓手机上运行的照片筛选软件。** 把几千张照片里同一瞬间的连拍分好组，挑出每组最好的一张，并告诉你为什么。照片不会离开你自己的设备。
 
 <p align="center">
   <img src="apps/web/public/shots/wall-dark-1200.webp" alt="FleetingGleam 的照片墙：同一瞬间的连拍排在一起，最好的一张带金色星标" width="880">
@@ -19,15 +19,15 @@
 - **直接用 NAS。** 在设置里添加 NAS（服务器地址和账号，SMB），应用用内置的 SMB 客户端自己连接（不经过访达，桌面上不出现挂载卷），新建项目时在应用里从共享开始逐级选文件夹；照片会先复制到应用的缓存里再分析。
 - **喜好云备份。** 应用设置和学到的喜好可以自动备份到你自己的 Cloudflare R2 桶，换电脑后一键恢复。
 - **带走你的口味。** 设置和每个风格学到的内容可以导出成一个文件（只有向量和决定，不含照片与路径），在另一台电脑上导入。
-- **整理**：把保留的照片移到新文件夹，其余的放进废纸篓（可恢复）。
+- **整理**：把保留的照片复制到新文件夹（安卓上可以导出到相册）；在 Mac 上，其余的可以放进废纸篓，可恢复，也能一键放回原处。
 
 > **评分只是参考，不是裁决。** 目前的评分常数是手工调的，还没有用真实的人工标注校准，它能告诉你哪一张在技术上更强，但一张好照片有时恰恰不完美。最终的取舍始终由你决定。
 
 ## 隐私
 
 - 照片只在本机处理，**不会上传**，也没有账号。
-- 应用唯一会联网做的事，是**按需下载分析用的模型文件**（第一次用到某项功能时才下载，之后完全离线）。
-- 模型文件很大，不放在本仓库里，也不随安装包分发；它们直接从 Hugging Face 等公开上游下载，每个文件的来源和校验值见 [docs/MODELS.md](docs/MODELS.md)，使用方式见 [新手上手指南](docs/GETTING_STARTED.md#第一次使用先下载模型)。
+- 应用只在两种情况下联网：**按需下载分析用的模型文件**（第一次用到某项功能时才下载），以及连接你自己设置的 NAS 或云备份存储桶。除此之外完全离线。
+- 不到 10 MB 的几个模型随应用一起安装；大的模型文件不放在本仓库里，也不随安装包分发，它们直接从 Hugging Face 等公开上游下载，每个文件的来源和校验值见 [docs/MODELS.md](docs/MODELS.md)，使用方式见 [新手上手指南](docs/GETTING_STARTED.md#第一次使用先下载模型)。
 
 ## 快速开始
 
@@ -39,7 +39,11 @@
 xattr -cr /Applications/FleetingGleam.app
 ```
 
-详细步骤见 [新手上手指南](docs/GETTING_STARTED.md)。Windows 版本在计划中，目前还没有。
+详细步骤见 [新手上手指南](docs/GETTING_STARTED.md)。
+
+**安卓**：在同一个 Release 里下载 `FleetingGleam-android.apk`，在手机上打开安装。需要 **Android 12 及以上的 64 位 ARM 手机**。它不在应用商店里，安装时按系统提示允许浏览器安装应用即可。
+
+Windows 版本在计划中，目前还没有。
 
 ### 开发
 
@@ -73,8 +77,10 @@ apps/
   desktop/        Tauri 2 + React + Rust 桌面应用（macOS 优先）
     src/          前端界面（TypeScript / React）
     src-tauri/    Rust 后端；native/ 与 vision/ 是 Swift 写的 macOS 原生部分
+  android/        安卓原生应用（Kotlin + Jetpack Compose），构建见 apps/android/README.md
   web/            落地页（TanStack Start + Tailwind v4 + Motion），中英双语
-packages/         以后放前后端共用的类型
+packages/
+  core/           Mac 与安卓共用的 Rust 核心库：分析、评分、NAS、备份
 docs/             文档，见下表
 branding/         Logo 与图标源文件
 DESIGN.md         设计系统：配色、字体、动效规范
@@ -92,7 +98,8 @@ DESIGN.md         设计系统：配色、字体、动效规范
 | [docs/RESEARCH.md](docs/RESEARCH.md) | 选片方法与模型的调研笔记（含美学模型调研） |
 | [docs/REVIEW-2026-10-20.md](docs/REVIEW-2026-10-20.md) | 桌面端代码审查：按优先级列出的改进清单 |
 | [docs/REVIEW-2026-10-21.md](docs/REVIEW-2026-10-21.md) | 第二轮审查：后端、前端、落地页与 CI |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | 路线图：先完善 macOS 端，再做 Android 端 |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | 路线图：macOS 端与安卓端 |
+| [apps/android/README.md](apps/android/README.md) | 安卓端的构建与运行 |
 | [DESIGN.md](DESIGN.md) | 设计系统（英文） |
 | [CHANGELOG.md](CHANGELOG.md) | 版本更新记录 |
 | [SECURITY.md](SECURITY.md) | 如何报告安全问题 |

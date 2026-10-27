@@ -60,7 +60,7 @@ Android 安装包里的高通 QNN 运行库（`libQnnHtp*.so`、`libQnnSystem.so
 
 ## 示例照片
 
-落地页和截图里的示例照片（`apps/web/public/` 下的 `photos/`、`wall/`、`shots/`）来自 [Lorem Picsum](https://picsum.photos)，遵循 [Unsplash 许可](https://unsplash.com/license)。它们**不是 AGPL 授权的内容**，仅用于展示；请不要把它们单独抽出来当作图库再分发。
+落地页和截图里的示例照片（`apps/web/public/` 下的 `photos/`、`wall/`、`shots/`），以及随应用一起分发、用在“试试示例照片”里的十张照片（`apps/desktop/src-tauri/samples/` 与 `apps/android/app/src/main/assets/samples/`，两端是同一批），都来自 [Lorem Picsum](https://picsum.photos)，遵循 [Unsplash 许可](https://unsplash.com/license)。它们**不是 AGPL 授权的内容**，仅用于展示；请不要把它们单独抽出来当作图库再分发。
 
 ## 名称与标识
 

@@ -2,7 +2,7 @@
 
 # FleetingGleam
 
-**A local-first photo culling app for macOS.** It groups the bursts in thousands of photos, picks the best frame in each group and shows you why. Your photos never leave your computer.
+**A local-first photo culling app for macOS and Android.** It groups the bursts in thousands of photos, picks the best frame in each group and shows you why. Your photos never leave your own devices.
 
 <p align="center">
   <img src="apps/web/public/shots/wall-dark-1200.webp" alt="The FleetingGleam photo wall: frames of one moment sit together and the best one carries a gold star" width="880">
@@ -16,7 +16,7 @@
 - **Scores by kind of scene.** Portraits are judged by faces, sport by focus, and a night shot is not marked down for being dark.
 - **Find photos by describing them.** Type "a small boat by the sea" or "two people". English and Chinese both work.
 - **Learns your taste.** Point it at a folder of photos you picked in the past and it learns your preferences. Keep one style for weddings and another for street.
-- **Organise.** Keepers move to a new folder and the rest go to the Trash, where they can be recovered.
+- **Organise.** Keepers are copied to a new folder (on Android, to your photo album). On a Mac the rest can go to the Trash, where they can be recovered, and put back in one click.
 - **Works on a NAS.** Add your NAS in Settings (server and account; SMB); the app connects with its own built-in SMB client (no Finder, no mounted volume on the desktop), a new project browses the NAS's shares and picks any folder, and photos are mirrored into the app's cache before analysis.
 - **Cloud backup of your taste.** Your settings and what the taste models learned can be backed up automatically to your own Cloudflare R2 bucket, and restored on another computer.
 - **Take your taste with you.** Settings and everything the styles learned export to one file (embeddings and decisions only, never photos or paths) and import on another computer.
@@ -26,8 +26,8 @@
 ## Privacy
 
 - Photos are processed on your computer and **never uploaded**. There is no account.
-- The only thing the app does on the network is **download the model files it needs**, the first time a feature uses them. After that it works fully offline.
-- The models are large, so they are neither in this repository nor in the installer. They are downloaded straight from public sources such as Hugging Face, and every file is checked against a SHA-256 built into the app. Where each file comes from is listed in [docs/MODELS.md](docs/MODELS.md); how it looks to a user is in the [getting started guide](docs/GETTING_STARTED.md#第一次使用先下载模型) (Chinese).
+- The app goes online only to **download the model files it needs**, the first time a feature uses them, and to reach a NAS or a backup bucket that you set up yourself. Otherwise it works fully offline.
+- A few models under 10 MB come with the app. The large ones are neither in this repository nor in the installer. They are downloaded straight from public sources such as Hugging Face, and every file is checked against a SHA-256 built into the app. Where each file comes from is listed in [docs/MODELS.md](docs/MODELS.md); how it looks to a user is in the [getting started guide](docs/GETTING_STARTED.md#第一次使用先下载模型) (Chinese).
 
 ## Quick start
 
@@ -39,7 +39,11 @@ Download the `.dmg` from [Releases](../../releases). It needs **a Mac with Apple
 xattr -cr /Applications/FleetingGleam.app
 ```
 
-Step by step instructions are in the [getting started guide](docs/GETTING_STARTED.md) (Chinese). A Windows version is planned and does not exist yet.
+Step by step instructions are in the [getting started guide](docs/GETTING_STARTED.md) (Chinese).
+
+For **Android**, download `FleetingGleam-android.apk` from the same Release and open it on the phone. It needs **Android 12 or later on a 64-bit ARM phone**. The app is not in an app store, so allow your browser to install apps when Android asks.
+
+A Windows version is planned and does not exist yet.
 
 ### Developing
 
@@ -73,8 +77,10 @@ apps/
   desktop/        Tauri 2 + React + Rust desktop app (macOS first)
     src/          the interface (TypeScript / React)
     src-tauri/    the Rust backend; native/ and vision/ hold the macOS parts written in Swift
+  android/        native Android app (Kotlin + Jetpack Compose); see apps/android/README.md
   web/            landing page (TanStack Start + Tailwind v4 + Motion), in English and Chinese
-packages/         shared types, later
+packages/
+  core/           the shared Rust core (analysis, scoring, NAS, backup) used by both the Mac and the Android app
 docs/             documentation, see the table below
 branding/         logo and icon sources
 DESIGN.md         the design system: colour, type and motion rules
@@ -94,7 +100,8 @@ Most of the documentation is written in Chinese for now. Issues and pull request
 | [docs/RESEARCH.md](docs/RESEARCH.md) (Chinese) | Research notes on culling methods and models, including the aesthetic-model survey |
 | [docs/REVIEW-2026-10-20.md](docs/REVIEW-2026-10-20.md) (Chinese) | Code review of the desktop app: prioritised list of what to improve |
 | [docs/REVIEW-2026-10-21.md](docs/REVIEW-2026-10-21.md) (Chinese) | Second review round: backend, frontend, landing page and CI |
-| [docs/ROADMAP.md](docs/ROADMAP.md) (Chinese) | What comes next: finishing the macOS app, then Android |
+| [docs/ROADMAP.md](docs/ROADMAP.md) (Chinese) | The plan for the macOS and Android apps |
+| [apps/android/README.md](apps/android/README.md) (Chinese) | Building and running the Android app |
 | [DESIGN.md](DESIGN.md) | The design system |
 | [CHANGELOG.md](CHANGELOG.md) (Chinese) | Release notes |
 | [SECURITY.md](SECURITY.md) (Chinese) | How to report a security problem |
