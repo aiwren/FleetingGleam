@@ -297,14 +297,16 @@ impl Pending {
             Job::Nothing => {}
             Job::Append(lines) => append_lines(&self.path, &self.disk, &lines),
             Job::Compact(entries, seq) => {
-                let ok = write_base(&self.path, &entries, seq);
-                if ok {
-                    let _ = std::fs::remove_file(old_log_path(&self.path));
-                    self.disk.base.store(std::fs::metadata(&self.path).map_or(0, |m| m.len()), Ordering::Relaxed);
-                } else {
-                    // 快照里有没进日志的改动：旧日志留着（下次读还要它），下次存再整理一次
-                    crate::platform::log(&format!("{}: 分析缓存整理没写成，下次再试", self.path.display()));
-                    self.disk.retry.store(true, Ordering::Relaxed);
+                match write_base(&self.path, &entries, seq) {
+                    Ok(()) => {
+                        let _ = std::fs::remove_file(old_log_path(&self.path));
+                        self.disk.base.store(std::fs::metadata(&self.path).map_or(0, |m| m.len()), Ordering::Relaxed);
+                    }
+                    Err(e) => {
+                        // 快照里有没进日志的改动：旧日志留着（下次读还要它），下次存再整理一次
+                        crate::platform::log(&format!("{}: 分析缓存整理没写成，下次再试：{e}", self.path.display()));
+                        self.disk.retry.store(true, Ordering::Relaxed);
+                    }
                 }
                 self.disk.compacting.store(false, Ordering::Relaxed);
             }
@@ -358,19 +360,50 @@ fn append_lines(path: &Path, disk: &Disk, lines: &[(u64, String, Option<Arc<Entr
     }
 }
 
-/// 新底稿：先写临时文件、flush、fsync，再改名；断电只会留下旧的或新的，不会是半个。
-fn write_base(path: &Path, entries: &HashMap<String, Arc<Entry>>, seq: u64) -> bool {
+/// 新底稿：先写临时文件、flush、fsync，再改名；断电只会留下旧的或新的，不会是半个。出错时说是哪一步、为什么（调用方记日志）。
+fn write_base(path: &Path, entries: &HashMap<String, Arc<Entry>>, seq: u64) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
     let tmp = path.with_extension("tmp");
-    let Ok(f) = std::fs::File::create(&tmp) else { return false };
+    let f = std::fs::File::create(&tmp).map_err(|e| format!("建临时文件：{e}"))?;
     // 边产出边写（几百 MB 的文件在内存里不再多拷一份）
     let mut w = std::io::BufWriter::with_capacity(1 << 20, f);
-    serde_json::to_writer(&mut w, &BaseOut { entries, seq }).is_ok()
-        && std::io::Write::flush(&mut w).is_ok()
-        && w.get_ref().sync_all().is_ok()
-        && std::fs::rename(&tmp, path).is_ok()
+    let r = serde_json::to_writer(&mut w, &BaseOut { entries, seq })
+        .map_err(|e| format!("写：{e}"))
+        .and_then(|_| std::io::Write::flush(&mut w).map_err(|e| format!("写：{e}")))
+        .and_then(|_| w.get_ref().sync_all().map_err(|e| format!("落盘：{e}")))
+        .and_then(|_| std::fs::rename(&tmp, path).map_err(|e| format!("改名：{e}")));
+    if r.is_err() {
+        drop(w);
+        let _ = std::fs::remove_file(&tmp);
+    }
+    r
+}
+
+/// 读底稿。没有文件就是空的；读出来解析不了（损坏、写坏了）的改名留档（`quarantine_name`），不当空缓存让下次整理覆盖掉——
+/// 几万张的分析结果值得留着查；读都读不了（没权限之类）的说 `Err`，调用方只读。只读时不改名（文件是别人的）。
+fn read_base(path: &Path, read_only: bool) -> Result<Option<BaseIn>, String> {
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.to_string()),
+    };
+    match serde_json::from_slice(&bytes) {
+        Ok(b) => Ok(Some(b)),
+        Err(e) if read_only => {
+            crate::platform::log(&format!("{}: 读不懂（{e}），这个进程只读，不动它", path.display()));
+            Ok(None)
+        }
+        Err(e) => {
+            let aside = crate::quarantine_name(path);
+            crate::platform::log(&format!("{}: 读不懂（{e}），改名留档为 {}，重新开始", path.display(), aside.display()));
+            if let Err(e) = std::fs::rename(path, &aside) {
+                return Err(format!("留档没成功：{e}"));
+            }
+            Ok(None)
+        }
+    }
 }
 
 impl Cache {
@@ -380,7 +413,15 @@ impl Cache {
         if read_only {
             crate::platform::log(&format!("{}: 另一个惊鸿进程正在用这份分析缓存，这个进程只读（分析结果不落盘）", path.display()));
         }
-        let base: Option<BaseIn> = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok());
+        let base: Option<BaseIn> = match read_base(&path, read_only) {
+            Ok(b) => b,
+            Err(e) => {
+                // 底稿在、却读不了：照有的往下读，但什么都不写，免得下次整理把它覆盖掉
+                crate::platform::log(&format!("{}: 分析缓存读不了，这个进程只读：{e}", path.display()));
+                read_only = true;
+                None
+            }
+        };
         let mut base_len = std::fs::metadata(&path).map_or(0, |m| m.len());
         // 旧版本写的底稿（没有 `seq`）：日志是它之前的残迹，不认
         let legacy = base.as_ref().map_or(false, |b| b.seq.is_none());
@@ -398,11 +439,12 @@ impl Cache {
             }
             had_old = false;
             // 立刻写成带 `seq` 的底稿；写不成就只读（见上面的说明）
-            if write_base(&path, &c.entries, c.seq) {
-                base_len = std::fs::metadata(&path).map_or(0, |m| m.len());
-            } else {
-                crate::platform::log(&format!("{}: 旧底稿没能整理，这个进程只读", path.display()));
-                read_only = true;
+            match write_base(&path, &c.entries, c.seq) {
+                Ok(()) => base_len = std::fs::metadata(&path).map_or(0, |m| m.len()),
+                Err(e) => {
+                    crate::platform::log(&format!("{}: 旧底稿没能整理，这个进程只读：{e}", path.display()));
+                    read_only = true;
+                }
             }
         }
         // 日志：旧的（上次整理没做完）在前，当前的在后；同一张照片以序号最大的一行为准，底稿已经包含的跳过
@@ -897,6 +939,26 @@ mod tests {
         assert!(!log_path(&path).exists() && !old_log_path(&path).exists(), "残迹删掉");
         drop(c);
         assert_eq!(Cache::load(path.clone()).photo("/p/0.jpg").unwrap().rotation, 0);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// 底稿坏了：改名留档，不当空缓存让下次整理覆盖；日志里的照样读回来。
+    #[test]
+    fn a_damaged_base_is_set_aside_not_overwritten() {
+        let path = place("damaged");
+        let mut c = Cache::load(path.clone());
+        c.put(1, 1, "t", &photo(0));
+        c.save().write();
+        drop(c);
+        std::fs::write(&path, b"{\"entries\": {\"/p/9.jpg\": {\"tag\"").unwrap();
+        let mut c = Cache::load(path.clone());
+        assert_eq!(c.entries.keys().collect::<Vec<_>>(), vec!["/p/0.jpg"], "日志里的还在");
+        assert!(!path.exists());
+        let aside: Vec<_> = std::fs::read_dir(path.parent().unwrap()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).filter(|n| n.starts_with("analysis-cache.json.corrupt-")).collect();
+        assert_eq!(aside.len(), 1, "坏的那份留着");
+        c.disk.retry.store(true, Ordering::Relaxed);
+        c.save().write();
+        assert!(path.exists(), "新底稿另写一份");
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
