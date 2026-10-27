@@ -120,6 +120,7 @@
   "etaMinutes": "{{n}} minutes",
   "etaHours": "{{n}} hours",
   "start": "Start analysis",
+  "waitModel": "Waiting for the model…",
   "reselect": "Choose another",
   "pickMode": "Selection style",
   "pickModeBest": "Best photos first",
@@ -223,6 +224,16 @@
   "remove": "Remove",
   "title": "Downloaded models",
   "titleDesc": "Models are only downloaded when needed and then work offline. Remove the ones you do not use; you will be asked again when they are needed."
+ },
+ "drop": {
+  "title": "Drop to start a project",
+  "body": "Drop folders, or photos (their folder is used)"
+ },
+ "crash": {
+  "title": "Something went wrong in this part of the window",
+  "body": "Your projects and marks are saved and nothing is lost. Try again; if it keeps happening, reload the window.",
+  "retry": "Try again",
+  "reload": "Reload"
  },
  "errors": {
   "space": "Not enough disk space: {{need}} is needed and only {{free}} is free. Make some room and try again.",
@@ -630,6 +641,8 @@
   "proxyHint": "e.g. 127.0.0.1:7890",
   "proxyUseSystem": "Follow the system",
   "proxySave": "Save",
+  "proxyBypass": "The system skips the proxy for: {{list}}. FleetingGleam can't bypass it per address yet, so these go through the proxy too; if backup storage on your local network can't be reached, allow it in your proxy app.",
+  "proxySimple": "simple host names",
   "proxyBad": {
    "port": "Add the port, e.g. 127.0.0.1:7890",
    "host": "That address can't be read, e.g. 127.0.0.1:7890",
