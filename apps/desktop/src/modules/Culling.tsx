@@ -398,11 +398,17 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   // A photo marked by hand changes only that photo (what is kept otherwise does not depend on anyone's override unless a ceiling or "one per
   // group" is on), so it is patched here, at once, and the whole decision table is not asked for again and sent over for every click.
   const localPatch = useRef<{ path: string; state: State; photos: Photo[] } | null>(null);
+  /** 有一次 decide_photos 还没回来（它的 token）；0 = 没有。 */
+  const decideInflight = useRef(0);
+  const decisionsRef = useRef(decisions);
+  decisionsRef.current = decisions;
   useEffect(() => {
-    if (photos.length === 0) { setDecisions(new Map()); return; }
+    if (photos.length === 0) { decideInflight.current = 0; setDecisions(new Map()); return; }
     const lp = localPatch.current;
     localPatch.current = null;
-    if (lp && lp.photos === photos && overrides.get(lp.path) === lp.state) {
+    // 本地补丁只在手里的表是最新的时候打：有请求在途（比如分析刚结束、正式判定还在路上）或表还是空的，
+    // 打了补丁就会作废那个回包，墙上的判定一直空着或停在上一轮（审查第 41 条）。这两种情况照常整表再要一次
+    if (lp && lp.photos === photos && overrides.get(lp.path) === lp.state && !decideInflight.current && decisionsRef.current.size > 0) {
       decideToken.current++;   // an answer still on its way is out of date now
       setDecisions((m) => {
         const cur = m.get(lp.path);
@@ -414,10 +420,11 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
       return;
     }
     const tok = ++decideToken.current;
+    decideInflight.current = tok;
     invoke<Record<string, Decision>>("decide_photos", { key: project?.id ?? "", keepRatio, pickMode, onePerGroup, overrides: Object.fromEntries(overrides) })
-      .then((res) => { if (tok === decideToken.current) setDecisions(new Map(Object.entries(res))); })
+      .then((res) => { if (tok === decideToken.current) { decideInflight.current = 0; setDecisions(new Map(Object.entries(res))); } })
       // "stale": the backend holds another project's photos (a scan of this one is on its way); the next scan result asks again
-      .catch((e) => { if (tok === decideToken.current) { if (String(e) !== "stale") console.error("decide_photos:", e); setDecisions(new Map()); } });
+      .catch((e) => { if (tok === decideToken.current) { decideInflight.current = 0; if (String(e) !== "stale") console.error("decide_photos:", e); setDecisions(new Map()); } });
   }, [photos, keepRatio, pickMode, onePerGroup, overrides, project?.id]);
   const counts = useMemo(() => {
     const c = { all: photos.length, keep: 0, review: 0, reject: 0 };
