@@ -23,6 +23,8 @@ fleetinggleam-core.workspace = true
 tauri = { version = "2", features = ["protocol-asset", "macos-private-api"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
+# 同一时间只开一个惊鸿（第二次打开只是把已有的窗口叫到前面）：两个进程共用数据目录会把分析缓存写乱（审查第 45 条）
+tauri-plugin-single-instance = "2"
 image.workspace = true
 rayon.workspace = true
 walkdir.workspace = true
