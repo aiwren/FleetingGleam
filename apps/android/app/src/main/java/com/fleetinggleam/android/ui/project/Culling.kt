@@ -173,6 +173,27 @@ class CullState {
     fun bumpHint(n: Int = 1) { hintUses = if (n == 99) 99 else maxOf(hintUses, hintUses + 1); UiPrefs.put("hint.dock", hintUses) }
     fun select(path: String?, byTap: Boolean = false) { selectedByTap = byTap; selected = path }
     val filtered: Boolean get() = sceneFilter != null || personFilter != null
+
+    companion object {
+        /**
+         * 离开项目再回来时记得的那几样（审查第二批：以前一切归零）：页签、场景 / 人物筛选、选中的那张、是不是在场景页。
+         * 项目页外面（AppShell）按项目给了一个 SaveableStateProvider，rememberSaveable 才能活过"离开项目"；进程被杀后重开也还在。
+         */
+        val Saver: androidx.compose.runtime.saveable.Saver<CullState, Any> = androidx.compose.runtime.saveable.mapSaver(
+            save = { s ->
+                buildMap {
+                    put("mode", s.mode); put("sceneView", s.sceneView)
+                    s.sceneFilter?.let { put("scene", it) }; s.personFilter?.let { put("person", it) }; s.selected?.let { put("selected", it) }
+                }
+            },
+            restore = { m ->
+                CullState().apply {
+                    mode = m["mode"] as? String ?: "all"; sceneView = m["sceneView"] as? Boolean ?: false
+                    sceneFilter = m["scene"] as? Int; personFilter = m["person"] as? Int; selected = m["selected"] as? String
+                }
+            },
+        )
+    }
 }
 
 /** 把这一块的布局坐标登记进 `map[key]`（[CullState.coords] / [CullState.tabCoords]）；离开组合时注销自己登记的那份。 */

@@ -91,6 +91,8 @@ fun AppShell() {
     val backdrop = com.kyant.backdrop.backdrops.rememberLayerBackdrop()
     /** 浮在最上面的玻璃件（菜单）：画在内容层之外，所以能折射整页。 */
     val overlay = remember { com.fleetinggleam.android.ui.components.OverlayState() }
+    /** 每个项目页一份可保存的状态：离开项目（回首页、去设置）再回来，页签、筛选、选中、滚到哪儿都还在（审查第二批）。 */
+    val projectStates = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
 
     // 起始屏的"连接 NAS"等：切到设置页签，分区由设置页自己进
     val wanted by com.fleetinggleam.android.core.Nav.settings.collectAsState()
@@ -118,7 +120,7 @@ fun AppShell() {
                 when {
                     s == "styles" -> StylesScreen(from = styles ?: "settings", onBack = { styles = null })
                     s == "settings" -> SettingsScreen(onOpenStyles = { styles = "settings" })
-                    s.startsWith("project:") -> ProjectScreen(onOpenStyles = { styles = "culling" })
+                    s.startsWith("project:") -> projectStates.SaveableStateProvider(s) { ProjectScreen(onOpenStyles = { styles = "culling" }) }
                     else -> ProjectHome(onOpenStyles = { styles = "culling" })
                 }
             }

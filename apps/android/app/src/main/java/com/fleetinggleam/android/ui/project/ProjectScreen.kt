@@ -85,8 +85,8 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
     var settingsOpen by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
 
-    // 选片界面的状态：换项目整个换一份
-    val cull = remember(project.id) { CullState() }
+    // 选片界面的状态：换项目整个换一份；页签、筛选、选中、场景页离开再回来还在（外面按项目给了 SaveableStateProvider）
+    val cull = rememberSaveable(project.id, saver = CullState.Saver) { CullState() }
     val sceneText by com.fleetinggleam.android.core.Scenes.texts.collectAsState()
     val data = rememberCullData(cull, photos, decisions, project.sort ?: "group", sceneText)
     SearchEffects(project, cull, phase == Phase.Done)
