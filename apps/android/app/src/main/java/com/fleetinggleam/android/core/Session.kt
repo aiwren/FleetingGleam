@@ -223,7 +223,10 @@ object Session {
                 val off = shares.filter { !it.connected }
                 if (off.isNotEmpty()) { nasOff.value = off.joinToString(", ") { it.name }; nasFailure.value = off.firstNotNullOfOrNull { s -> s.failure?.takeIf { it != "net" } } ?: "net" }
                 // a folder picked through the system picker that has no path: bring its new photos into the mirror first
-                Media.syncMirrors(app, project.folders, { done, total, name -> nasProg.value = if (done >= total) null else NasProgress(name, done, total) }, { tok != token })
+                // 读网盘、写闪存，都是阻塞 IO：放到 IO 线程池上，别占着只有核数那么多的 Default 线程（审查第二批）
+                kotlinx.coroutines.withContext(Dispatchers.IO) {
+                    Media.syncMirrors(app, project.folders, { done, total, name -> nasProg.value = if (done >= total) null else NasProgress(name, done, total) }, { tok != token })
+                }
                 nasProg.value = null
                 val probe = try {
                     Core.get<Probe>("probe_folder", args("dirs" to project.folders, "compute" to "auto", "quality" to Strategy.currentTier()))
