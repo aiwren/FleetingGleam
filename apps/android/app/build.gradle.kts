@@ -33,6 +33,12 @@ val cargoPath = listOf(cargoBin.absolutePath, System.getenv("PATH") ?: "").joinT
 android {
     namespace = "com.fleetinggleam.android"
     compileSdk = 36
+    // NDK：本机用构建插件默认的版本（装在 SDK 里）；CI 的运行环境里没有那个版本，改用 ANDROID_NDK_HOME 指的那份（ci.yml 里设好）
+    // （插件会拿版本号去核对这份 NDK，所以版本号也从它的 source.properties 读，不然对不上就当没装）
+    System.getenv("ANDROID_NDK_HOME")?.let(::File)?.takeIf { File(it, "source.properties").isFile }?.let { dir ->
+        ndkPath = dir.path
+        File(dir, "source.properties").readLines().firstOrNull { it.startsWith("Pkg.Revision") }?.substringAfter("=")?.trim()?.let { ndkVersion = it }
+    }
 
     defaultConfig {
         applicationId = "com.fleetinggleam.android"
