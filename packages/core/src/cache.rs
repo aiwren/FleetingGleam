@@ -270,31 +270,50 @@ impl Pending {
     }
 }
 
-/// 一批日志行：先在锁外序列化好，再在日志锁里一次追加、fsync；写坏一半就截回原来的长度，不留半行。
-fn append_lines(path: &Path, disk: &Disk, lines: &[(u64, String, Option<Arc<Entry>>)]) {
+/// 几行日志序列化成要追加的字节。
+fn encode_lines(lines: &[(u64, String, Option<Arc<Entry>>)]) -> Result<Vec<u8>, String> {
     let mut buf = Vec::with_capacity(lines.len() * 8 * 1024);
     for (seq, key, e) in lines {
-        if serde_json::to_writer(&mut buf, &LineOut { seq: *seq, key, e: e.as_deref() }).is_err() {
-            return;
-        }
+        serde_json::to_writer(&mut buf, &LineOut { seq: *seq, key, e: e.as_deref() }).map_err(|e| format!("{key}: {e}"))?;
         buf.push(b'\n');
     }
+    Ok(buf)
+}
+
+/// 在日志锁里（`len` 是锁着的日志长度）把 `buf` 追加到当前日志、fsync；写坏一半就截回原来的长度，不留半行。
+fn append_locked(path: &Path, len: &mut u64, buf: &[u8]) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let mut len = disk.log.lock().unwrap_or_else(|e| e.into_inner());
-    let file = std::fs::OpenOptions::new().create(true).append(true).open(log_path(path));
-    let Ok(mut f) = file else { return };
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(log_path(path)).map_err(|e| e.to_string())?;
     let start = f.metadata().map_or(*len, |m| m.len());
-    match std::io::Write::write_all(&mut f, &buf).and_then(|_| f.sync_data()) {
-        Ok(()) => *len = start + buf.len() as u64,
+    match std::io::Write::write_all(&mut f, buf).and_then(|_| f.sync_data()) {
+        Ok(()) => {
+            *len = start + buf.len() as u64;
+            Ok(())
+        }
         Err(e) => {
-            crate::platform::log(&format!("{}: 分析缓存写不进去：{e}", log_path(path).display()));
             let _ = f.set_len(start);
             *len = start;
+            Err(e.to_string())
         }
     }
-    disk.log_len.store(*len, Ordering::Relaxed);
+}
+
+/// 一批日志行：先在锁外序列化好，再在日志锁里一次追加、fsync。
+/// 没写成（序列化不了、打不开、写不进、fsync 失败）时这批行就丢了，但它们还在内存的记录里：置 `retry`，下一次存整理一次、
+/// 写整份快照，把它们补进底稿（以前整文件保存会自愈，改成日志后这里不补就再也不写了）。
+fn append_lines(path: &Path, disk: &Disk, lines: &[(u64, String, Option<Arc<Entry>>)]) {
+    let r = encode_lines(lines).and_then(|buf| {
+        let mut len = disk.log.lock().unwrap_or_else(|e| e.into_inner());
+        let r = append_locked(path, &mut len, &buf);
+        disk.log_len.store(*len, Ordering::Relaxed);
+        r
+    });
+    if let Err(why) = r {
+        crate::platform::log(&format!("{}: 分析缓存写不进去，下次存时整份重写：{why}", log_path(path).display()));
+        disk.retry.store(true, Ordering::Relaxed);
+    }
 }
 
 /// 新底稿：先写临时文件、flush、fsync，再改名；断电只会留下旧的或新的，不会是半个。
@@ -732,6 +751,28 @@ mod tests {
         p.write();
         assert!(!old_log_path(&path).exists());
         assert_eq!(Cache::load(path.clone()).entries.len(), 4);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// 追加没写成（这里让日志路径是个文件夹，打不开）：那批行不丢，下一次存改成整理、整份快照写进底稿。
+    #[test]
+    fn a_failed_append_is_made_good_by_the_next_compaction() {
+        let path = place("append-fail");
+        let mut c = Cache::load(path.clone());
+        std::fs::create_dir_all(log_path(&path)).unwrap();
+        for i in 0..3 {
+            c.put(1, 1, "t", &photo(i));
+        }
+        let p = c.save();
+        assert!(matches!(p.job, Job::Append(..)));
+        p.write();
+        assert!(c.disk.retry.load(Ordering::Relaxed), "写不进去就记下要重来");
+        std::fs::remove_dir_all(log_path(&path)).unwrap();
+        c.put(1, 1, "t", &photo(3));
+        let p = c.save();
+        assert!(matches!(p.job, Job::Compact(..)), "下一次存整理");
+        p.write();
+        assert_eq!(Cache::load(path.clone()).entries.len(), 4, "没写进日志的三张也在");
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
