@@ -123,9 +123,26 @@ enum Fail {
     Fatal(String),
 }
 
-/// 下了一半的文件：`名字.part`，取消、断网都留着，下次从它的末尾接着下。
-fn part_of(dir: &Path, name: &str) -> PathBuf {
-    dir.join(format!("{name}.part"))
+/// 下了一半的文件：`名字.<SHA-256 前 12 位>.part`，取消、断网都留着，下次从它的末尾接着下。名字里带着应有的校验值：
+/// 清单换了版本（同名文件换了内容）时旧的 `.part` 对不上名字，不会被拿来盲目续传。
+fn part_of(dir: &Path, name: &str, sha: &str) -> PathBuf {
+    let tag: String = sha.chars().take(12).collect::<String>().to_lowercase();
+    dir.join(format!("{name}.{tag}.part"))
+}
+
+/// 这个文件别的版本留下的 `.part`（以前不带校验值的 `名字.part`，或校验值不同的）：不能续传，删掉。
+fn drop_stale_parts(dir: &Path, name: &str, keep: &Path) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    for e in rd.filter_map(Result::ok) {
+        let n = e.file_name().to_string_lossy().into_owned();
+        if n.starts_with(name) && n.ends_with(".part") && e.path() != keep {
+            let mid = &n[name.len()..n.len() - ".part".len()];
+            // `名字.part` 或 `名字.<十六进制>.part`：别的文件名只是开头一样的（`a.onnx` 与 `a.onnx_data`）不碰
+            if mid.is_empty() || (mid.starts_with('.') && mid[1..].chars().all(|c| c.is_ascii_hexdigit())) {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
 }
 
 /// 已经下了多少（不超过应有大小；更大的说明不对，当作没有）。
@@ -152,7 +169,7 @@ fn missing<'a>(dir: &Path, p: &'a Pack) -> Result<Vec<(&'a str, &'static FileInf
 /// files, is not counted).
 pub fn manifest_sizes(dir: &Path, id: &str) -> Result<u64, String> {
     let p = pack(id).ok_or("unknown pack")?;
-    Ok(missing(dir, p)?.iter().map(|(name, i, _)| i.size - have(&part_of(dir, name), i.size)).sum())
+    Ok(missing(dir, p)?.iter().map(|(name, i, _)| i.size - have(&part_of(dir, name, &i.sha256), i.size)).sum())
 }
 
 /// Downloads what a pack is missing into `dir`. 先看空间（还要下的 × 1.1），不够就 `space:` 错误、一个字节都不下；
@@ -163,11 +180,14 @@ pub fn download(dir: &Path, id: &str, cancel: &AtomicBool, on_progress: &dyn Fn(
     std::fs::create_dir_all(dir).map_err(|e| crate::errors::io(&e, dir, 0))?;
     let todo = missing(dir, p)?;
     let total: u64 = todo.iter().map(|(_, i, _)| i.size).sum();
-    let left: u64 = todo.iter().map(|(name, i, _)| i.size - have(&part_of(dir, name), i.size)).sum();
+    for (name, i, _) in &todo {
+        drop_stale_parts(dir, name, &part_of(dir, name, &i.sha256));
+    }
+    let left: u64 = todo.iter().map(|(name, i, _)| i.size - have(&part_of(dir, name, &i.sha256), i.size)).sum();
     crate::errors::check_space(dir, (left as f64 * SPACE_MARGIN).ceil() as u64)?;
     let mut done_before = 0u64;
     for (name, info, url) in todo {
-        let part = part_of(dir, name);
+        let part = part_of(dir, name, &info.sha256);
         fetch(url, &part, info.size, &info.sha256, cancel, &|got| on_progress(Progress { pack: id.into(), file: name.into(), done: done_before + got, total }))
             .map_err(|e| crate::errors::context(name, &e))?;
         std::fs::rename(&part, dir.join(name)).map_err(|e| crate::errors::io(&e, dir, 0))?;
@@ -231,7 +251,15 @@ fn fetch_once(url: &str, part: &Path, size: u64, cancel: &AtomicBool, progress: 
         Err(e) => return Err(Fail::Net(e.to_string())),
     };
     let resumed = got > 0 && resp.status() == 206;
-    if !resumed {
+    if resumed {
+        // 服务器说它从哪里接着发（`Content-Range: bytes 起点-终点/总长`）：起点不是我们要的、或总长不是这个文件的，
+        // 接上去就是一个坏文件，要等下完校验才发现。扔掉 `.part` 从头来
+        let range = resp.header("Content-Range").and_then(parse_content_range);
+        if !matches!(range, Some((start, total)) if start == got && total.map_or(true, |t| t == size)) {
+            let _ = std::fs::remove_file(part);
+            return Err(Fail::Net(format!("the server resumed at the wrong place ({:?}); starting over", resp.header("Content-Range"))));
+        }
+    } else {
         got = 0;
     }
     let file = std::fs::OpenOptions::new().create(true).write(true).append(resumed).truncate(!resumed).open(part).map_err(|e| Fail::Fatal(crate::errors::io(&e, part, size - got)))?;
@@ -275,11 +303,24 @@ fn fetch_once(url: &str, part: &Path, size: u64, cancel: &AtomicBool, progress: 
     Ok(())
 }
 
+/// `bytes 起点-终点/总长`（总长可以是 `*`）→ (起点, 总长)。
+fn parse_content_range(v: &str) -> Option<(u64, Option<u64>)> {
+    let rest = v.trim().strip_prefix("bytes")?.trim_start();
+    let (span, total) = rest.split_once('/')?;
+    let (start, _) = span.split_once('-')?;
+    let total = match total.trim() {
+        "*" => None,
+        t => Some(t.parse().ok()?),
+    };
+    Some((start.trim().parse().ok()?, total))
+}
+
 pub fn remove(dir: &Path, id: &str) -> Result<(), String> {
     let p = pack(id).ok_or("unknown pack")?;
     for f in p.files {
         let _ = std::fs::remove_file(dir.join(f));
-        let _ = std::fs::remove_file(part_of(dir, f));
+        // 各个版本的 `.part` 都删
+        drop_stale_parts(dir, f, Path::new(""));
     }
     Ok(())
 }
@@ -351,8 +392,11 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("fg-packs-one-of-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join(format!("{here}.part")), vec![0u8; 1000]).unwrap();
+        std::fs::write(part_of(&dir, here, &m[here].sha256), vec![0u8; 1000]).unwrap();
         assert_eq!(manifest_sizes(&dir, "standard").unwrap(), want - 1000, "已经下了的 1000 字节不再算");
+        // 不带校验值的老 `.part`（不知道是哪个版本的）不算
+        std::fs::write(dir.join(format!("{here}.part")), vec![0u8; 500]).unwrap();
+        assert_eq!(manifest_sizes(&dir, "standard").unwrap(), want - 1000);
         std::fs::write(dir.join(other), b"x").unwrap();
         std::fs::write(dir.join(head), b"x").unwrap();
         assert!(installed(&dir, pack("standard").unwrap()), "另一份在也能用");
@@ -365,12 +409,18 @@ mod tests {
     /// 本地的小 HTTP 服务器，只回一个文件：认 `Range`；`cuts[i]` 是第 i 次连接只发多少字节就断（没有就发完）。
     /// 返回地址和每次请求带的 Range 头。
     fn serve(body: Vec<u8>, cuts: Vec<usize>) -> (String, std::sync::Arc<std::sync::Mutex<Vec<Option<String>>>>) {
+        serve_shifted(body, cuts, 0)
+    }
+
+    /// 同 `serve`，但第一次续传时从要的地方往前 `shift` 字节发（并如实写在 Content-Range 里）：一个不按要求续传的服务器。
+    fn serve_shifted(body: Vec<u8>, cuts: Vec<usize>, shift: usize) -> (String, std::sync::Arc<std::sync::Mutex<Vec<Option<String>>>>) {
         use std::io::BufRead;
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/model.onnx", listener.local_addr().unwrap());
         let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let log = seen.clone();
         std::thread::spawn(move || {
+            let mut shift = shift;
             for (i, conn) in listener.incoming().enumerate() {
                 let Ok(mut conn) = conn else { continue };
                 let mut reader = std::io::BufReader::new(conn.try_clone().unwrap());
@@ -385,7 +435,10 @@ mod tests {
                     }
                 }
                 log.lock().unwrap().push(range.clone());
-                let from: usize = range.as_deref().and_then(|r| r.strip_prefix("bytes=")).and_then(|r| r.trim_end_matches('-').parse().ok()).unwrap_or(0);
+                let mut from: usize = range.as_deref().and_then(|r| r.strip_prefix("bytes=")).and_then(|r| r.trim_end_matches('-').parse().ok()).unwrap_or(0);
+                if from > 0 {
+                    from = from.saturating_sub(std::mem::take(&mut shift)).max(1);
+                }
                 let rest = &body[from..];
                 let head = if from > 0 {
                     format!("HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {from}-{}/{}\r\nConnection: close\r\n\r\n", rest.len(), body.len() - 1, body.len())
@@ -449,6 +502,44 @@ mod tests {
         cancel.store(true, Ordering::Relaxed);
         assert_eq!(fetch(&url, &part, body.len() as u64, &sha, &cancel, &|_| {}).unwrap_err(), "cancelled");
         assert!(part.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 服务器续传的起点不是要的那里：不接上去（那样下完才校验失败），扔掉 `.part` 从头下。
+    #[test]
+    fn a_resume_from_the_wrong_place_starts_over() {
+        let (body, sha) = body();
+        let (url, seen) = serve_shifted(body.clone(), vec![], 1000);
+        let dir = std::env::temp_dir().join(format!("fg-packs-shift-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let part = dir.join("model.onnx.part");
+        std::fs::write(&part, &body[..50_000]).unwrap();
+        fetch(&url, &part, body.len() as u64, &sha, &AtomicBool::new(false), &|_| {}).unwrap();
+        assert_eq!(std::fs::read(&part).unwrap(), body);
+        assert_eq!(seen.lock().unwrap().clone(), vec![Some("bytes=50000-".to_string()), None], "第二次从头要");
+        assert_eq!(parse_content_range("bytes 100-199/1000"), Some((100, Some(1000))));
+        assert_eq!(parse_content_range("bytes 5-9/*"), Some((5, None)));
+        assert_eq!(parse_content_range("items 1-2/3"), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `.part` 的名字带着应有的校验值：别的版本留下的（老的不带校验值的、校验值不同的）下载前删掉，删包时各版本一起删。
+    #[test]
+    fn parts_of_another_version_are_not_resumed() {
+        let dir = std::env::temp_dir().join(format!("fg-packs-stale-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mine = part_of(&dir, "a.onnx", &"AB".repeat(32));
+        assert_eq!(mine.file_name().unwrap().to_string_lossy(), "a.onnx.abababababab.part");
+        for n in ["a.onnx.part", "a.onnx.0123456789ab.part", "a.onnx_data.part", "b.onnx.part"] {
+            std::fs::write(dir.join(n), b"x").unwrap();
+        }
+        std::fs::write(&mine, b"x").unwrap();
+        drop_stale_parts(&dir, "a.onnx", &mine);
+        let mut left: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        left.sort();
+        assert_eq!(left, vec!["a.onnx.abababababab.part", "a.onnx_data.part", "b.onnx.part"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
