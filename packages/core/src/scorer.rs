@@ -39,7 +39,7 @@ fn default_lo() -> f32 { 3.0 }
 fn default_hi() -> f32 { 7.0 }
 
 /// Which CLIP + aesthetic head to use.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Quality {
     /// ViT-B/32: small and quick.
     Fast,

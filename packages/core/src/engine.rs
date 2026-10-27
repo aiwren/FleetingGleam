@@ -357,6 +357,76 @@ pub struct Machine {
 
 // ---------------------------------------------------------------- 引擎
 
+/// 加载好、留着复用的东西（CLIP 打分器）：按键各留一份，闲了 `IDLE` 就放掉。以前每次分析、加文件夹、建搜索索引、
+/// 场景命名都重新加载一遍 CLIP（几百 MB、几秒）；一直留着又白占几百 MB 内存，所以闲 10 分钟放。
+/// "闲"是没人拿着它（`Arc` 只剩这里一份）的时间：一次分析跑一小时，结束后才开始算。
+struct Keep<K, T> {
+    slots: Mutex<HashMap<K, (Arc<T>, std::time::Instant)>>,
+    /// 有一条线程在定时清理。
+    reaper: AtomicBool,
+}
+
+impl<K: std::hash::Hash + Eq + Send + 'static, T: Send + Sync + 'static> Keep<K, T> {
+    const IDLE: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+    const EVERY: std::time::Duration = std::time::Duration::from_secs(60);
+
+    fn new() -> Arc<Self> {
+        Arc::new(Keep { slots: Mutex::new(HashMap::new()), reaper: AtomicBool::new(false) })
+    }
+
+    /// 键对应的那份；没有就 `make` 一份留下（加载在锁里：同一时刻两个调用不会各加载一份）。加载失败不留。
+    fn get(self: &Arc<Self>, key: K, make: impl FnOnce() -> Result<T, String>) -> Result<Arc<T>, String> {
+        let mut slots = self.slots.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((v, used)) = slots.get_mut(&key) {
+            *used = std::time::Instant::now();
+            return Ok(v.clone());
+        }
+        let v = Arc::new(make()?);
+        slots.insert(key, (v.clone(), std::time::Instant::now()));
+        drop(slots);
+        self.start_reaper();
+        Ok(v)
+    }
+
+    fn clear(&self) {
+        self.slots.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    }
+
+    /// 放掉闲了 `IDLE` 的；还有人拿着的刷新时间。返回还留着几份；一份不剩时清理线程收工（在锁里标记，和 `get` 不会错过）。
+    fn reap(&self, now: std::time::Instant) -> usize {
+        let mut slots = self.slots.lock().unwrap_or_else(|e| e.into_inner());
+        slots.retain(|_, (v, used)| {
+            if Arc::strong_count(v) > 1 {
+                *used = now;
+                true
+            } else {
+                now.saturating_duration_since(*used) < Self::IDLE
+            }
+        });
+        if slots.is_empty() {
+            self.reaper.store(false, Ordering::Relaxed);
+        }
+        slots.len()
+    }
+
+    fn start_reaper(self: &Arc<Self>) {
+        if self.reaper.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        let weak = Arc::downgrade(self);
+        let spawned = std::thread::Builder::new().name("fg-keep-idle".into()).spawn(move || loop {
+            std::thread::sleep(Self::EVERY);
+            match weak.upgrade() {
+                Some(me) if me.reap(std::time::Instant::now()) > 0 => {}
+                _ => return,
+            }
+        });
+        if spawned.is_err() {
+            self.reaper.store(false, Ordering::Relaxed);
+        }
+    }
+}
+
 #[derive(Default)]
 struct Downloads {
     cancel: AtomicBool,
@@ -400,6 +470,8 @@ pub struct Engine {
     /// 每台 NAS 最后一次连接失败的原因（带前缀），连上就清掉；`ShareStatus.error` 给界面分开说"密码不对"和"连不上"。
     nas_errors: Mutex<HashMap<String, String>>,
     downloads: Downloads,
+    /// 加载好的 CLIP 打分器，按 (实际档位, 用不用加速器) 各一份，闲 10 分钟放掉（见 `Keep`）。
+    scorers: Arc<Keep<(Quality, bool), ClipScorer>>,
     /// `export_cancel` 设上：正在进行的导出做完当前这张就停。
     export_stop: Arc<AtomicBool>,
     /// Writes of `projects.json` are serialised and go through a temporary file and a rename.
@@ -459,6 +531,7 @@ impl Engine {
             nas: nas::Pool::start(),
             nas_errors: Mutex::new(HashMap::new()),
             downloads: Downloads::default(),
+            scorers: Keep::new(),
             export_stop: Arc::new(AtomicBool::new(false)),
             projects_write: Mutex::new(()),
             device: Mutex::new(String::new()),
@@ -513,6 +586,12 @@ impl Engine {
             }
         }
         guard.clone()
+    }
+
+    /// CLIP 打分器：同一个 (实际档位, 加速器) 复用加载好的那份，没有才加载（见 `Keep`）。
+    fn clip_scorer(&self, accel: bool, want: Quality) -> Result<Arc<ClipScorer>, String> {
+        let q = scorer::resolve(&self.paths.models, accel, want);
+        self.scorers.get((q, accel), || ClipScorer::load(&self.paths.models, accel, want))
     }
 
     /// 起一套系统视觉信号（宿主注册的工厂）；没有就 None。
@@ -739,7 +818,7 @@ impl Engine {
                 JudgeGuard(j, Some(h))
             });
             // Models are only loaded when there is real work: re-opening a cached project is instant.
-            let scorer = ClipScorer::load(&model_dir, !cpu_only, want).map_err(|e| crate::platform::log(&format!("AI disabled: {e}"))).ok();
+            let scorer = self.clip_scorer(!cpu_only, want).map_err(|e| crate::platform::log(&format!("AI disabled: {e}"))).ok();
             let vision = vision_cell.get_or_init(|| self.start_vision(vision_workers(), cpu_only)).as_deref();
             let mp = self.eyes_model_for(eye_method, vision);
             if !quiet {
@@ -747,8 +826,8 @@ impl Engine {
                     "scan-info",
                     &Info {
                         cpu_only,
-                        clip: scorer.as_ref().map(|s| s.backend),
-                        model: scorer.as_ref().map(|s| s.model),
+                        clip: scorer.as_deref().map(|s| s.backend),
+                        model: scorer.as_deref().map(|s| s.model),
                         vision: vision.is_some(),
                         cores: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1),
                     },
@@ -798,7 +877,7 @@ impl Engine {
                         }
                         self.emit("scan-stage", &Stage { path: &key, stage, pct, thumb: thumb.map(|t| t.0), width: thumb.map(|t| t.1), height: thumb.map(|t| t.2) });
                     };
-                    let r = analyze::analyze(p, &cache_dir, scorer.as_ref().map(|s| s as &dyn AiScorer), vision, eye_method, mp.as_deref(), fe.as_deref(), &on_stage);
+                    let r = analyze::analyze(p, &cache_dir, scorer.as_deref().map(|s| s as &dyn AiScorer), vision, eye_method, mp.as_deref(), fe.as_deref(), &on_stage);
                     lap("start");
                     let d = done.fetch_add(1, Ordering::Relaxed) + 1;
                     if !quiet {
@@ -850,7 +929,7 @@ impl Engine {
                 crate::platform::log(&format!(
                     "分析 {} 张：每张 {:.0} ms（墙钟）；{} 条线程，CLIP {}；每条线程上 解码 {:.0} · 质量 {:.0} · CLIP {:.0} · 人脸 {:.0} · 收尾 {:.0} ms",
                     fresh.len(), wall.elapsed().as_secs_f64() * 1000.0 / fresh.len() as f64, scan_threads(),
-                    scorer.as_ref().map_or("off", |s| s.backend), avg("decode"), avg("quality"), avg("ai"), avg("faces"), avg("tail")
+                    scorer.as_deref().map_or("off", |s| s.backend), avg("decode"), avg("quality"), avg("ai"), avg("faces"), avg("tail")
                 ));
             }
             if let Some(j) = judge {
@@ -1895,7 +1974,7 @@ impl Engine {
             return Ok(0);
         }
         // the larger analysis model leaves no ViT-B/32 vector behind, so those photos get one here; the rest only need their colours
-        let scorer = if pending.iter().any(|p| p.4) { Some(ClipScorer::load(&self.paths.models, true, Quality::Fast)?) } else { None };
+        let scorer = if pending.iter().any(|p| p.4) { Some(self.clip_scorer(true, Quality::Fast)?) } else { None };
         let total = pending.len();
         let mut done = 0usize;
         self.emit("search-index-progress", &Progress { done, total });
@@ -1904,7 +1983,7 @@ impl Engine {
                 .par_iter()
                 .filter_map(|(key, thumb, size, mtime, need_vec)| {
                     let img = image::open(thumb).ok()?;
-                    let sem = match (need_vec, scorer.as_ref()) {
+                    let sem = match (need_vec, scorer.as_deref()) {
                         (true, Some(s)) => Some(<ClipScorer as AiScorer>::analyze(s, &img).ok()?.embedding),
                         _ => None,
                     };
@@ -1972,7 +2051,7 @@ impl Engine {
         let thumbs: Vec<Vec<Option<String>>> = self.with_cache(|c| {
             scenes.iter().zip(&known).map(|(s, kn)| s.paths.iter().take(PER_SCENE).zip(kn).map(|(k, v)| if v.is_some() { None } else { c.photo(k).map(|p| p.thumb.clone()) }).collect()).collect()
         });
-        let scorer = if thumbs.iter().flatten().any(|t| t.is_some()) { ClipScorer::load(&dir, true, Quality::Fast).ok() } else { None };
+        let scorer = if thumbs.iter().flatten().any(|t| t.is_some()) { self.clip_scorer(true, Quality::Fast).ok() } else { None };
         let mut unnamed: Vec<&SceneReq> = Vec::new();
         let mut names: Vec<SceneText> = Vec::new();
         for (n, scene) in scenes.iter().enumerate() {
@@ -1982,7 +2061,7 @@ impl Engine {
             let mut mean = vec![0f32; scene_vocab::DIM];
             let mut count = 0;
             for (v, t) in known[n].iter().zip(&thumbs[n]) {
-                let vec = match (v, t, scorer.as_ref()) {
+                let vec = match (v, t, scorer.as_deref()) {
                     (Some(v), _, _) => Some(v.clone()),
                     (None, Some(t), Some(s)) => image::open(t).ok().and_then(|img| <ClipScorer as AiScorer>::analyze(s, &img).ok()).map(|o| o.embedding),
                     _ => None,
@@ -2225,6 +2304,8 @@ impl Engine {
     }
 
     fn forget_models(&self) {
+        // 新下的或删掉的包可能改了该用哪个模型文件：打分器下次重新加载
+        self.scorers.clear();
         *self.text.lock().unwrap_or_else(|e| e.into_inner()) = None;
         *self.mediapipe_eyes.lock().unwrap_or_else(|e| e.into_inner()) = None;
         *self.face_embedder.lock().unwrap_or_else(|e| e.into_inner()) = None;
@@ -2352,7 +2433,7 @@ impl Engine {
             return Err("no photos in that folder".to_string());
         }
         // the embeddings must be the kind the analysed photos have (they are compared with them), so the same model is used
-        let scorer = ClipScorer::load(&self.paths.models, accel, want)?;
+        let scorer = self.clip_scorer(accel, want)?;
         let total = files.len();
         let done = AtomicUsize::new(0);
         self.emit("reference-progress", &Progress { done: 0, total });
@@ -2811,6 +2892,28 @@ mod tests {
         let left: Vec<String> = std::fs::read_dir(&out2).unwrap().map(|x| x.unwrap().file_name().to_string_lossy().into_owned()).collect();
         assert_eq!(left, vec!["p2.jpg"], "没有半截的 .part");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 留着复用的东西：同一个键只做一次；还有人拿着的不放；闲过 10 分钟、没人拿着的放掉；做失败的不留。
+    #[test]
+    fn kept_things_are_reused_and_let_go_when_idle() {
+        let keep: Arc<Keep<u8, String>> = Keep::new();
+        let made = AtomicUsize::new(0);
+        let make = || { made.fetch_add(1, Ordering::Relaxed); Ok::<_, String>("model".to_string()) };
+        let a = keep.get(1, make).unwrap();
+        let b = keep.get(1, || panic!("already there")).unwrap();
+        assert!(Arc::ptr_eq(&a, &b));
+        assert_eq!(made.load(Ordering::Relaxed), 1);
+        assert!(keep.get(2, || Err("no model".into())).is_err());
+        assert_eq!(keep.slots.lock().unwrap().len(), 1, "失败的不留");
+        let later = std::time::Instant::now() + Keep::<u8, String>::IDLE + std::time::Duration::from_secs(1);
+        assert_eq!(keep.reap(later), 1, "还有人拿着，不放");
+        drop((a, b));
+        assert_eq!(keep.reap(later), 1, "刚才还在用（时间刷新过），不放");
+        assert_eq!(keep.reap(later + Keep::<u8, String>::IDLE + std::time::Duration::from_secs(1)), 0, "闲过十分钟，放掉");
+        assert!(!keep.reaper.load(Ordering::Relaxed), "空了，清理线程收工");
+        keep.get(1, make).unwrap();
+        assert_eq!(made.load(Ordering::Relaxed), 2, "放掉之后要用再做");
     }
 
     /// 导出的临时名保留图片扩展名（Android 的公共目录只许建图片类型的文件）；`名字 (n).扩展名` 认作同一张的副本。
