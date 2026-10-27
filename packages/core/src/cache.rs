@@ -250,6 +250,16 @@ enum Job {
 }
 
 impl Pending {
+    /// 要整理（写整份底稿，万张几百 MB、要几秒）时放到一条后台线程上写，追加照旧当场写：给界面线程上的调用（转一张照片）用，
+    /// 碰上整理也不卡住它。整理前的改动在 `save` 里已经进了日志，后台这份没写完就退出也不丢东西。
+    pub fn write_soon(self) {
+        if matches!(self.job, Job::Compact(..)) {
+            std::thread::spawn(move || self.write());
+        } else {
+            self.write();
+        }
+    }
+
     pub fn write(self) {
         match self.job {
             Job::Nothing => {}
@@ -515,10 +525,18 @@ impl Cache {
         // 正在整理（另一个 `Pending` 还没写完）时照常追加
         if due && !disk.compacting.swap(true, Ordering::Relaxed) {
             disk.retry.store(false, Ordering::Relaxed);
-            self.dirty.clear();
+            // 这一刻还没进日志的改动（刚转的一张、刚分析的一批）先追加进当前日志、再改名：整理要写几秒，这期间断电，
+            // 旧底稿 + 旧日志里也有它们。以前它们只在快照里，整理没写完就丢了。只是几行，在锁里写也不费事
+            let lines = self.take_dirty();
             // 日志改名成旧日志：从这里起的新行进新日志，旧日志里的都在快照里了（整理写成之后删）
             {
                 let mut len = disk.log.lock().unwrap_or_else(|e| e.into_inner());
+                if !lines.is_empty() {
+                    // 没写成也不要紧：快照里有它们，整理写成就都在底稿里了
+                    if let Err(e) = encode_lines(&lines).and_then(|buf| append_locked(&path, &mut len, &buf)) {
+                        crate::platform::log(&format!("{}: 整理前没能先记进日志：{e}", log_path(&path).display()));
+                    }
+                }
                 let (cur, old) = (log_path(&path), old_log_path(&path));
                 if cur.exists() {
                     if old.exists() {
@@ -545,17 +563,20 @@ impl Cache {
         if self.dirty.is_empty() {
             return Pending { path, disk, job: Job::Nothing };
         }
+        Pending { path, disk, job: Job::Append(self.take_dirty()) }
+    }
+
+    /// 改过的记录编上序号、交出来（按路径排序），`dirty` 清空。
+    fn take_dirty(&mut self) -> Vec<(u64, String, Option<Arc<Entry>>)> {
         let mut keys: Vec<String> = self.dirty.drain().collect();
         keys.sort();
-        let lines = keys
-            .into_iter()
+        keys.into_iter()
             .map(|k| {
                 self.seq += 1;
                 let e = self.entries.get(&k).cloned();
                 (self.seq, k, e)
             })
-            .collect();
-        Pending { path, disk, job: Job::Append(lines) }
+            .collect()
     }
 }
 
@@ -730,6 +751,28 @@ mod tests {
         assert_eq!(back.photo("/p/1.jpg").unwrap().rotation, 270);
         let raw: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(raw["entries"].as_object().unwrap().len(), 5, "the new base is the snapshot");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// 整理那一刻没进日志的改动先追加进日志、再改名：整理写到一半断电（底稿没换成），旧底稿 + 旧日志里也有它们。
+    #[test]
+    fn changes_made_just_before_compacting_survive_a_crash_mid_compaction() {
+        let path = place("compact-crash");
+        let mut c = Cache::load(path.clone());
+        for i in 0..3 {
+            c.put(1, 1, "t", &photo(i));
+        }
+        c.save().write();
+        c.disk.retry.store(true, Ordering::Relaxed);
+        c.photo_mut("/p/0.jpg").unwrap().rotation = 90;
+        c.put(1, 1, "t", &photo(3));
+        let compact = c.save();
+        assert!(matches!(compact.job, Job::Compact(..)));
+        // 整理没写（断电）：只靠磁盘上的东西读回来
+        drop(compact);
+        let back = Cache::load(path.clone());
+        assert_eq!(back.entries.len(), 4, "刚分析的那张在旧日志里");
+        assert_eq!(back.photo("/p/0.jpg").unwrap().rotation, 90, "刚转的角度在旧日志里");
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 

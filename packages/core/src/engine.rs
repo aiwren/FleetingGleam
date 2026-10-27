@@ -1053,7 +1053,8 @@ impl Engine {
             Ok::<(Photo, cache::Pending), String>((out, c.save()))
         })?;
         let (p, pending) = p;
-        pending.write();
+        // 这是界面点"旋转"时同步调的：碰上该整理了，整份底稿放到后台写，不在调用线程上等几秒
+        pending.write_soon();
         let mut last = self.last_photos.lock().unwrap_or_else(|e| e.into_inner());
         for (_, list) in last.iter_mut() {
             if let Some(q) = list.iter_mut().find(|q| q.path == path) {
