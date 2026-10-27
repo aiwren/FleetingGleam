@@ -98,7 +98,6 @@ fun SinglePager(shown: List<Photo>, decisions: Map<String, Decision>, cull: Cull
             com.fleetinggleam.android.ui.components.AmbientImage(photo.thumb, 56.dp, Modifier.align(Alignment.Center).fillMaxSize(0.6f).graphicsLayer { alpha = 0.4f }, zoom = 1.4f)
             HorizontalPager(pager, Modifier.fillMaxSize(), key = { shown[it].path }, beyondViewportPageCount = 1) { page ->
                 val p = shown[page]
-                val f = ((pager.currentPage - page) + pager.currentPageOffsetFraction).coerceIn(-1f, 1f)
                 SwipeDecide(p, decisions[p.path], onDecide = { st ->
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     val d = decisions[p.path]
@@ -107,6 +106,8 @@ fun SinglePager(shown: List<Photo>, decisions: Map<String, Decision>, cull: Cull
                     if (page < shown.size - 1) scope.launch { pager.animateScrollToPage(page + 1) }
                 }, onOpen = { onOpen(p.path) }, cull = cull,
                     modifier = Modifier.graphicsLayer {
+                        // 翻页偏移只在这里（绘制阶段）读：以前在组合里读，翻页的每一帧整页重组（审查第二批）
+                        val f = ((pager.currentPage - page) + pager.currentPageOffsetFraction).coerceIn(-1f, 1f)
                         // 翻页：转一点点角度、缩一点、不太淡（效果小于内容——设计审查 A7.1）
                         cameraDistance = 14f * density
                         rotationY = 10f * f
