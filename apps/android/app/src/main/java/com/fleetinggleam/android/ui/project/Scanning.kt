@@ -127,9 +127,9 @@ fun ScanningStage(cull: CullState, data: androidx.compose.runtime.State<CullData
                 }
             }
         } else {
-            // 页签里的照片：tick 来了才读（只重组这一页）
+            // 页签里的照片：tick 来了才读（只重组这一页）。照片没变就还是同一份 items：墙不重排、预取不重启（审查第二批）
             val shown = data.value.shown
-            val items = shown.map { WallItem(it.path, it.ratio) }
+            val items = remember(shown) { shown.map { WallItem(it.path, it.ratio) } }
             Wall(items, "grid", state, pad, header = {
                 card()
                 if (items.isEmpty()) Text(t("android.scan.landing"), style = Type.rowDesc.copy(color = c.ash), modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 28.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
