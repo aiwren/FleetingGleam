@@ -21,7 +21,7 @@
 
 **未做的小项：** A6 剩两条（设置页按当前项目的风格显示学习状态、CSS 死类清理与 mock 的取消 / stale / 保存失败路径）；两轮审查里的 P2。
 
-**本机环境（不在仓库里）：** 模型对比的工作区 `../FleetingGleam-bakeoff/`（1.7 GB，可删；`work/labels_*.jsonl` 是作者的 68 对判断）；`~/.cache/huggingface` 里 Q-ReAlign Lite / Pro 等权重约 30 GB，可删；codebase-memory-mcp 已注册为本项目的本机 MCP（新会话里 `/mcp` 可见，第一次让 AI "索引这个项目"）。
+**本机环境（不在仓库里）：** 模型对比工作区 `../FleetingGleam-bakeoff/` 与 `~/.cache/huggingface` 里候选模型的权重已于 2026-10-27 删除，作者的 68 对判断存在 `~/Documents/惊鸿-模型对比标注/`；codebase-memory-mcp 已注册为本项目的本机 MCP（新会话里 `/mcp` 可见，第一次让 AI "索引这个项目"）。
 
 **接着做时怎么开口：** "继续 FleetingGleam 路线图里『当前进度与交接』的下一步" 即可；所有上下文都在本文、REVIEW-2026-10-21.md 和自动记忆里。
 
@@ -114,7 +114,7 @@ Android 没有 Apple Vision，两端要一样就得两端用同样的东西：
    - 核心里**仍然残留的平台特有打分信号**（A4 要解决的，这一步只记录不改）：`Photo.sys_score`（Apple 的美学分，`scoring::combine_aesthetic` 里按 `W_SYS_IN_AESTHETIC = 0.6` 与 CLIP 头混合）；`utility` 标记（Vision 判"实用图片"）；`face_count` / `face_min`（Vision 的人脸数与拍摄质量，进 `final_score` 的组内人脸比较）；`eyes_open` 的 "vision" 量表与 MediaPipe 要读的 `eye_boxes`、人物识别要的 `face_marks` 都来自 Vision 的人脸检测。没有 `SystemVision` 的平台（现在的 Android）这些全是空：没有人脸、没有闭眼、美学只有 CLIP 头——所以两端分数一致要等 A4（美学分蒸馏 + 人脸统一 MediaPipe）。
    - 假设（没问过，先按默认做）：最低 Android 12（API 31，玻璃材质要实时模糊，面向高端机）；ONNX Runtime 用 pyke 的 `aarch64-linux-android+nnapi` 预编译包（core 的 Cargo.toml 在 Android 目标上开 `nnapi` 特性），QNN 第 2 步再看；工具链 Gradle 8.13 / AGP 8.12 / Kotlin 2.1.20 / Compose 1.9.3 / Material 3 1.4.0 / JNA 5.17；只编 arm64-v8a。
    - 留给第 3 步：桌面端 `scan_project` 的流程（缓存命中、NAS 同步、分批落盘、补测眼睛 / 人脸 / HDR、取消）还在 `lib.rs` 里，Android 的 `analyze_folder` 是不走缓存的直通版；第 3 步把这段流程搬进核心（进度与取消做成 trait），两端共用。核心里 `std::env::temp_dir()` 的两处（非原生格式的临时渲染、GPU 编码器的标记文件）在 Android 上不可写，到时给核心一个可配置的临时目录。
-   - 本机遗留：旧的 `apps/desktop/src-tauri/target`（约 13 GB）不再使用，可以删；新的构建目录是仓库根的 `target/`。
+   - 构建目录是仓库根的 `target/`（旧的 `apps/desktop/src-tauri/target` 已于 2026-10-27 删除）。
 2. [x] **模型层**（完成 2026-10-21）：ONNX Runtime Android 跑的是和 Mac 端完全同一批 ONNX 文件与同一份清单（`packages/core/models.manifest.json`），同样的 SHA-256 校验；下载、删除、进度、取消经 UniFFI 暴露（`packs_status` / `pack_download` / `pack_cancel` / `pack_remove`），Android 的"模型"页签能下载全部 8 个包（Florence-2 与 OPUS-MT 就是 `scenetext` 可选包）。
    - 会话统一从 `packages/core/src/onnx.rs` 建：平台加速器只在这一处接——macOS 的 CoreML（只有 SigLIP 用，和以前一样）、Android 的 NNAPI（NCHW、不开 fp16 松弛）。只有视觉编码器（CLIP / SigLIP）走加速器，而且第一次要在固定输入上和 CPU 比对（余弦 > 0.999），结论记在草稿目录的标记文件里，不一致就只用 CPU（`onnx::verified`，`scorer.rs` 的 `build_accelerated`）。int8 的文本 / 场景 / 翻译模型和小的人脸模型都在 CPU 上跑。
    - **人脸**：没有系统人脸检测的平台用核心库自己的流水线 `facepipe.rs` 作为 `SystemVision`：UltraFace RFB-640（新包 `detect`，1.6 MB，MIT）找脸 → MediaPipe 网格（`eyes` 包）量眼睛、定出人物识别用的五个点（网格 33/133、362/263、1、61、291）→ `faces` 包认人。给出的 `VisionOut` 和 Apple Vision 一样，分析流水线不用区分。Mac 端照旧用 Vision（A4 未动；Mac 设置页不列 `detect`）。
