@@ -200,7 +200,8 @@
   },
   "safExpired": "The folder “{{name}}” for this project can no longer be read: access was revoked (by the system, or when app data was cleared). The photos already copied are still here; grant access again to keep syncing.",
   "safReauth": "Grant access",
-  "safWrongFolder": "That is not the original folder. Please pick “{{name}}” again."
+  "safWrongFolder": "That is not the original folder. Please pick “{{name}}” again.",
+  "safNotGranted": "That is the right folder, but read access to “{{name}}” was not granted. Please try again; for cloud folders, check that the app is online and signed in."
  },
  "searchset": {
   "info": "The first time it is turned on, a search model is downloaded and the photos are indexed in the background (a few tens of milliseconds each). It all happens on this phone; photos are never uploaded."

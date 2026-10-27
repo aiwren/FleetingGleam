@@ -19,6 +19,8 @@ import com.fleetinggleam.android.service.AnalysisService
 object Scans {
     private lateinit var app: Context
     @Volatile private var running = false
+    /** 通知上显示的项目名：前台服务跟着它刷新。 */
+    val label = kotlinx.coroutines.flow.MutableStateFlow("")
     private var thermal = PowerManager.THERMAL_STATUS_NONE
     private var batteryLow = false
     private var charging = true
@@ -69,6 +71,8 @@ object Scans {
      * 适不适合分析由调用方（`Session.runScan`）在发起之前查 `blocker()`，这里不再补一个取消：那时核心还没登记任务，取消会被丢掉（审查第 40 条）。
      */
     fun started(ctx: Context, projectName: String) {
+        // 暂停期间留着的服务接着用：换了项目分析时把通知上的名字换过来（审查第 58 条）
+        label.value = projectName
         if (running) return
         running = true
         val i = Intent(ctx, AnalysisService::class.java).putExtra(AnalysisService.EXTRA_NAME, projectName)

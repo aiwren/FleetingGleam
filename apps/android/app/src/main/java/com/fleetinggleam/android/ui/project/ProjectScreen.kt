@@ -137,7 +137,11 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
                 FgButton(t("cull.safReauth"), {
                     scope.launch {
                         val uri = Pickers.openTree() ?: return@launch
-                        if (!Session.reauthorize(uri)) com.fleetinggleam.android.ui.components.Toasts.show(t("cull.safWrongFolder", "name" to nasOff))
+                        when (Session.reauthorize(uri)) {
+                            com.fleetinggleam.android.core.Media.Reauth.Ok -> {}
+                            com.fleetinggleam.android.core.Media.Reauth.WrongFolder -> com.fleetinggleam.android.ui.components.Toasts.show(t("cull.safWrongFolder", "name" to nasOff))
+                            com.fleetinggleam.android.core.Media.Reauth.NotGranted -> com.fleetinggleam.android.ui.components.Toasts.show(t("cull.safNotGranted", "name" to nasOff))
+                        }
                     }
                 }, small = true)
             }

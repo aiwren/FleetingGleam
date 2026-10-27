@@ -126,11 +126,14 @@ object Media {
     /** 这个文件夹的持久读权限还在不在。 */
     private fun granted(ctx: Context, uri: Uri): Boolean = ctx.contentResolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission }
 
-    /** 重新授权：用户在系统选择器里重新选了原来那个文件夹，重新拿持久权限。选的不是它（编号对不上）返回 false。 */
-    fun reauthorize(ctx: Context, m: Mirror, uri: Uri): Boolean {
-        if (idOf(uri) != m.id) return false
+    /** 重新授权的结果：成了；选的不是原来那个文件夹；选对了但持久权限没拿到（审查第 58 条：以前两种都说"选的不是原来那个"）。 */
+    enum class Reauth { Ok, WrongFolder, NotGranted }
+
+    /** 重新授权：用户在系统选择器里重新选了原来那个文件夹，重新拿持久权限。 */
+    fun reauthorize(ctx: Context, m: Mirror, uri: Uri): Reauth {
+        if (idOf(uri) != m.id) return Reauth.WrongFolder
         adoptTree(ctx, uri)
-        return granted(ctx, uri)
+        return if (granted(ctx, uri)) Reauth.Ok else Reauth.NotGranted
     }
 
     private val IMAGE_EXT = setOf("jpg", "jpeg", "jpe", "png", "webp")

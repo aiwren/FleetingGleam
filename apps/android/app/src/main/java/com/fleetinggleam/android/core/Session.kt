@@ -201,6 +201,8 @@ object Session {
         if (left != null && left != run?.id) scope.launch { runCatching { Core.call("scan_cancel", args("key" to left)) } }
         undoStack.clear(); undoCount.value = 0
         error.value = null; celebrate.value = false; dirty.value = 0; nasProg.value = null; peopleProg.value = null; mediaProg.value = null; offline.value = false
+        // 上一个项目那台 NAS 为什么没连上，不能带进这个项目（审查第 58 条）
+        nasFailure.value = "net"; nasOff.value = ""
         if (run == null && pausedProject == null) paused.value = Pause.None
         // 上一个项目分析中的实时表：没有分析在后台跑就清掉（在跑的那个回来时还要用，留着）
         if (run == null) { results.clear(); stages.clear(); live.clear(); lastStage = null }
@@ -250,12 +252,12 @@ object Session {
         }
     }
 
-    /** 重新授权失效的那个文件夹：用户在系统选择器里选的是原来那个就重新进项目，返回 true；选错了返回 false。 */
-    suspend fun reauthorize(uri: android.net.Uri): Boolean {
-        val m = expired ?: return false
-        val ok = kotlinx.coroutines.withContext(Dispatchers.IO) { Media.reauthorize(app, m, uri) }
-        if (ok) { expired = null; enter() }
-        return ok
+    /** 重新授权失效的那个文件夹：拿到了就重新进项目；没拿到时返回原因（选错了文件夹，或选对了但权限没给）。 */
+    suspend fun reauthorize(uri: android.net.Uri): Media.Reauth {
+        val m = expired ?: return Media.Reauth.WrongFolder
+        val r = kotlinx.coroutines.withContext(Dispatchers.IO) { Media.reauthorize(app, m, uri) }
+        if (r == Media.Reauth.Ok) { expired = null; enter() }
+        return r
     }
 
     /** 确认页：预计要多久（应用会用的模型、这台手机的核数），和前几张照片的快速缩略图。 */

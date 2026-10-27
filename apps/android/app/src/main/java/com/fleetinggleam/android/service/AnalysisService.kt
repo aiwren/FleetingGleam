@@ -46,7 +46,7 @@ class AnalysisService : Service() {
             Session.dropPause()
             return START_NOT_STICKY
         }
-        name = intent?.getStringExtra(EXTRA_NAME) ?: name
+        name = intent?.getStringExtra(EXTRA_NAME) ?: Scans.label.value.ifEmpty { name }
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel(CHANNEL, t("cull.analyzing"), NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) })
         val type = if (Build.VERSION.SDK_INT >= 35) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING else ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
@@ -64,7 +64,11 @@ class AnalysisService : Service() {
         }
         // 太热 / 电量低停下时服务留着：通知改成"已暂停（n/N）"，接着分析时换回进度
         pauseJob?.cancel()
-        pauseJob = scope.launch { Session.paused.collect { holdWake(it == Pause.None); nm.notify(ID, build(Session.progress.value)) } }
+        pauseJob = scope.launch {
+            launch { Session.paused.collect { holdWake(it == Pause.None); nm.notify(ID, build(Session.progress.value)) } }
+            // 暂停期间换了个项目分析，服务没重启：名字跟着 Scans.label 换（审查第 58 条）
+            launch { Scans.label.collect { if (it.isNotEmpty() && it != name) { name = it; nm.notify(ID, build(Session.progress.value)) } } }
+        }
         return START_NOT_STICKY
     }
 

@@ -69,7 +69,9 @@ object Diagnostics {
         val d = logs(ctx).apply { mkdirs() }
         // 第一次装上这个功能时 seen 是 0：只记最近一次，别把很久以前的都翻出来
         for (x in (if (seen == 0L) list.take(1) else list).filter { it.reason in bad }) {
-            val trace = runCatching { x.traceInputStream?.use { s -> String(head(s, 256 * 1024)) } }.getOrNull()
+            // 原生崩溃的 trace 是墓碑的 protobuf 二进制，写进文本只是一堆乱码：只记摘要（原因、状态、说明、内存）（审查第 58 条）
+            val trace = if (x.reason == ApplicationExitInfo.REASON_CRASH_NATIVE) null
+                else runCatching { x.traceInputStream?.use { s -> String(head(s, 256 * 1024)) } }.getOrNull()
             val text = header() + buildString {
                 appendLine("退出时间：${stamp(x.timestamp)}")
                 appendLine("原因：${reasonName(x.reason)}（${x.reason}）· 状态 ${x.status} · 重要性 ${x.importance}")
@@ -115,7 +117,9 @@ object Diagnostics {
         try {
             val written = Fg.json.decodeFromString<String>(Core.call("diagnostics_export", args("out" to tmp.absolutePath)))
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                val out = ctx.contentResolver.openOutputStream(uri, "wt") ?: throw CoreException("denied:open")
+                // "wt"（截断再写）不是每个文档提供方都认，不认的抛异常或给 null：退回 "w"（新建的文件本来就是空的）（审查第 58 条）
+                val out = runCatching { ctx.contentResolver.openOutputStream(uri, "wt") }.getOrNull()
+                    ?: ctx.contentResolver.openOutputStream(uri, "w") ?: throw CoreException("denied:open")
                 out.use { o -> File(written).inputStream().use { it.copyTo(o) } }
             }
         } finally {
