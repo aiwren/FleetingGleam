@@ -102,10 +102,15 @@ class AnalysisService : Service() {
      */
     override fun onTimeout(startId: Int, fgsType: Int) {
         val p = Session.progress.value
+        // 先停掉收集与监听，再改状态（审查第 48 条）：dropPause 会改 `paused`，收集还在的话会照着它把常驻的"分析中"通知重新贴出来，
+        // 这时前台服务已经撤了，那条通知就再也划不掉
+        pauseJob?.cancel(); pauseJob = null
+        off?.invoke(); off = null
         Session.stopScan()
         Session.dropPause()
         Scans.timedOut()
         stopForeground(STOP_FOREGROUND_REMOVE)
+        getSystemService(NotificationManager::class.java).cancel(ID)
         stopSelf()
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_IMMUTABLE)
         val body = t("android.scan.timeoutBody", "done" to p.done, "total" to p.total)
@@ -124,6 +129,8 @@ class AnalysisService : Service() {
         pauseJob = null
         off?.invoke()
         off = null
+        // 撤掉时进度通知一定不留：收集或监听在撤之前刚 notify 过的那一条，会变成一条划不掉的"分析中"
+        getSystemService(NotificationManager::class.java).cancel(ID)
         wake?.let { if (it.isHeld) it.release() }
         wake = null
         super.onDestroy()
