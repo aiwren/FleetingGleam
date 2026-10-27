@@ -41,6 +41,10 @@ type ViewMode = "all" | State;
 type Phase = "idle" | "probing" | "ready" | "scanning" | "loading" | "done";
 type SortBy = "group" | "order" | "time" | "score";
 type Item = { path: string; ratio: number };
+/** decide_photos 的紧凑回包（lib.rs 的 CompactDecisions）：路径表只在变了时才发，状态一张一个字符，理由另取（decide_reasons）。 */
+type CompactDecisions = { rev: number; paths?: string[]; states: string; manual: number[] };
+const STATE_OF: Record<string, State> = { k: "keep", r: "review", x: "reject" };
+const manualReason = (st: State): Reason => ({ k: "reason.manual", p: { stateKey: `state.${st}` } });
 const NONE: ReadonlySet<string> = new Set();
 /** 分析中筛选栏没有场景和人物：给同一个空数组，别让 FilterPanel 的 memo 每帧被新的 [] 打穿。 */
 const NO_SCENES: SceneItem[] = [];
@@ -408,6 +412,8 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const localPatch = useRef<{ path: string; state: State; photos: Photo[] } | null>(null);
   /** 有一次 decide_photos 还没回来（它的 token）；0 = 没有。 */
   const decideInflight = useRef(0);
+  /** decide_photos 上次给的路径表（按路径排好）与它的版本。 */
+  const decidePaths = useRef<{ rev: number; paths: string[] } | null>(null);
   const decisionsRef = useRef(decisions);
   decisionsRef.current = decisions;
   useEffect(() => {
@@ -422,15 +428,31 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
         const cur = m.get(lp.path);
         if (!cur) return m;
         const n = new Map(m);
-        n.set(lp.path, { state: lp.state, manual: true, reasons: [{ k: "reason.manual", p: { stateKey: `state.${lp.state}` } }, ...(cur.manual ? cur.reasons.slice(1) : cur.reasons)] });
+        // 理由在检查器里按需取（selReasons），这里只记状态
+        n.set(lp.path, { state: lp.state, manual: true, reasons: [] });
         return n;
       });
       return;
     }
     const tok = ++decideToken.current;
     decideInflight.current = tok;
-    invoke<Record<string, Decision>>("decide_photos", { key: project?.id ?? "", keepRatio, pickMode, onePerGroup, overrides: Object.fromEntries(overrides) })
-      .then((res) => { if (tok === decideToken.current) { decideInflight.current = 0; setDecisions(new Map(Object.entries(res))); } })
+    const args = { key: project?.id ?? "", keepRatio, pickMode, onePerGroup, overrides: Object.fromEntries(overrides) };
+    // 紧凑格式：带着手里那份路径表的版本，没变就只回状态串；回包说的版本和手里的对不上（极少见）就不带版本再要一次
+    (async () => {
+      let res = await invoke<CompactDecisions>("decide_photos", { ...args, knownRev: decidePaths.current?.rev ?? null });
+      if (!res.paths && decidePaths.current?.rev !== res.rev) res = await invoke<CompactDecisions>("decide_photos", { ...args, knownRev: null });
+      return res;
+    })()
+      .then((res) => {
+        if (tok !== decideToken.current) return;
+        if (res.paths) decidePaths.current = { rev: res.rev, paths: res.paths };
+        const paths = decidePaths.current?.paths ?? [];
+        const manual = new Set(res.manual);
+        const m = new Map<string, Decision>();
+        for (let i = 0; i < paths.length; i++) m.set(paths[i], { state: STATE_OF[res.states[i]] ?? "review", manual: manual.has(i), reasons: [] });
+        decideInflight.current = 0;
+        setDecisions(m);
+      })
       // "stale": the backend holds another project's photos (a scan of this one is on its way); the next scan result asks again
       .catch((e) => { if (tok === decideToken.current) { decideInflight.current = 0; if (String(e) !== "stale") console.error("decide_photos:", e); setDecisions(new Map()); } });
   }, [photos, keepRatio, pickMode, onePerGroup, overrides, project?.id]);
@@ -450,7 +472,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     overrides.forEach((st, path) => {
       if (!results.current.has(path)) return;
       const cur = m.get(path);
-      m.set(path, { state: st, manual: true, reasons: [{ k: "reason.manual", p: { stateKey: `state.${st}` } }, ...(cur && !cur.manual ? cur.reasons : [])] });
+      m.set(path, { state: st, manual: true, reasons: [manualReason(st), ...(cur && !cur.manual ? cur.reasons : [])] });
     });
     return m;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -934,7 +956,24 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scanning]);
   const showBanner = scanning || celebrate;
-  const decision = sel ? pickDecisions.get(sel.path) : undefined;
+  // 分析完的判定不带理由（紧凑格式）：选中哪张就按需取它的理由。核心那边的表可能还没含刚打的本地补丁，
+  // 所以"手动"那一句按手里的状态重新放在最前
+  const [selReasons, setSelReasons] = useState<{ path: string; reasons: Reason[] } | null>(null);
+  const selPath = sel?.path;
+  useEffect(() => {
+    if (phase !== "done" || !selPath || !project || !decisions.has(selPath)) return;
+    let live = true;
+    invoke<Reason[] | null>("decide_reasons", { key: project.id, path: selPath })
+      .then((r) => { if (live) setSelReasons({ path: selPath, reasons: r ?? [] }); })
+      .catch(() => { /* not in Tauri */ });
+    return () => { live = false; };
+  }, [phase, selPath, decisions, project?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const decision = useMemo(() => {
+    const d = sel ? pickDecisions.get(sel.path) : undefined;
+    if (!d || phase !== "done" || !sel) return d;
+    const base = selReasons?.path === sel.path ? selReasons.reasons.filter((r) => r.k !== "reason.manual") : [];
+    return { ...d, reasons: d.manual ? [manualReason(d.state), ...base] : base };
+  }, [sel, pickDecisions, phase, selReasons]);
   const pendingFiles = files.filter((f) => !f.cached);
 
   return (

@@ -16,7 +16,7 @@ mod bench;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use fg_core::analyze::Photo;
 use fg_core::engine::{self, BackupMeta, BackupStatus, Engine, ExportResult, FileInfo, Hit, Listing, Machine, Probe, ScanArgs, SceneReq, SearchStatus, TargetArgs, TrashResult};
@@ -122,11 +122,78 @@ fn scan_cancel(app: AppHandle, key: Option<String>) {
     }
 }
 
+/// 最近一次 decide_photos 算出的整张判定表：理由按需从这里取（`decide_reasons`），路径顺序带一个版本号，没变就不再整份发给前端。
+#[derive(Default)]
+struct DecideCache {
+    key: String,
+    rev: u64,
+    paths: Vec<String>,
+    table: HashMap<String, decide::Decision>,
+}
+
+#[derive(Default)]
+struct DecideState(Mutex<DecideCache>);
+
+/// decide_photos 回给前端的紧凑格式（审查第二批：以前每点一次整张表连理由来回一趟，万张项目几 MB JSON）。
+#[derive(serde::Serialize, Debug, PartialEq)]
+struct CompactDecisions {
+    /// 路径表的版本：前端带着上次拿到的来，一样就不再发 `paths`
+    rev: u64,
+    /// 按路径排好的全部照片；只在和前端手里的版本不同时给
+    #[serde(skip_serializing_if = "Option::is_none")]
+    paths: Option<Vec<String>>,
+    /// 每张一个字符，顺序同 `paths`：k = 保留、r = 待复查、x = 淘汰
+    states: String,
+    /// 手动标过的那些在 `paths` 里的下标
+    manual: Vec<u32>,
+}
+
+/// 把核心的判定表转成紧凑格式，并记进缓存（核心不动，转换只在这层封装里）。
+fn compact(cache: &mut DecideCache, key: &str, table: HashMap<String, decide::Decision>, known_rev: Option<u64>) -> CompactDecisions {
+    let mut paths: Vec<String> = table.keys().cloned().collect();
+    paths.sort_unstable();
+    if cache.key != key || cache.paths != paths {
+        cache.rev += 1;
+        cache.key = key.to_string();
+        cache.paths = paths;
+    }
+    let states = cache
+        .paths
+        .iter()
+        .map(|p| match table[p].state {
+            decide::State::Keep => 'k',
+            decide::State::Review => 'r',
+            decide::State::Reject => 'x',
+        })
+        .collect();
+    let manual = cache.paths.iter().enumerate().filter(|(_, p)| table[*p].manual).map(|(i, _)| i as u32).collect();
+    cache.table = table;
+    CompactDecisions { rev: cache.rev, paths: (known_rev != Some(cache.rev)).then(|| cache.paths.clone()), states, manual }
+}
+
 /// Deciding is seconds on a very large project, so it runs off the main thread.
+/// `known_rev`：前端手里那份路径表的版本（见 `CompactDecisions`）。
 #[tauri::command]
-async fn decide_photos(app: AppHandle, key: String, keep_ratio: f32, pick_mode: Option<String>, one_per_group: Option<bool>, overrides: HashMap<String, String>) -> Result<HashMap<String, decide::Decision>, String> {
+async fn decide_photos(app: AppHandle, key: String, keep_ratio: f32, pick_mode: Option<String>, one_per_group: Option<bool>, overrides: HashMap<String, String>, known_rev: Option<u64>) -> Result<CompactDecisions, String> {
     let e = engine(&app);
-    blocking(move || e.decide_photos(&key, keep_ratio, pick_mode.as_deref(), one_per_group.unwrap_or(false), &overrides)).await?
+    blocking(move || {
+        let table = e.decide_photos(&key, keep_ratio, pick_mode.as_deref(), one_per_group.unwrap_or(false), &overrides)?;
+        let state = app.state::<DecideState>();
+        let mut cache = state.0.lock().unwrap_or_else(|e| e.into_inner());
+        Ok(compact(&mut cache, &key, table, known_rev))
+    })
+    .await?
+}
+
+/// 一张照片的判定理由（检查器里那一句），取自最近一次 decide_photos；那次不是这个项目的就是 null。
+#[tauri::command]
+fn decide_reasons(app: AppHandle, key: String, path: String) -> Option<Vec<decide::Reason>> {
+    let state = app.state::<DecideState>();
+    let cache = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    if cache.key != key {
+        return None;
+    }
+    cache.table.get(&path).map(|d| d.reasons.clone())
 }
 
 // ---------------------------------------------------------------- 项目文件
@@ -652,6 +719,7 @@ pub fn run() {
             // 启用的 NAS 在后台连上；缩略图旁边的草稿文件（大图、局部、动态照片的视频）修剪到上限以内
             e.start_background();
             app.manage(e);
+            app.manage(DecideState::default());
             let menu = build_menu(&handle, "en")?;
             app.set_menu(menu)?;
             Ok(())
@@ -668,7 +736,7 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![forget_folders, probe_folder, scan_project, scan_cancel, decide_photos, projects_load, projects_save, projects_quarantine, taste_export, taste_import, nas_list, nas_add, nas_remove, nas_connect, nas_disconnect, nas_ensure, nas_browse, nas_probe, nas_update, nas_set_enabled, nas_mirror_usage, nas_mirror_clear, backup_status, backup_save_target, backup_remove_target, backup_set_options, backup_now, backup_restore, backup_peek, set_rotation, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, export_cancel, trash_photos, reveal, preview_thumbs, photo_info, large_preview, motion_clip, hdrview::hdr_overlay_supported, hdrview::hdr_overlay_show, hdrview::hdr_overlay_move, hdrview::hdr_overlay_hide, hdrview::hdr_overlay_detail, hdrview::hdr_overlay_detail_hide, photo_detail, machine_info, search_status, search_index, search_photos, scene_text, packs_status, pack_size, pack_download, pack_cancel, pack_remove, diagnostics_export, diagnostics_dir, proxy::proxy_info, proxy::proxy_set, samples::samples_folder, quit_ready, dropped_folders])
+        .invoke_handler(tauri::generate_handler![forget_folders, probe_folder, scan_project, scan_cancel, decide_photos, decide_reasons, projects_load, projects_save, projects_quarantine, taste_export, taste_import, nas_list, nas_add, nas_remove, nas_connect, nas_disconnect, nas_ensure, nas_browse, nas_probe, nas_update, nas_set_enabled, nas_mirror_usage, nas_mirror_clear, backup_status, backup_save_target, backup_remove_target, backup_set_options, backup_now, backup_restore, backup_peek, set_rotation, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, export_cancel, trash_photos, reveal, preview_thumbs, photo_info, large_preview, motion_clip, hdrview::hdr_overlay_supported, hdrview::hdr_overlay_show, hdrview::hdr_overlay_move, hdrview::hdr_overlay_hide, hdrview::hdr_overlay_detail, hdrview::hdr_overlay_detail_hide, photo_detail, machine_info, search_status, search_index, search_photos, scene_text, packs_status, pack_size, pack_download, pack_cancel, pack_remove, diagnostics_export, diagnostics_dir, proxy::proxy_info, proxy::proxy_set, samples::samples_folder, quit_ready, dropped_folders])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
@@ -680,6 +748,39 @@ pub fn run() {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod compact_tests {
+    use super::*;
+
+    fn d(state: decide::State, manual: bool) -> decide::Decision {
+        decide::Decision { state, manual, reasons: Vec::new() }
+    }
+
+    #[test]
+    fn compact_decisions_send_paths_only_when_they_change() {
+        let mut cache = DecideCache::default();
+        let table = || HashMap::from([("/b.jpg".to_string(), d(decide::State::Reject, true)), ("/a.jpg".to_string(), d(decide::State::Keep, false)), ("/c.jpg".to_string(), d(decide::State::Review, false))]);
+        let first = compact(&mut cache, "p1", table(), None);
+        assert_eq!(first.paths.as_deref(), Some(&["/a.jpg".to_string(), "/b.jpg".to_string(), "/c.jpg".to_string()][..]));
+        assert_eq!(first.states, "kxr");
+        assert_eq!(first.manual, vec![1]);
+        // 同一批照片、前端带着这个版本：不再发路径
+        let again = compact(&mut cache, "p1", table(), Some(first.rev));
+        assert_eq!(again.rev, first.rev);
+        assert_eq!(again.paths, None);
+        // 前端手里是别的版本：照发
+        assert!(compact(&mut cache, "p1", table(), Some(first.rev + 7)).paths.is_some());
+        // 换了项目（哪怕路径一样）或照片变了：新版本
+        let other = compact(&mut cache, "p2", table(), Some(first.rev));
+        assert!(other.rev > first.rev && other.paths.is_some());
+        let mut fewer = table();
+        fewer.remove("/c.jpg");
+        let shrunk = compact(&mut cache, "p2", fewer, Some(other.rev));
+        assert!(shrunk.rev > other.rev);
+        assert_eq!(shrunk.states, "kx");
+    }
 }
 
 #[cfg(test)]

@@ -106,6 +106,10 @@ const emit = (event: string, payload: unknown) => (listeners.get(event) ?? []).f
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 let lastPhotos: Photo[] = [];
+/** decide_photos 的紧凑格式：上次的路径表、版本和整张表（理由从这里取）。 */
+let decideRev = 0;
+let decidePaths: string[] = [];
+let decideTable: Record<string, MockDecision> = {};
 
 type MockDecision = { state: string; manual: boolean; reasons: { k: string; p?: Record<string, number> }[] };
 /** 和 "decide_photos" 同一套粗糙的取舍（真正的算法只在 decide.rs）：分数排名，前面的保留，中间的待复查，其余淘汰。 */
@@ -303,7 +307,15 @@ w.__TAURI_INTERNALS__ = {
       }
       // A rough stand-in for the real (Rust-side) keep/review/reject logic: just enough to exercise the UI in a
       // plain browser. The actual ranking algorithm lives only in src-tauri/src/decide.rs.
-      case "decide_photos": return judge(lastPhotos, Number(args.keepRatio ?? 1), (args.overrides ?? {}) as Record<string, string>);
+      // 和 lib.rs 一样回紧凑格式：路径表变了才发，状态一张一个字符，理由另取（decide_reasons）
+      case "decide_photos": {
+        const tbl = judge(lastPhotos, Number(args.keepRatio ?? 1), (args.overrides ?? {}) as Record<string, string>);
+        const paths = Object.keys(tbl).sort();
+        if (paths.join("\n") !== decidePaths.join("\n")) { decideRev++; decidePaths = paths; }
+        decideTable = tbl;
+        return { rev: decideRev, paths: args.knownRev === decideRev ? undefined : paths, states: paths.map((p) => ({ keep: "k", review: "r", reject: "x" } as Record<string, string>)[tbl[p].state]).join(""), manual: paths.flatMap((p, i) => (tbl[p].manual ? [i] : [])) };
+      }
+      case "decide_reasons": return decideTable[String(args.path)]?.reasons ?? null;
       case "record_label": {
         const cur = args.label;
         if (cur !== null) { labels++; if (cur) keeps++; }
