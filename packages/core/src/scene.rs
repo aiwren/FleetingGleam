@@ -13,8 +13,12 @@ fn rows(bytes: &[u8], dim: usize) -> Vec<Vec<f32>> {
     bytes.chunks_exact(dim * 4).map(|r| r.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect()).collect()
 }
 
-/// Zero-shot kind of a photo from its (unit-length) analysis embedding, or `None` for an embedding of an unknown size.
+/// Zero-shot kind of a photo from its (unit-length) analysis embedding, or `None` for an embedding of an unknown size
+/// or one with NaN / 无穷大（以前缓存里一条这样的向量，`partial_cmp().unwrap()` 就让每次打开项目都 panic）。
 pub fn classify(emb: &[f32]) -> Option<(&'static str, f32)> {
+    if emb.iter().any(|v| !v.is_finite()) {
+        return None;
+    }
     let table = match emb.len() {
         512 => rows(B32, 512),
         768 => rows(L14, 768),
@@ -24,7 +28,7 @@ pub fn classify(emb: &[f32]) -> Option<(&'static str, f32)> {
     let max = logits.iter().cloned().fold(f32::MIN, f32::max);
     let exp: Vec<f32> = logits.iter().map(|l| (l - max).exp()).collect();
     let sum: f32 = exp.iter().sum();
-    let (i, e) = exp.iter().enumerate().max_by(|a, b| a.1.partial_cmp(b.1).unwrap())?;
+    let (i, e) = exp.iter().enumerate().max_by(|a, b| a.1.total_cmp(b.1))?;
     Some((NAMES[i], e / sum))
 }
 
@@ -55,6 +59,11 @@ mod tests {
         let row = rows(B32, 512).remove(0);
         assert_eq!(classify(&row).unwrap().0, "portrait");
         assert!(classify(&[0.0; 10]).is_none());
+        let mut bad = rows(B32, 512).remove(0);
+        bad[3] = f32::NAN;
+        assert!(classify(&bad).is_none(), "NaN 不 panic");
+        bad[3] = f32::INFINITY;
+        assert!(classify(&bad).is_none());
         assert_eq!(with_faces("landscape", 1), "people");
         assert_eq!(with_faces("animal", 1), "animal");
     }

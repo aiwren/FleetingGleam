@@ -201,6 +201,14 @@ pub struct Cache {
     disk: Arc<Disk>,
 }
 
+impl Entry {
+    /// 向量里没有 NaN / 无穷大。有的（算坏了的一次分析）读回来时丢掉、重新分析：一条这样的向量会让分组、场景判断出错甚至 panic。
+    fn finite(&self) -> bool {
+        let ok = |v: &[f32]| v.iter().all(|x| x.is_finite());
+        ok(&self.emb) && ok(&self.sem) && self.fe.iter().all(|f| ok(f))
+    }
+}
+
 pub fn file_key(path: &Path) -> Option<(u64, i64)> {
     let m = std::fs::metadata(path).ok()?;
     let mtime = m.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs() as i64;
@@ -484,6 +492,12 @@ impl Cache {
         c.disk.base.store(base_len, Ordering::Relaxed);
         // 上次整理没做完：下次存时整理（旧日志里的东西要进新底稿）
         c.disk.retry.store(had_old, Ordering::Relaxed);
+        // 向量算坏了的记录（NaN / 无穷大）不要：当没分析过，下次重新分析
+        let before = c.entries.len();
+        c.entries.retain(|_, e| e.finite());
+        if c.entries.len() < before {
+            crate::platform::log(&format!("{}: {} 条记录的向量不是有限数，丢掉重新分析", path.display(), before - c.entries.len()));
+        }
         c.path = path;
         c
     }
@@ -939,6 +953,24 @@ mod tests {
         assert!(!log_path(&path).exists() && !old_log_path(&path).exists(), "残迹删掉");
         drop(c);
         assert_eq!(Cache::load(path.clone()).photo("/p/0.jpg").unwrap().rotation, 0);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// 向量里有 NaN 的记录（底稿里的、日志里的）读回来时丢掉，其余照常。
+    #[test]
+    fn records_with_broken_vectors_are_dropped_on_load() {
+        let path = place("nan");
+        let mut c = Cache::load(path.clone());
+        c.put(1, 1, "t", &photo(0));
+        c.put(1, 1, "t", &Photo { embedding: vec![f32::NAN, 0.5], ..photo(1) });
+        c.disk.retry.store(true, Ordering::Relaxed);
+        c.save().write();
+        c.put(1, 1, "t", &photo(2));
+        c.set_index("/p/2.jpg", 1, 1, Some(vec![f32::INFINITY]), vec![1]);
+        c.save().write();
+        drop(c);
+        let back = Cache::load(path.clone());
+        assert_eq!(back.entries.keys().collect::<Vec<_>>(), vec!["/p/0.jpg"]);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
