@@ -185,15 +185,17 @@ jobs:
       - name: Gradle 编译（正式签名）
         run: apps/android/gradlew -p apps/android assembleRelease --no-daemon --stacktrace
 
-      # 确认真的是正式密钥签的（不是调试密钥），把证书指纹打在日志里，和本机那份对得上才算数
+      # 确认真的是正式密钥签的：证书指纹必须是这把（公开信息，和手机上已装的正式版是同一把；换密钥时一起改）
       - name: 核对签名并改名
+        env:
+          EXPECTED_CERT_SHA256: 0d258392c804f6fabd4a3af10b84b9738ba3f6427c10e4e0f10541b5a57e141b
         run: |
           apk=apps/android/app/build/outputs/apk/release/app-release.apk
           signer="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)/apksigner"
-          certs=$("$signer" verify --print-certs "$apk")
-          echo "$certs" | grep -E "Signer #1 certificate (DN|SHA-256)"
-          if echo "$certs" | grep -q "CN=Android Debug"; then
-            echo "::error::安装包是调试密钥签的，没有用上正式密钥。"
+          certs=$("$signer" verify --print-certs "$apk" 2>&1)
+          echo "$certs"
+          if ! printf '%s' "$certs" | tr -d ' :' | tr 'A-F' 'a-f' | grep -q "$EXPECTED_CERT_SHA256"; then
+            echo "::error::安装包的签名证书不是正式密钥（SHA-256 应为 $EXPECTED_CERT_SHA256），不能放进 Release。"
             exit 1
           fi
           cp "$apk" FleetingGleam-android.apk
