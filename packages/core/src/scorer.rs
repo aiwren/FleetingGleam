@@ -2,7 +2,6 @@ use crate::modelfiles;
 use crate::platform::GpuEncoder;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
-use std::sync::Mutex;
 
 use image::imageops::FilterType;
 use image::DynamicImage;
@@ -40,7 +39,7 @@ fn default_lo() -> f32 { 3.0 }
 fn default_hi() -> f32 { 7.0 }
 
 /// Which CLIP + aesthetic head to use.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Quality {
     /// ViT-B/32: small and quick.
     Fast,
@@ -92,18 +91,39 @@ pub fn analysis_tag(q: Quality) -> String {
 
 /// The newer aesthetic scorer: a SigLIP so400m image encoder and a small head trained for aesthetics (scores 1-10, 5.5+ is great).
 /// The head's linear layers have no non-linearity between them, so it is stored collapsed into one weight vector and a bias.
+/// 会话放在 `onnx::Pool` 里（和 CLIP 一样）：以前只有一个 `Mutex<Session>`，Ultra 档所有分析线程排队等这一份。
 pub struct SiglipAesthetic {
-    session: Mutex<Session>,
+    sessions: Pool,
     head: Head,
+}
+
+/// SigLIP so400m 留几份会话：一份在 CPU 上展开成 float32 约 1.6 GB，所以每 8 GB 内存一份、至少六核才给第二份，最多两份
+/// （`FG_SIGLIP_COPIES` 可改）。
+fn siglip_copies() -> usize {
+    if let Some(n) = std::env::var("FG_SIGLIP_COPIES").ok().and_then(|v| v.parse().ok()) {
+        return n;
+    }
+    let cores = std::thread::available_parallelism().map(|c| c.get()).unwrap_or(4);
+    let by_memory = ((physical_memory() >> 30) as usize / 8).max(1);
+    if cores >= 6 { by_memory.min(2) } else { 1 }
 }
 
 impl SiglipAesthetic {
     fn load(dir: &Path, gpu: bool) -> Result<Self, String> {
         // 这台平台的加速器（macOS 的 CoreML、Android 的 NNAPI）；要不要用它，`gpu` 说了算
         let path = dir.join(SIGLIP_FILE);
-        let session = if gpu { crate::onnx::load_accelerated(&path, None)? } else { crate::onnx::load(&path, None)? };
+        let copies = siglip_copies().max(1);
+        // 一份时和以前一样让 ONNX Runtime 自己定线程数；几份时把核分给它们
+        let threads = (copies > 1).then(|| (std::thread::available_parallelism().map(|c| c.get()).unwrap_or(4) / copies).max(2));
+        let sessions: Vec<Result<Session, String>> = std::thread::scope(|sc| {
+            let hs: Vec<_> = (0..copies)
+                .map(|_| sc.spawn(|| if gpu { crate::onnx::load_accelerated(&path, threads) } else { crate::onnx::load(&path, threads) }))
+                .collect();
+            hs.into_iter().map(|h| h.join().unwrap_or_else(|_| Err("loading panicked".into()))).collect()
+        });
+        let sessions = Pool::new(sessions.into_iter().collect::<Result<Vec<_>, _>>()?);
         let head: Head = serde_json::from_slice(&modelfiles::read_model(dir, SIGLIP_HEAD)?).map_err(|e| e.to_string())?;
-        Ok(Self { session: Mutex::new(session), head })
+        Ok(Self { sessions, head })
     }
 
     /// 384 x 384 (the picture is squeezed to a square, as SigLIP was trained), pixels scaled to -1..1.
@@ -117,12 +137,11 @@ impl SiglipAesthetic {
             }
         }
         let input = Tensor::from_array(([1usize, 3, 384, 384], data)).map_err(|e| e.to_string())?;
-        let emb: Vec<f32> = {
-            let mut s = self.session.lock().map_err(|e| e.to_string())?;
+        let emb: Vec<f32> = self.sessions.run(|s| {
             let out = s.run(ort::inputs!["pixel_values" => input]).map_err(|e| e.to_string())?;
             let (_, d) = out["image_embeds"].try_extract_tensor::<f32>().map_err(|e| e.to_string())?;
-            d.to_vec()
-        };
+            Ok(d.to_vec())
+        })?;
         if emb.len() != self.head.weight.len() || emb.iter().any(|v| !v.is_finite()) {
             return Err("the aesthetic model produced an unusable embedding".into());
         }
@@ -502,6 +521,7 @@ impl AiScorer for ClipScorer {
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
     use ort::ep::CoreML;
 
     /// How the CLIP image encoder runs under different CoreML settings: latency of one inference, the work of four threads sharing one session

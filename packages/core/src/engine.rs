@@ -20,7 +20,7 @@ use crate::analyze::{self, EyeMethod, Photo};
 use crate::platform::SystemVision;
 use crate::scorer::{self, AiScorer, ClipScorer, Quality};
 use crate::{cache, colorsig, decide, faces, florence, imageio, media, mediapipe, modelpacks, nas, prefs, r2, scene_vocab, scratch, taste, textsearch, translate};
-use crate::{list_all_with, list_images, oriented_dims, quarantine_name, unique_path, write_synced};
+use crate::{list_images, oriented_dims, quarantine_name, unique_path, write_synced};
 
 // ---------------------------------------------------------------- 宿主给的东西
 
@@ -202,6 +202,9 @@ impl Drop for JudgeGuard {
     }
 }
 
+/// 分析中 "scan-progress" 最多多久发一次（毫秒）。
+const PROGRESS_EVERY_MS: u64 = 100;
+
 /// 分析用的线程数：核数（`FG_SCAN_THREADS` 可改，调性能用）。每条线程分析一张照片时有一大半时间在等别人——Mac 等 Vision 边车和
 /// Metal 上的 CLIP，手机等 NNAPI 和模型会话池——按说多开线程能把解码填进等待里，可量过（M1 Max，60 张 12 MP 与 400 张 1536px）：
 /// 一倍半的线程一点不快，两倍反而慢一成（内核态时间涨，像是大块内存的缺页在排队），所以还是核数。
@@ -357,6 +360,76 @@ pub struct Machine {
 
 // ---------------------------------------------------------------- 引擎
 
+/// 加载好、留着复用的东西（CLIP 打分器）：按键各留一份，闲了 `IDLE` 就放掉。以前每次分析、加文件夹、建搜索索引、
+/// 场景命名都重新加载一遍 CLIP（几百 MB、几秒）；一直留着又白占几百 MB 内存，所以闲 10 分钟放。
+/// "闲"是没人拿着它（`Arc` 只剩这里一份）的时间：一次分析跑一小时，结束后才开始算。
+struct Keep<K, T> {
+    slots: Mutex<HashMap<K, (Arc<T>, std::time::Instant)>>,
+    /// 有一条线程在定时清理。
+    reaper: AtomicBool,
+}
+
+impl<K: std::hash::Hash + Eq + Send + 'static, T: Send + Sync + 'static> Keep<K, T> {
+    const IDLE: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+    const EVERY: std::time::Duration = std::time::Duration::from_secs(60);
+
+    fn new() -> Arc<Self> {
+        Arc::new(Keep { slots: Mutex::new(HashMap::new()), reaper: AtomicBool::new(false) })
+    }
+
+    /// 键对应的那份；没有就 `make` 一份留下（加载在锁里：同一时刻两个调用不会各加载一份）。加载失败不留。
+    fn get(self: &Arc<Self>, key: K, make: impl FnOnce() -> Result<T, String>) -> Result<Arc<T>, String> {
+        let mut slots = self.slots.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((v, used)) = slots.get_mut(&key) {
+            *used = std::time::Instant::now();
+            return Ok(v.clone());
+        }
+        let v = Arc::new(make()?);
+        slots.insert(key, (v.clone(), std::time::Instant::now()));
+        drop(slots);
+        self.start_reaper();
+        Ok(v)
+    }
+
+    fn clear(&self) {
+        self.slots.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    }
+
+    /// 放掉闲了 `IDLE` 的；还有人拿着的刷新时间。返回还留着几份；一份不剩时清理线程收工（在锁里标记，和 `get` 不会错过）。
+    fn reap(&self, now: std::time::Instant) -> usize {
+        let mut slots = self.slots.lock().unwrap_or_else(|e| e.into_inner());
+        slots.retain(|_, (v, used)| {
+            if Arc::strong_count(v) > 1 {
+                *used = now;
+                true
+            } else {
+                now.saturating_duration_since(*used) < Self::IDLE
+            }
+        });
+        if slots.is_empty() {
+            self.reaper.store(false, Ordering::Relaxed);
+        }
+        slots.len()
+    }
+
+    fn start_reaper(self: &Arc<Self>) {
+        if self.reaper.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        let weak = Arc::downgrade(self);
+        let spawned = std::thread::Builder::new().name("fg-keep-idle".into()).spawn(move || loop {
+            std::thread::sleep(Self::EVERY);
+            match weak.upgrade() {
+                Some(me) if me.reap(std::time::Instant::now()) > 0 => {}
+                _ => return,
+            }
+        });
+        if spawned.is_err() {
+            self.reaper.store(false, Ordering::Relaxed);
+        }
+    }
+}
+
 #[derive(Default)]
 struct Downloads {
     cancel: AtomicBool,
@@ -400,6 +473,8 @@ pub struct Engine {
     /// 每台 NAS 最后一次连接失败的原因（带前缀），连上就清掉；`ShareStatus.error` 给界面分开说"密码不对"和"连不上"。
     nas_errors: Mutex<HashMap<String, String>>,
     downloads: Downloads,
+    /// 加载好的 CLIP 打分器，按 (实际档位, 用不用加速器) 各一份，闲 10 分钟放掉（见 `Keep`）。
+    scorers: Arc<Keep<(Quality, bool), ClipScorer>>,
     /// `export_cancel` 设上：正在进行的导出做完当前这张就停。
     export_stop: Arc<AtomicBool>,
     /// Writes of `projects.json` are serialised and go through a temporary file and a rename.
@@ -459,6 +534,7 @@ impl Engine {
             nas: nas::Pool::start(),
             nas_errors: Mutex::new(HashMap::new()),
             downloads: Downloads::default(),
+            scorers: Keep::new(),
             export_stop: Arc::new(AtomicBool::new(false)),
             projects_write: Mutex::new(()),
             device: Mutex::new(String::new()),
@@ -515,6 +591,12 @@ impl Engine {
         guard.clone()
     }
 
+    /// CLIP 打分器：同一个 (实际档位, 加速器) 复用加载好的那份，没有才加载（见 `Keep`）。
+    fn clip_scorer(&self, accel: bool, want: Quality) -> Result<Arc<ClipScorer>, String> {
+        let q = scorer::resolve(&self.paths.models, accel, want);
+        self.scorers.get((q, accel), || ClipScorer::load(&self.paths.models, accel, want))
+    }
+
     /// 起一套系统视觉信号（宿主注册的工厂）；没有就 None。
     fn start_vision(&self, workers: usize, cpu_only: bool) -> Option<Box<dyn SystemVision>> {
         crate::platform::vision()?.start(&self.paths.models, workers, cpu_only)
@@ -557,14 +639,14 @@ impl Engine {
         // 先按扩展名和大小列出文件（不读文件）；缓存里认识的（没变过）尺寸直接查表，是否"已分析"按当前模型的 tag 看。
         // 其余的文件头只读一次：读不出来的（损坏、扩展名不对）剔除，读出来的尺寸直接用——以前筛一遍、取尺寸又读一遍，
         // 手机上几千张 HEIC 要等很久，界面上一直是"正在读取文件夹…"。边读边发 "probe-progress"。
-        let mut all: Vec<PathBuf> = dirs.iter().flat_map(|d| list_images(d)).collect();
-        all.sort();
-        all.dedup();
+        let (all, keys) = listed_with_keys(dirs);
+        // 锁里只查表：每个文件的 stat 在锁外、只做一次（以前在缓存锁里一张张 stat，要算大小时又 stat 一遍）
         let known: Vec<(Option<(u32, u32)>, bool)> = self.with_cache(|c| {
             all.iter()
-                .map(|p| {
+                .zip(&keys)
+                .map(|(p, k)| {
                     let key = p.to_string_lossy();
-                    match cache::file_key(p) {
+                    match *k {
                         Some((sz, mt)) => (c.dims(&key, sz, mt), c.has(&key, sz, mt, &tag)),
                         None => (None, false),
                     }
@@ -587,9 +669,17 @@ impl Engine {
                 dims.map(|(width, height)| ProbeFile { path: p.to_string_lossy().into_owned(), width, height, cached })
             })
             .collect();
-        let (files, out): (Vec<PathBuf>, Vec<ProbeFile>) = all.into_iter().zip(read).filter_map(|(p, f)| f.map(|f| (p, f))).unzip();
         // Size of what still needs analysing, which is what the confirmation screen talks about.
-        let bytes = files.iter().zip(&out).filter(|(_, o)| !o.cached).filter_map(|(p, _)| std::fs::metadata(p).ok()).map(|m| m.len()).sum();
+        let mut bytes = 0u64;
+        let mut out = Vec::with_capacity(read.len());
+        for (f, k) in read.into_iter().zip(&keys) {
+            if let Some(f) = f {
+                if !f.cached {
+                    bytes += k.map_or(0, |k| k.0);
+                }
+                out.push(f);
+            }
+        }
         let uncached = out.iter().filter(|f| !f.cached).count();
         Ok(Probe { files: out, bytes, uncached, offline })
     }
@@ -622,20 +712,35 @@ impl Engine {
         self.nas_sync_dirs(&a.dirs, gen, Some((a.key.clone(), job)))?;
         let mut hits: Vec<Photo> = Vec::new();
         let mut jobs: Vec<(PathBuf, u64, i64)> = Vec::new();
-        let files = self.with_cache(|c| {
-            let files = list_all_with(&a.dirs, |p| cache::file_key(p).map_or(false, |(sz, mt)| c.dims(&p.to_string_lossy(), sz, mt).is_some()));
-            for f in &files {
-                let key = f.to_string_lossy();
-                if let Some((sz, mt)) = cache::file_key(f) {
-                    match if force { None } else { c.get(&key, sz, mt, &tag) } {
-                        Some(p) => hits.push(p),
-                        None => jobs.push((f.clone(), sz, mt)),
+        // 每个文件只 stat 一次、在缓存锁外；锁里只查表。缓存不认识的文件读一次文件头（读不出来的——损坏、扩展名不对——不算），
+        // 也在锁外：以前列文件、读文件头、stat 两遍都在锁里
+        let (all, keys) = listed_with_keys(&a.dirs);
+        let looked: Vec<(bool, Option<Photo>)> = self.with_cache(|c| {
+            all.iter()
+                .zip(&keys)
+                .map(|(f, k)| match *k {
+                    Some((sz, mt)) => {
+                        let key = f.to_string_lossy();
+                        let hit = if force { None } else { c.get(&key, sz, mt, &tag) };
+                        (hit.is_some() || c.dims(&key, sz, mt).is_some(), hit)
                     }
-                }
-            }
-            files
+                    None => (false, None),
+                })
+                .collect()
         });
-        let total = files.len();
+        let readable: Vec<bool> = all.par_iter().zip(&looked).map(|(f, (known, _))| *known || oriented_dims(f).is_some()).collect();
+        let mut total = 0;
+        for (((f, k), (_, hit)), ok) in all.into_iter().zip(keys).zip(looked).zip(readable) {
+            if !ok {
+                continue;
+            }
+            total += 1;
+            match (hit, k) {
+                (Some(p), _) => hits.push(p),
+                (None, Some((sz, mt))) => jobs.push((f, sz, mt)),
+                (None, None) => {}
+            }
+        }
         crate::platform::log(&format!("分析开始 [{}#{job}]：{total} 张，要分析 {}，缓存命中 {}{}{}", a.key, jobs.len(), hits.len(), if force { "，强制重新分析" } else { "" }, if quiet { "，安静读取" } else { "" }));
         // 分析结果还在、缩略图被清掉了（手机的"清理加速"会清应用缓存，或缩略图目录换了地方）：只重做缩略图，不重新分析；
         // 连缩略图都做不出来的（文件读不了了）才回去重新分析
@@ -716,7 +821,7 @@ impl Engine {
                 JudgeGuard(j, Some(h))
             });
             // Models are only loaded when there is real work: re-opening a cached project is instant.
-            let scorer = ClipScorer::load(&model_dir, !cpu_only, want).map_err(|e| crate::platform::log(&format!("AI disabled: {e}"))).ok();
+            let scorer = self.clip_scorer(!cpu_only, want).map_err(|e| crate::platform::log(&format!("AI disabled: {e}"))).ok();
             let vision = vision_cell.get_or_init(|| self.start_vision(vision_workers(), cpu_only)).as_deref();
             let mp = self.eyes_model_for(eye_method, vision);
             if !quiet {
@@ -724,8 +829,8 @@ impl Engine {
                     "scan-info",
                     &Info {
                         cpu_only,
-                        clip: scorer.as_ref().map(|s| s.backend),
-                        model: scorer.as_ref().map(|s| s.model),
+                        clip: scorer.as_deref().map(|s| s.backend),
+                        model: scorer.as_deref().map(|s| s.model),
                         vision: vision.is_some(),
                         cores: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1),
                     },
@@ -736,6 +841,8 @@ impl Engine {
             let pending: Mutex<(Vec<Photo>, std::time::Instant)> = Mutex::new((Vec::new(), std::time::Instant::now()));
             let timing: Mutex<HashMap<&'static str, (f64, usize)>> = Mutex::new(HashMap::new());
             let wall = std::time::Instant::now();
+            // 上一条 "scan-progress" 是分析开始后第几毫秒发的（节流用；开始时那条在上面已经发过）
+            let last_progress = AtomicU64::new(0);
             let save_batch = |batch: &[Photo]| {
                 self.with_cache(|c| {
                     for p in batch {
@@ -770,12 +877,12 @@ impl Engine {
                     };
                     let on_stage = |stage: &str, pct: u8, thumb: Option<(&str, u32, u32)>| {
                         lap(match stage { "decode" => "decode", "quality" => "quality", "ai" => "ai", "system" => "faces", "thumb" => "tail", _ => "other" });
-                        if quiet {
-                            return;
-                        }
-                        self.emit("scan-stage", &Stage { path: &key, stage, pct, thumb: thumb.map(|t| t.0), width: thumb.map(|t| t.1), height: thumb.map(|t| t.2) });
+                        // 每张照片只在缩略图做好的那一刻发一次 "scan-stage"（界面拿它先把缩略图摆上墙）；别的阶段不发——
+                        // 以前每张五次，Android 上每次一遍 JSON + JNI，Mac 上每次一遍序列化 + eval。载荷不变
+                        let Some(thumb) = thumb.filter(|_| !quiet) else { return };
+                        self.emit("scan-stage", &Stage { path: &key, stage, pct, thumb: Some(thumb.0), width: Some(thumb.1), height: Some(thumb.2) });
                     };
-                    let r = analyze::analyze(p, &cache_dir, scorer.as_ref().map(|s| s as &dyn AiScorer), vision, eye_method, mp.as_deref(), fe.as_deref(), &on_stage);
+                    let r = analyze::analyze(p, &cache_dir, scorer.as_deref().map(|s| s as &dyn AiScorer), vision, eye_method, mp.as_deref(), fe.as_deref(), &on_stage);
                     lap("start");
                     let d = done.fetch_add(1, Ordering::Relaxed) + 1;
                     if !quiet {
@@ -785,7 +892,12 @@ impl Engine {
                                 j.0.push(photo);
                             }
                         }
-                        self.emit("scan-progress", &Progress { done: d, total });
+                        // 进度节流：每 100 ms 最多一条（最后一条在分析完后补发，见下面）
+                        let now = wall.elapsed().as_millis() as u64;
+                        let prev = last_progress.load(Ordering::Relaxed);
+                        if now >= prev + PROGRESS_EVERY_MS && last_progress.compare_exchange(prev, now, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
+                            self.emit("scan-progress", &Progress { done: d, total });
+                        }
                     }
                     if let Ok(photo) = &r {
                         // 攒够 25 张或过了 10 秒就落一批：落盘现在只是往日志末尾追加这几条（见 cache.rs），不再随项目变大而变慢，
@@ -818,6 +930,10 @@ impl Engine {
                 Some(pool) => pool.install(work),
                 None => work(),
             };
+            // 节流掉的最后一条补发：所有分析线程都结束了，这一条一定是最后到界面的
+            if !quiet {
+                self.emit("scan-progress", &Progress { done: done.load(Ordering::Relaxed), total });
+            }
             let rest = std::mem::take(&mut pending.lock().unwrap_or_else(|e| e.into_inner()).0);
             save_batch(&rest);
             // 一行性能小结（Android 进系统日志）：每张墙钟耗时，和每条线程上各阶段的平均耗时
@@ -827,7 +943,7 @@ impl Engine {
                 crate::platform::log(&format!(
                     "分析 {} 张：每张 {:.0} ms（墙钟）；{} 条线程，CLIP {}；每条线程上 解码 {:.0} · 质量 {:.0} · CLIP {:.0} · 人脸 {:.0} · 收尾 {:.0} ms",
                     fresh.len(), wall.elapsed().as_secs_f64() * 1000.0 / fresh.len() as f64, scan_threads(),
-                    scorer.as_ref().map_or("off", |s| s.backend), avg("decode"), avg("quality"), avg("ai"), avg("faces"), avg("tail")
+                    scorer.as_deref().map_or("off", |s| s.backend), avg("decode"), avg("quality"), avg("ai"), avg("faces"), avg("tail")
                 ));
             }
             if let Some(j) = judge {
@@ -1053,7 +1169,8 @@ impl Engine {
             Ok::<(Photo, cache::Pending), String>((out, c.save()))
         })?;
         let (p, pending) = p;
-        pending.write();
+        // 这是界面点"旋转"时同步调的：碰上该整理了，整份底稿放到后台写，不在调用线程上等几秒
+        pending.write_soon();
         let mut last = self.last_photos.lock().unwrap_or_else(|e| e.into_inner());
         for (_, list) in last.iter_mut() {
             if let Some(q) = list.iter_mut().find(|q| q.path == path) {
@@ -1545,9 +1662,11 @@ impl Engine {
     /// Copies the given photos into `dest`. Originals are never touched and nothing is overwritten.
     /// `dest` 落在某台 NAS 的镜像里（文件夹选择器选 NAS 上的文件夹时给的就是镜像路径）：直接上传到 NAS 上那个文件夹。
     ///
-    /// 目标里已有同名、同大小、同修改时间的视为导出过，计入 `skipped`（复制时把修改时间设成原图的，再导出一次就全是这种）。
-    /// 开始前看空间，不够就 `space:` 错误、一张都不复制。每张先写到旁边的 `.名字.part`，写完才改名，失败就删掉它：目标里永远没有半张照片；
-    /// 失败的和原因进 `failed`，中途磁盘满了后面的都不再试。`export_cancel` 让它做完当前这张就停（`cancelled`）。
+    /// 目标里已有同名（或重名时加了序号的 `名字 (n).扩展名`）、同大小、同修改时间的视为导出过，计入 `skipped`（复制时把修改时间设成原图的，
+    /// 再导出一次就全是这种）；修改时间没设上的（有的文件系统不让设）同大小时再比一遍内容。
+    /// 开始前看空间，不够就 `space:` 错误、一张都不复制。每张先写到旁边的 `.名字.fgpart.扩展名`，写完才改名，失败就删掉它：目标里永远没有半张照片；
+    /// 临时名保留图片扩展名，是因为 Android 11 起 `Pictures/` 这类公共目录只许建图片 / 视频类型的文件，`.part` 会被拒。
+    /// 失败的和原因（带目标路径；磁盘满时是目标卷的可用空间）进 `failed`，中途磁盘满了后面的都不再试。`export_cancel` 让它做完当前这张就停（`cancelled`）。
     pub fn export_photos(self: &Arc<Self>, paths: &[String], dest: &str) -> Result<ExportResult, String> {
         self.export_stop.store(false, Ordering::Relaxed);
         let shares = nas::load(&self.paths.data);
@@ -1562,11 +1681,12 @@ impl Engine {
         let total = paths.len();
         let mut skipped = 0usize;
         let mut todo: Vec<(&str, u64)> = Vec::new();
+        let there = exported_index(&dest_dir);
         for p in paths {
             let src = Path::new(p);
             match std::fs::metadata(src) {
                 Ok(m) if m.is_file() && analyze::is_image(src) => {
-                    if same_file_at(&dest_dir, src, &m) {
+                    if same_file_at(&there, src, &m) {
                         skipped += 1;
                     } else {
                         todo.push((p, m.len()));
@@ -1576,7 +1696,7 @@ impl Engine {
             }
         }
         crate::errors::check_space(&dest_dir, todo.iter().map(|(_, n)| n).sum())?;
-        let (mut copied, mut failed, mut cancelled) = (0usize, Vec::new(), false);
+        let (mut copied, mut failed, mut cancelled, mut untimed) = (0usize, Vec::new(), false, 0usize);
         self.emit("export-progress", &Progress { done: skipped, total });
         for (i, &(p, size)) in todo.iter().enumerate() {
             if self.export_stop.load(Ordering::Relaxed) {
@@ -1584,7 +1704,10 @@ impl Engine {
                 break;
             }
             match copy_into(Path::new(p), &dest_dir, size) {
-                Ok(()) => copied += 1,
+                Ok(timed) => {
+                    copied += 1;
+                    untimed += usize::from(!timed);
+                }
                 Err(e) => {
                     let full = e.starts_with("space:");
                     failed.push(ExportFailure { path: p.to_string(), error: e.clone() });
@@ -1596,6 +1719,9 @@ impl Engine {
                 }
             }
             self.emit("export-progress", &Progress { done: skipped + i + 1, total });
+        }
+        if untimed > 0 {
+            crate::platform::log(&format!("导出到 {dest}：{untimed} 张没能设上原图的修改时间（下次导出时按内容认）"));
         }
         Ok(ExportResult { copied, skipped, dest: dest.to_string(), remote: false, failed, cancelled })
     }
@@ -1862,7 +1988,7 @@ impl Engine {
             return Ok(0);
         }
         // the larger analysis model leaves no ViT-B/32 vector behind, so those photos get one here; the rest only need their colours
-        let scorer = if pending.iter().any(|p| p.4) { Some(ClipScorer::load(&self.paths.models, true, Quality::Fast)?) } else { None };
+        let scorer = if pending.iter().any(|p| p.4) { Some(self.clip_scorer(true, Quality::Fast)?) } else { None };
         let total = pending.len();
         let mut done = 0usize;
         self.emit("search-index-progress", &Progress { done, total });
@@ -1871,7 +1997,7 @@ impl Engine {
                 .par_iter()
                 .filter_map(|(key, thumb, size, mtime, need_vec)| {
                     let img = image::open(thumb).ok()?;
-                    let sem = match (need_vec, scorer.as_ref()) {
+                    let sem = match (need_vec, scorer.as_deref()) {
                         (true, Some(s)) => Some(<ClipScorer as AiScorer>::analyze(s, &img).ok()?.embedding),
                         _ => None,
                     };
@@ -1939,7 +2065,7 @@ impl Engine {
         let thumbs: Vec<Vec<Option<String>>> = self.with_cache(|c| {
             scenes.iter().zip(&known).map(|(s, kn)| s.paths.iter().take(PER_SCENE).zip(kn).map(|(k, v)| if v.is_some() { None } else { c.photo(k).map(|p| p.thumb.clone()) }).collect()).collect()
         });
-        let scorer = if thumbs.iter().flatten().any(|t| t.is_some()) { ClipScorer::load(&dir, true, Quality::Fast).ok() } else { None };
+        let scorer = if thumbs.iter().flatten().any(|t| t.is_some()) { self.clip_scorer(true, Quality::Fast).ok() } else { None };
         let mut unnamed: Vec<&SceneReq> = Vec::new();
         let mut names: Vec<SceneText> = Vec::new();
         for (n, scene) in scenes.iter().enumerate() {
@@ -1949,7 +2075,7 @@ impl Engine {
             let mut mean = vec![0f32; scene_vocab::DIM];
             let mut count = 0;
             for (v, t) in known[n].iter().zip(&thumbs[n]) {
-                let vec = match (v, t, scorer.as_ref()) {
+                let vec = match (v, t, scorer.as_deref()) {
                     (Some(v), _, _) => Some(v.clone()),
                     (None, Some(t), Some(s)) => image::open(t).ok().and_then(|img| <ClipScorer as AiScorer>::analyze(s, &img).ok()).map(|o| o.embedding),
                     _ => None,
@@ -2078,7 +2204,8 @@ impl Engine {
             let Ok(rd) = std::fs::read_dir(&dir) else { continue };
             for e in rd.flatten() {
                 let name = e.file_name().to_string_lossy().into_owned();
-                if name.len() >= 16 && prefixes.contains(&name[..16]) {
+                // 按字节取前 16 个：缩略图目录里别的文件（非 ASCII 名字）在第 16 字节处可能切在一个字的中间，`&name[..16]` 会 panic
+                if name.get(..16).map_or(false, |h| prefixes.contains(h)) {
                     let _ = std::fs::remove_file(e.path());
                 }
             }
@@ -2191,6 +2318,8 @@ impl Engine {
     }
 
     fn forget_models(&self) {
+        // 新下的或删掉的包可能改了该用哪个模型文件：打分器下次重新加载
+        self.scorers.clear();
         *self.text.lock().unwrap_or_else(|e| e.into_inner()) = None;
         *self.mediapipe_eyes.lock().unwrap_or_else(|e| e.into_inner()) = None;
         *self.face_embedder.lock().unwrap_or_else(|e| e.into_inner()) = None;
@@ -2318,7 +2447,7 @@ impl Engine {
             return Err("no photos in that folder".to_string());
         }
         // the embeddings must be the kind the analysed photos have (they are compared with them), so the same model is used
-        let scorer = ClipScorer::load(&self.paths.models, accel, want)?;
+        let scorer = self.clip_scorer(accel, want)?;
         let total = files.len();
         let done = AtomicUsize::new(0);
         self.emit("reference-progress", &Progress { done: 0, total });
@@ -2434,27 +2563,122 @@ NAS：
     }
 }
 
-/// `dir` 里已有和 `src` 同名、同大小、同修改时间（秒）的文件：导出过了。
-fn same_file_at(dir: &Path, src: &Path, m: &std::fs::Metadata) -> bool {
-    let secs = |t: std::io::Result<std::time::SystemTime>| t.ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs());
-    let Some(name) = src.file_name() else { return false };
-    std::fs::metadata(dir.join(name)).map_or(false, |d| d.is_file() && d.len() == m.len() && secs(d.modified()).is_some() && secs(d.modified()) == secs(m.modified()))
+/// 几个文件夹里的照片候选（只按扩展名和大小，去重、排序），连同各自的 (大小, 修改时间)：每个文件 stat 一次，并行做。
+fn listed_with_keys(dirs: &[String]) -> (Vec<PathBuf>, Vec<Option<(u64, i64)>>) {
+    let mut all: Vec<PathBuf> = dirs.iter().flat_map(|d| list_images(d)).collect();
+    all.sort();
+    all.dedup();
+    let keys = all.par_iter().map(|p| cache::file_key(p)).collect();
+    (all, keys)
 }
 
-/// 把一张照片复制进 `dir`：先写到 `.名字.part`，修改时间设成原图的（下次导出认得出），再改成不重名的正式名字。失败就删掉 `.part`。
-fn copy_into(src: &Path, dir: &Path, size: u64) -> Result<(), String> {
-    let name = src.file_name().unwrap_or_default();
-    let tmp = dir.join(format!(".{}.part", name.to_string_lossy()));
-    let r = (|| -> std::io::Result<()> {
-        std::fs::copy(src, &tmp)?;
-        let modified = std::fs::metadata(src)?.modified()?;
-        std::fs::OpenOptions::new().write(true).open(&tmp)?.set_modified(modified)?;
-        std::fs::rename(&tmp, unique_path(dir, name))
-    })();
-    r.map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        crate::errors::io(&e, src, size)
+/// `名字 (n).扩展名` → `名字.扩展名`（`unique_path` 重名时加的序号）；不是这个样子的给 None。
+fn without_number(name: &str) -> Option<String> {
+    let p = Path::new(name);
+    let stem = p.file_stem()?.to_str()?;
+    let base = stem.strip_suffix(')')?;
+    let (base, n) = base.rsplit_once(" (")?;
+    if base.is_empty() || n.is_empty() || !n.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    Some(match p.extension().and_then(|e| e.to_str()) {
+        Some(ext) => format!("{base}.{ext}"),
+        None => base.to_string(),
     })
+}
+
+/// 导出目标里已有的文件，按"它可能是哪个名字的副本"分好：原名，加上去掉序号后的名字（`a (2).jpg` 也算在 `a.jpg` 名下）。
+/// 隐藏文件（含导出时的临时文件）不算。
+fn exported_index(dir: &Path) -> HashMap<String, Vec<PathBuf>> {
+    let mut out: HashMap<String, Vec<PathBuf>> = HashMap::new();
+    let Ok(rd) = std::fs::read_dir(dir) else { return out };
+    for e in rd.filter_map(Result::ok) {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') {
+            continue;
+        }
+        if let Some(base) = without_number(&name) {
+            out.entry(base).or_default().push(e.path());
+        }
+        out.entry(name).or_default().push(e.path());
+    }
+    out
+}
+
+/// 目标里已有 `src` 的副本：同名或同名加序号、同大小，修改时间（秒）一样；时间不一样（设不上时间的文件系统）就比内容。
+fn same_file_at(there: &HashMap<String, Vec<PathBuf>>, src: &Path, m: &std::fs::Metadata) -> bool {
+    let secs = |t: std::io::Result<std::time::SystemTime>| t.ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs());
+    let Some(name) = src.file_name() else { return false };
+    let Some(cands) = there.get(name.to_string_lossy().as_ref()) else { return false };
+    cands.iter().any(|c| {
+        std::fs::metadata(c).map_or(false, |d| {
+            d.is_file() && d.len() == m.len() && ((secs(d.modified()).is_some() && secs(d.modified()) == secs(m.modified())) || same_bytes(src, c))
+        })
+    })
+}
+
+/// 两个文件内容一样（逐块比，遇到不同就停）。
+fn same_bytes(a: &Path, b: &Path) -> bool {
+    use std::io::Read;
+    fn fill(r: &mut impl Read, buf: &mut [u8]) -> std::io::Result<usize> {
+        let mut n = 0;
+        while n < buf.len() {
+            match r.read(&mut buf[n..])? {
+                0 => break,
+                k => n += k,
+            }
+        }
+        Ok(n)
+    }
+    let (Ok(mut fa), Ok(mut fb)) = (std::fs::File::open(a), std::fs::File::open(b)) else { return false };
+    let (mut ba, mut bb) = (vec![0u8; 1 << 18], vec![0u8; 1 << 18]);
+    loop {
+        match (fill(&mut fa, &mut ba), fill(&mut fb, &mut bb)) {
+            (Ok(na), Ok(nb)) if na == nb && ba[..na] == bb[..nb] => {
+                if na == 0 {
+                    return true;
+                }
+            }
+            _ => return false,
+        }
+    }
+}
+
+/// 导出时的临时名：`.名字.fgpart.扩展名`。保留图片扩展名：Android 11 起 `Pictures/` 这类公共目录只许建图片 / 视频类型的文件。
+fn export_temp_name(name: &std::ffi::OsStr) -> String {
+    let p = Path::new(name);
+    let stem = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    match p.extension() {
+        Some(ext) => format!(".{stem}.fgpart.{}", ext.to_string_lossy()),
+        None => format!(".{stem}.fgpart"),
+    }
+}
+
+/// 把一张照片复制进 `dir`：先写到 `.名字.fgpart.扩展名`，修改时间设成原图的（下次导出认得出），再改成不重名的正式名字。失败就删掉临时文件。
+/// 设修改时间失败只降级（有的文件系统不让设；下次导出按内容认），返回 `false`。错误里是目标路径（读不了原图时是原图路径），
+/// 磁盘满时 `space:` 带的是目标卷的可用空间。
+fn copy_into(src: &Path, dir: &Path, size: u64) -> Result<bool, String> {
+    let name = src.file_name().unwrap_or_default();
+    let tmp = dir.join(export_temp_name(name));
+    let target = dir.join(name);
+    let r = (|| -> Result<bool, String> {
+        std::fs::copy(src, &tmp).map_err(|e| {
+            // 原图打不开是读的问题，说原图；否则是写的问题，说目标
+            if std::fs::File::open(src).is_err() { crate::errors::io(&e, src, size) } else { crate::errors::io(&e, &target, size) }
+        })?;
+        let timed = (|| -> std::io::Result<()> {
+            let modified = std::fs::metadata(src)?.modified()?;
+            std::fs::OpenOptions::new().write(true).open(&tmp)?.set_modified(modified)
+        })()
+        .is_ok();
+        let to = unique_path(dir, name);
+        std::fs::rename(&tmp, &to).map_err(|e| crate::errors::io(&e, &to, size))?;
+        Ok(timed)
+    })();
+    if r.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    r
 }
 
 /// 没有系统解码器时的局部：`image` crate 解出摆正的原图，裁出那一块，宽不超过 `out_w`。
@@ -2532,6 +2756,27 @@ mod tests {
         assert_eq!(skips.len(), 1, "{skips:?}");
         assert_eq!(skips[0]["path"], broken.as_str());
         assert!(!skips[0]["error"].as_str().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 分析中的事件：每张照片一条 "scan-stage"（带缩略图）、一条 "scan-photo"；"scan-progress" 节流，但最后一条一定是做完的数。
+    #[test]
+    fn scan_events_are_few_and_the_last_progress_is_complete() {
+        let (e, root, events) = engine("events");
+        let dir = root.join("photos");
+        photos(&dir, 6);
+        let out = e.scan_project(ScanArgs { key: "k".into(), dirs: vec![dir.to_string_lossy().into_owned()], ..Default::default() }).unwrap();
+        assert_eq!(out.len(), 6);
+        let ev = events.0.lock().unwrap().clone();
+        let named = |n: &str| ev.iter().filter(|(x, _)| x == n).map(|(_, v)| v.clone()).collect::<Vec<_>>();
+        let stages = named("scan-stage");
+        assert_eq!(stages.len(), 6, "每张一条");
+        assert!(stages.iter().all(|s| s["thumb"].is_string() && s["width"].as_u64().unwrap() > 0 && s["stage"] == "quality"), "{stages:?}");
+        assert_eq!(named("scan-photo").len(), 6);
+        let progress = named("scan-progress");
+        assert!(progress.len() <= 6 + 2, "{progress:?}");
+        assert_eq!(progress.last().unwrap()["done"], 6);
+        assert_eq!(progress.last().unwrap()["total"], 6);
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -2681,6 +2926,87 @@ mod tests {
         assert!(r.failed[0].error.starts_with("denied:"), "{}", r.failed[0].error);
         let left: Vec<String> = std::fs::read_dir(&out2).unwrap().map(|x| x.unwrap().file_name().to_string_lossy().into_owned()).collect();
         assert_eq!(left, vec!["p2.jpg"], "没有半截的 .part");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 留着复用的东西：同一个键只做一次；还有人拿着的不放；闲过 10 分钟、没人拿着的放掉；做失败的不留。
+    #[test]
+    fn kept_things_are_reused_and_let_go_when_idle() {
+        let keep: Arc<Keep<u8, String>> = Keep::new();
+        let made = AtomicUsize::new(0);
+        let make = || { made.fetch_add(1, Ordering::Relaxed); Ok::<_, String>("model".to_string()) };
+        let a = keep.get(1, make).unwrap();
+        let b = keep.get(1, || panic!("already there")).unwrap();
+        assert!(Arc::ptr_eq(&a, &b));
+        assert_eq!(made.load(Ordering::Relaxed), 1);
+        assert!(keep.get(2, || Err("no model".into())).is_err());
+        assert_eq!(keep.slots.lock().unwrap().len(), 1, "失败的不留");
+        let later = std::time::Instant::now() + Keep::<u8, String>::IDLE + std::time::Duration::from_secs(1);
+        assert_eq!(keep.reap(later), 1, "还有人拿着，不放");
+        drop((a, b));
+        assert_eq!(keep.reap(later), 1, "刚才还在用（时间刷新过），不放");
+        assert_eq!(keep.reap(later + Keep::<u8, String>::IDLE + std::time::Duration::from_secs(1)), 0, "闲过十分钟，放掉");
+        assert!(!keep.reaper.load(Ordering::Relaxed), "空了，清理线程收工");
+        keep.get(1, make).unwrap();
+        assert_eq!(made.load(Ordering::Relaxed), 2, "放掉之后要用再做");
+    }
+
+    /// 导出的临时名保留图片扩展名（Android 的公共目录只许建图片类型的文件）；`名字 (n).扩展名` 认作同一张的副本。
+    #[test]
+    fn export_names_keep_the_picture_extension_and_numbered_copies_count() {
+        use std::ffi::OsStr;
+        assert_eq!(export_temp_name(OsStr::new("IMG_1.HEIC")), ".IMG_1.fgpart.HEIC");
+        assert_eq!(export_temp_name(OsStr::new("a.b.jpg")), ".a.b.fgpart.jpg");
+        assert_eq!(export_temp_name(OsStr::new("惊鸿 照片.jpeg")), ".惊鸿 照片.fgpart.jpeg");
+        assert_eq!(export_temp_name(OsStr::new("noext")), ".noext.fgpart");
+        assert!(crate::analyze::is_image(Path::new(&export_temp_name(OsStr::new("x.jpg")))), "临时文件本身还是图片类型");
+        assert_eq!(without_number("a (2).jpg").as_deref(), Some("a.jpg"));
+        assert_eq!(without_number("旅行 (12).HEIC").as_deref(), Some("旅行.HEIC"));
+        assert_eq!(without_number("a (2) (3).jpg").as_deref(), Some("a (2).jpg"));
+        for n in ["a.jpg", "a (x).jpg", "(2).jpg", "a(2).jpg", "a ().jpg"] {
+            assert_eq!(without_number(n), None, "{n}");
+        }
+    }
+
+    /// 改了序号的副本认得出；修改时间没设上（有的文件系统不让设）时按内容认；同大小内容不同的照常复制；写不进去的错误说的是目标。
+    #[test]
+    fn exporting_recognises_numbered_and_untimed_copies() {
+        use std::os::unix::fs::PermissionsExt;
+        let (e, root, _) = engine("export-numbered");
+        let dir = root.join("photos");
+        photos(&dir, 2);
+        let p0 = dir.join("p0.jpg").to_string_lossy().into_owned();
+        let out = root.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        // 目标里先有一张不相干的同名照片：这次的副本成了 `p0 (2).jpg`
+        std::fs::write(out.join("p0.jpg"), b"someone else's picture").unwrap();
+        let r = e.export_photos(std::slice::from_ref(&p0), &out.to_string_lossy()).unwrap();
+        assert_eq!(r.copied, 1);
+        assert!(out.join("p0 (2).jpg").exists());
+        let r = e.export_photos(std::slice::from_ref(&p0), &out.to_string_lossy()).unwrap();
+        assert_eq!((r.copied, r.skipped), (0, 1), "带序号的副本认得出");
+        // 修改时间对不上、内容一样：也算导出过
+        std::fs::OpenOptions::new().write(true).open(out.join("p0 (2).jpg")).unwrap().set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000)).unwrap();
+        let r = e.export_photos(std::slice::from_ref(&p0), &out.to_string_lossy()).unwrap();
+        assert_eq!((r.copied, r.skipped), (0, 1), "按内容认");
+        // 同大小、时间不同、内容不同：是另一张，照常复制
+        let mut other = std::fs::read(&p0).unwrap();
+        let last = other.len() - 3;
+        other[last] ^= 0xFF;
+        std::fs::write(out.join("p0 (2).jpg"), &other).unwrap();
+        std::fs::OpenOptions::new().write(true).open(out.join("p0 (2).jpg")).unwrap().set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000)).unwrap();
+        let r = e.export_photos(std::slice::from_ref(&p0), &out.to_string_lossy()).unwrap();
+        assert_eq!(r.copied, 1);
+        assert!(out.join("p0 (3).jpg").exists());
+        // 目标写不进去：错误带目标路径，不是原图的
+        let locked = root.join("locked");
+        std::fs::create_dir_all(&locked).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let r = e.export_photos(std::slice::from_ref(&p0), &locked.to_string_lossy()).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(r.failed.len(), 1);
+        let err = &r.failed[0].error;
+        assert!(err.starts_with("denied:") && err.contains(&*locked.to_string_lossy()) && !err.contains(&*dir.to_string_lossy()), "{err}");
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -2920,10 +3246,14 @@ mod tests {
         scan(&db);
         let thumb = PathBuf::from(&a[0].thumb);
         assert!(thumb.exists());
+        // 缩略图目录里一个第 16 字节落在字中间的名字（每个汉字 3 字节）：不 panic、不删
+        let odd = e.paths.thumbs.join("照片照片照片照片.jpg");
+        std::fs::write(&odd, b"x").unwrap();
         let (sa, sb) = (da.to_string_lossy().into_owned(), db.to_string_lossy().into_owned());
         // b 还被别的项目用着：a 和 b 都要删，但只忘掉 a
         assert_eq!(e.forget_folders(&[sa.clone(), sb.clone()], &[sb.clone()]), 2);
         assert!(!thumb.exists(), "the thumbnail went with it");
+        assert!(odd.exists());
         let probe = |d: &str| e.probe_folder(&[d.to_string()], None, None).unwrap().uncached;
         assert_eq!(probe(&sa), 2, "a has to be analysed again");
         assert_eq!(probe(&sb), 0, "b, still in use, is untouched");
