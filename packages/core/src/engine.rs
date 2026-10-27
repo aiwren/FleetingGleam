@@ -20,7 +20,7 @@ use crate::analyze::{self, EyeMethod, Photo};
 use crate::platform::SystemVision;
 use crate::scorer::{self, AiScorer, ClipScorer, Quality};
 use crate::{cache, colorsig, decide, faces, florence, imageio, media, mediapipe, modelpacks, nas, prefs, r2, scene_vocab, scratch, taste, textsearch, translate};
-use crate::{list_all_with, list_images, oriented_dims, quarantine_name, unique_path, write_synced};
+use crate::{list_images, oriented_dims, quarantine_name, unique_path, write_synced};
 
 // ---------------------------------------------------------------- 宿主给的东西
 
@@ -557,14 +557,14 @@ impl Engine {
         // 先按扩展名和大小列出文件（不读文件）；缓存里认识的（没变过）尺寸直接查表，是否"已分析"按当前模型的 tag 看。
         // 其余的文件头只读一次：读不出来的（损坏、扩展名不对）剔除，读出来的尺寸直接用——以前筛一遍、取尺寸又读一遍，
         // 手机上几千张 HEIC 要等很久，界面上一直是"正在读取文件夹…"。边读边发 "probe-progress"。
-        let mut all: Vec<PathBuf> = dirs.iter().flat_map(|d| list_images(d)).collect();
-        all.sort();
-        all.dedup();
+        let (all, keys) = listed_with_keys(dirs);
+        // 锁里只查表：每个文件的 stat 在锁外、只做一次（以前在缓存锁里一张张 stat，要算大小时又 stat 一遍）
         let known: Vec<(Option<(u32, u32)>, bool)> = self.with_cache(|c| {
             all.iter()
-                .map(|p| {
+                .zip(&keys)
+                .map(|(p, k)| {
                     let key = p.to_string_lossy();
-                    match cache::file_key(p) {
+                    match *k {
                         Some((sz, mt)) => (c.dims(&key, sz, mt), c.has(&key, sz, mt, &tag)),
                         None => (None, false),
                     }
@@ -587,9 +587,17 @@ impl Engine {
                 dims.map(|(width, height)| ProbeFile { path: p.to_string_lossy().into_owned(), width, height, cached })
             })
             .collect();
-        let (files, out): (Vec<PathBuf>, Vec<ProbeFile>) = all.into_iter().zip(read).filter_map(|(p, f)| f.map(|f| (p, f))).unzip();
         // Size of what still needs analysing, which is what the confirmation screen talks about.
-        let bytes = files.iter().zip(&out).filter(|(_, o)| !o.cached).filter_map(|(p, _)| std::fs::metadata(p).ok()).map(|m| m.len()).sum();
+        let mut bytes = 0u64;
+        let mut out = Vec::with_capacity(read.len());
+        for (f, k) in read.into_iter().zip(&keys) {
+            if let Some(f) = f {
+                if !f.cached {
+                    bytes += k.map_or(0, |k| k.0);
+                }
+                out.push(f);
+            }
+        }
         let uncached = out.iter().filter(|f| !f.cached).count();
         Ok(Probe { files: out, bytes, uncached, offline })
     }
@@ -622,20 +630,35 @@ impl Engine {
         self.nas_sync_dirs(&a.dirs, gen, Some((a.key.clone(), job)))?;
         let mut hits: Vec<Photo> = Vec::new();
         let mut jobs: Vec<(PathBuf, u64, i64)> = Vec::new();
-        let files = self.with_cache(|c| {
-            let files = list_all_with(&a.dirs, |p| cache::file_key(p).map_or(false, |(sz, mt)| c.dims(&p.to_string_lossy(), sz, mt).is_some()));
-            for f in &files {
-                let key = f.to_string_lossy();
-                if let Some((sz, mt)) = cache::file_key(f) {
-                    match if force { None } else { c.get(&key, sz, mt, &tag) } {
-                        Some(p) => hits.push(p),
-                        None => jobs.push((f.clone(), sz, mt)),
+        // 每个文件只 stat 一次、在缓存锁外；锁里只查表。缓存不认识的文件读一次文件头（读不出来的——损坏、扩展名不对——不算），
+        // 也在锁外：以前列文件、读文件头、stat 两遍都在锁里
+        let (all, keys) = listed_with_keys(&a.dirs);
+        let looked: Vec<(bool, Option<Photo>)> = self.with_cache(|c| {
+            all.iter()
+                .zip(&keys)
+                .map(|(f, k)| match *k {
+                    Some((sz, mt)) => {
+                        let key = f.to_string_lossy();
+                        let hit = if force { None } else { c.get(&key, sz, mt, &tag) };
+                        (hit.is_some() || c.dims(&key, sz, mt).is_some(), hit)
                     }
-                }
-            }
-            files
+                    None => (false, None),
+                })
+                .collect()
         });
-        let total = files.len();
+        let readable: Vec<bool> = all.par_iter().zip(&looked).map(|(f, (known, _))| *known || oriented_dims(f).is_some()).collect();
+        let mut total = 0;
+        for (((f, k), (_, hit)), ok) in all.into_iter().zip(keys).zip(looked).zip(readable) {
+            if !ok {
+                continue;
+            }
+            total += 1;
+            match (hit, k) {
+                (Some(p), _) => hits.push(p),
+                (None, Some((sz, mt))) => jobs.push((f, sz, mt)),
+                (None, None) => {}
+            }
+        }
         crate::platform::log(&format!("分析开始 [{}#{job}]：{total} 张，要分析 {}，缓存命中 {}{}{}", a.key, jobs.len(), hits.len(), if force { "，强制重新分析" } else { "" }, if quiet { "，安静读取" } else { "" }));
         // 分析结果还在、缩略图被清掉了（手机的"清理加速"会清应用缓存，或缩略图目录换了地方）：只重做缩略图，不重新分析；
         // 连缩略图都做不出来的（文件读不了了）才回去重新分析
@@ -2443,6 +2466,15 @@ NAS：
         }
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())
     }
+}
+
+/// 几个文件夹里的照片候选（只按扩展名和大小，去重、排序），连同各自的 (大小, 修改时间)：每个文件 stat 一次，并行做。
+fn listed_with_keys(dirs: &[String]) -> (Vec<PathBuf>, Vec<Option<(u64, i64)>>) {
+    let mut all: Vec<PathBuf> = dirs.iter().flat_map(|d| list_images(d)).collect();
+    all.sort();
+    all.dedup();
+    let keys = all.par_iter().map(|p| cache::file_key(p)).collect();
+    (all, keys)
 }
 
 /// `名字 (n).扩展名` → `名字.扩展名`（`unique_path` 重名时加的序号）；不是这个样子的给 None。
