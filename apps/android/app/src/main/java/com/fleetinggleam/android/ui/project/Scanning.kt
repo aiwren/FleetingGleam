@@ -29,7 +29,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
@@ -256,10 +255,7 @@ private fun ScanningCard(progress: com.fleetinggleam.android.core.Progress, onSt
         val c = LocalFg.current
         Box(Modifier.fillMaxWidth().height(112.dp).clip(RoundedCornerShape(16.dp)).background(androidx.compose.ui.graphics.Color(0xFF1C1C20))) {
             androidx.compose.animation.Crossfade(bg, animationSpec = Motion.develop(), label = "scanbg", modifier = Modifier.matchParentSize()) { th ->
-                if (th != null) coil3.compose.AsyncImage(
-                    java.io.File(th), null, contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize().blur(26.dp).graphicsLayer { alpha = 0.6f },
-                )
+                if (th != null) com.fleetinggleam.android.ui.components.AmbientImage(th, 26.dp, Modifier.fillMaxSize().graphicsLayer { alpha = 0.6f })
             }
             Box(Modifier.matchParentSize().background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(androidx.compose.ui.graphics.Color(0x66000000), androidx.compose.ui.graphics.Color(0xB8000000)))))
             // 右上角：停止。白 14% 的圆、白色 ×

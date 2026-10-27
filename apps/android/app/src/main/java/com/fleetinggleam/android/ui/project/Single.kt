@@ -34,7 +34,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
@@ -96,7 +95,7 @@ fun SinglePager(shown: List<Photo>, decisions: Map<String, Decision>, cull: Cull
         Box(Modifier.weight(1f).fillMaxWidth()) {
             // 照片的颜色在它身后晕开
             // 和大图的"房间"同一套参数：模糊 56、透明 0.4、放大 1.4（设计审查 A7.3）
-            AsyncImage(File(photo.thumb), null, Modifier.align(Alignment.Center).fillMaxSize(0.6f).blur(56.dp).graphicsLayer { alpha = 0.4f; scaleX = 1.4f; scaleY = 1.4f }, contentScale = ContentScale.Crop)
+            com.fleetinggleam.android.ui.components.AmbientImage(photo.thumb, 56.dp, Modifier.align(Alignment.Center).fillMaxSize(0.6f).graphicsLayer { alpha = 0.4f }, zoom = 1.4f)
             HorizontalPager(pager, Modifier.fillMaxSize(), key = { shown[it].path }, beyondViewportPageCount = 1) { page ->
                 val p = shown[page]
                 val f = ((pager.currentPage - page) + pager.currentPageOffsetFraction).coerceIn(-1f, 1f)

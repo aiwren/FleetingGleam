@@ -63,7 +63,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
@@ -202,7 +201,7 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, re
     Box(Modifier.fillMaxSize().onGloballyPositioned { stage = it.boundsInRoot() }) {
         // ---- 房间：深色底，照片的模糊副本把它照亮
         Box(Modifier.fillMaxSize().graphicsLayer { alpha = enter.value * fadeNow() }.background(ROOM)) {
-            AsyncImage(File(photo.thumb), null, Modifier.fillMaxSize().blur(60.dp).graphicsLayer { alpha = 0.42f }, contentScale = ContentScale.Crop)
+            com.fleetinggleam.android.ui.components.AmbientImage(photo.thumb, 60.dp, Modifier.fillMaxSize().graphicsLayer { alpha = 0.42f })
         }
         // ---- 照片
         Box(Modifier.fillMaxSize().then(if (com.fleetinggleam.android.ui.components.LocalGlassOn.current) Modifier.layerBackdrop(backdrop) else Modifier)) {
