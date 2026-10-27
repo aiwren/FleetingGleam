@@ -7,7 +7,7 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 /// `app.log` 满这么大就换下一份。
 const LOG_MAX: u64 = 2 * 1024 * 1024;
@@ -15,26 +15,25 @@ const LOG_MAX: u64 = 2 * 1024 * 1024;
 const CRASH_KEEP: usize = 5;
 
 static LOG_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
+/// panic hook 写崩溃记录的目录：第一次初始化时定下，之后只读、不用锁。以前 hook 去 `try_lock` 日志锁，
+/// 另一条线程正写着 app.log 的那一刻 panic，崩溃记录就丢了。
+static CRASH_DIR: OnceLock<PathBuf> = OnceLock::new();
 static HOOK: std::sync::Once = std::sync::Once::new();
 
 /// 引擎初始化时调：日志写到 `<data>/logs`，装上 panic hook（一个进程只装一次，之前的 hook 照样调用）。
 pub fn init(data: &Path) {
     let dir = logs_dir(data);
     let _ = std::fs::create_dir_all(&dir);
+    let _ = CRASH_DIR.set(dir.clone());
     *LOG_DIR.lock().unwrap_or_else(|e| e.into_inner()) = Some(dir);
     HOOK.call_once(|| {
         let prev = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
-            // 不等锁：panic 可能就发生在拿着日志锁写 app.log 的时候，这里再等就卡死了
-            let dir = match LOG_DIR.try_lock() {
-                Ok(g) => g.clone(),
-                Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner().clone(),
-                Err(std::sync::TryLockError::WouldBlock) => None,
-            };
-            if let Some(dir) = dir {
+            // 不碰日志锁：panic 可能就发生在拿着它写 app.log 的时候，等它会卡死、不等又会丢记录；目录在 OnceLock 里，直接读
+            if let Some(dir) = CRASH_DIR.get() {
                 let thread = std::thread::current().name().unwrap_or("unnamed").to_string();
                 let bt = std::backtrace::Backtrace::force_capture();
-                let _ = write_crash(&dir, &format!("FleetingGleam {} 崩溃（panic）\n时间：{} UTC\n线程：{thread}\n{info}\n\n调用栈：\n{bt}\n", crate::VERSION, stamp(now()).0));
+                let _ = write_crash(dir, &format!("FleetingGleam {} 崩溃（panic）\n时间：{} UTC\n线程：{thread}\n{info}\n\n调用栈：\n{bt}\n", crate::VERSION, stamp(now()).0));
             }
             prev(info);
         }));
@@ -195,6 +194,23 @@ mod tests {
         let r = redact(t, &["hunter22".to_string(), "x".to_string()]);
         assert!(!r.contains("bob") && !r.contains("pa55") && !r.contains("alice@") && !r.contains("hunter22"), "{r}");
         assert!(r.contains("http://***@proxy.lan:8080") && r.contains("smb://***@nas.local/photos") && r.contains("https://example.com/x"), "{r}");
+    }
+
+    /// 另一条线程正拿着日志锁写 app.log 时 panic：崩溃记录照样写下来（以前 hook 去 try_lock，拿不到就什么都不写）。
+    #[test]
+    fn a_panic_while_the_log_is_being_written_is_still_recorded() {
+        let data = std::env::temp_dir().join(format!("fg-crash-locked-{}", std::process::id()));
+        init(&data);
+        // 测试是并行跑的，崩溃目录可能是别的测试先定下的那个：在那里找
+        let dir = CRASH_DIR.get().expect("set by init").clone();
+        let held = LOG_DIR.lock().unwrap_or_else(|e| e.into_inner());
+        let mark = format!("日志锁拿着时的 panic {}", std::process::id());
+        let m = mark.clone();
+        let _ = std::thread::spawn(move || panic!("{m}")).join();
+        drop(held);
+        let found = std::fs::read_dir(&dir).unwrap().filter_map(Result::ok).any(|e| std::fs::read_to_string(e.path()).map_or(false, |t| t.contains(&mark)));
+        assert!(found, "{} 里应该有这次的崩溃记录", dir.display());
+        let _ = std::fs::remove_dir_all(&data);
     }
 
     #[test]
