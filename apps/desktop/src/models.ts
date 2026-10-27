@@ -35,37 +35,54 @@ const setGate = (g: Gate | null) => { gate = g; notify(); };
 export const packInstalled = (id: PackId) => !!packs.find((p) => p.id === id)?.installed;
 
 /**
- * 核心同时只下一个包：已经有一个在问 / 在下时，后来的先等它结束（转到后台的那个叫回前台，让人知道在等什么），再问自己的。
+ * 核心同时只下一个包，所以"问 + 下载"整体排成一条 Promise 链：后来的等前面那个答完（下完、取消或选了标准模型）再问自己的，
+ * 排着的每一个都拿到自己的回答（审查第 47 条：以前两个以上排队时，后一个覆盖前一个的对话框，前一个永远等不到结果）。
+ * 排队时前面那个要是转在后台，叫回前台，让人知道在等什么。
  */
-async function idle() {
-  while (gate) {
-    if (gate.hidden) setGate({ ...gate, hidden: false });
-    await new Promise<void>((r) => { const un = subscribe(() => { if (!gate) { un(); r(); } }); });
-  }
+let queue: Promise<unknown> = Promise.resolve();
+function serial<T>(job: () => Promise<T>): Promise<T> {
+  if (gate?.hidden) setGate({ ...gate, hidden: false });
+  const run = queue.then(job, job);
+  queue = run.catch(() => undefined);
+  return run;
+}
+
+/** 眼下还缺哪些包（先刷新一次已装列表）；不在应用里（拿不到列表）时当作都不缺。 */
+async function missingOf(ids: PackId[]): Promise<PackId[]> {
+  await refreshPacks();
+  if (!packs.length) return [];
+  return [...new Set(ids)].filter((id) => !packs.find((p) => p.id === id)?.installed);
 }
 
 export async function ensurePack(id: PackId, offerStandard = false): Promise<Answer> {
-  await idle();
-  await refreshPacks();
-  if (!packs.length || packs.find((p) => p.id === id)?.installed) return "ready";
-  let bytes = 0;
-  try { bytes = await invoke<number>("pack_size", { id }); } catch (e) {
-    return new Promise((resolve) => setGate({ id, phase: "error", bytes: 0, done: 0, total: 0, error: String(e), resolve }));
-  }
-  return new Promise((resolve) => setGate({ id, phase: "ask", bytes, done: 0, total: bytes, offerStandard, resolve }));
+  return ensurePacks([id], offerStandard);
 }
 
 /**
  * Several packs under one question: the person is told the whole size once and agrees once. What is already here is left out; answers "ready"
  * when nothing is missing.
+ * 先算缺哪些：都在就马上返回，不管别处是不是正在下别的包（审查第 46 条：后台下搜索模型时，分析要的模型都在也被卡住）；
+ * 真要下载才排进队里等前一个答完，轮到时再算一遍（前一个可能正好把它装上了）。
  */
 export async function ensurePacks(ids: PackId[], offerStandard = false): Promise<Answer> {
-  await idle();
-  await refreshPacks();
-  if (!packs.length) return "ready";
-  const missing = [...new Set(ids)].filter((id) => !packs.find((p) => p.id === id)?.installed);
-  if (!missing.length) return "ready";
-  if (missing.length === 1) return ensurePack(missing[0], offerStandard && (missing[0] === "high" || missing[0] === "ultra"));
+  if (!(await missingOf(ids)).length) return "ready";
+  return serial(async () => {
+    const missing = await missingOf(ids);
+    return missing.length ? ask(missing, offerStandard) : "ready";
+  });
+}
+
+/** 问一句（大小写清楚）再下载；回答在下完 / 取消时才给。只在队里调用，同一时间只有一个。 */
+async function ask(missing: PackId[], offerStandard: boolean): Promise<Answer> {
+  const big = (id: PackId) => id === "high" || id === "ultra";
+  if (missing.length === 1) {
+    const id = missing[0];
+    let bytes = 0;
+    try { bytes = await invoke<number>("pack_size", { id }); } catch (e) {
+      return new Promise((resolve) => setGate({ id, phase: "error", bytes: 0, done: 0, total: 0, error: String(e), resolve }));
+    }
+    return new Promise((resolve) => setGate({ id, phase: "ask", bytes, done: 0, total: bytes, offerStandard: offerStandard && big(id), resolve }));
+  }
   const sizes: number[] = [];
   for (const id of missing) {
     try { sizes.push(await invoke<number>("pack_size", { id })); } catch (e) {
@@ -73,7 +90,7 @@ export async function ensurePacks(ids: PackId[], offerStandard = false): Promise
     }
   }
   const bytes = sizes.reduce((a, b) => a + b, 0);
-  return new Promise((resolve) => setGate({ id: "bundle", ids: missing, sizes, phase: "ask", bytes, done: 0, total: bytes, offerStandard: offerStandard && missing.some((id) => id === "high" || id === "ultra"), resolve }));
+  return new Promise((resolve) => setGate({ id: "bundle", ids: missing, sizes, phase: "ask", bytes, done: 0, total: bytes, offerStandard: offerStandard && missing.some(big), resolve }));
 }
 
 export function startDownload() {

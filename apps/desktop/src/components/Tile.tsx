@@ -1,6 +1,6 @@
-import { KeyboardEvent, memo, useEffect, useRef, useState } from "react";
+import { KeyboardEvent, memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { motion } from "motion/react";
+import { animate, motion, useMotionValue } from "motion/react";
 import { useTranslation } from "react-i18next";
 import { DUR, SPRING } from "../motion";
 import { Photo, State, pct, thumbSrc } from "../types";
@@ -34,7 +34,8 @@ type Props = {
   /** `range` = Shift 点击（成段多选），`toggle` = ⌘ 点击（加进 / 拿出多选）。 */
   onSelect: (path: string, how?: "range" | "toggle") => void;
   onOpen: (path: string) => void;
-  onDecide: (path: string, s: State | null) => void;
+  /** 点了格子上的按钮：`s` 是按钮的状态，`clear` = 这张已经手动标成它了（单张时再点一次是交还系统建议；多选时不用它）。 */
+  onDecide: (path: string, s: State, clear: boolean) => void;
 };
 
 /** The app's own mark: the four-point gleam from the logo. Filled = keep, outline = maybe. */
@@ -70,6 +71,21 @@ function Tile({ path, ratio, photo, stage, state, reveal, dim, box, manual, grou
     prev.current = state;
   }, [state, stamp]);
 
+  // 换位置（筛选、侧栏开合、排序）：left / top 直接落到新位置，再用 transform 从旧位置滑过来（FLIP）。
+  // 以前直接动画 left / top，几百个格子同时滑时每帧都要重排（审查第 60 条）；transform 只合成，不排版
+  const x = useMotionValue(0), y = useMotionValue(0);
+  const at = useRef<{ left: number; top: number } | null>(null);
+  useLayoutEffect(() => {
+    const was = at.current;
+    at.current = { left: box.left, top: box.top };
+    if (!was || (was.left === box.left && was.top === box.top)) return;
+    // 上一段还没滑完时从眼下所在的地方接着滑
+    x.set(x.get() + was.left - box.left);
+    y.set(y.get() + was.top - box.top);
+    const a = animate(x, 0, SPRING.glide), b = animate(y, 0, SPRING.glide);
+    return () => { a.stop(); b.stop(); };
+  }, [box.left, box.top, x, y]);
+
   // Only the first screenful animates in, once. Tiles mounted by scrolling appear at once: waiting for an entrance feels like waiting for the image.
   const firstTime = useRef(!entered.has(path) && index < 36).current;
   useEffect(() => { entered.add(path); }, [path]);
@@ -85,14 +101,14 @@ function Tile({ path, ratio, photo, stage, state, reveal, dim, box, manual, grou
     <motion.div
       ref={ref} id={`t-${path}`} role="button" tabIndex={interactive ? 0 : -1}
       className={`tile ${photo ? state : "pending"} ${!photo && stage ? "busy" : ""} ${interactive ? "live" : ""} ${groupEnd ? "gend" : ""} ${showScore ? "showscore" : ""}`}
-      style={{ position: "absolute", left: box.left, top: box.top, width: box.width, height: box.height, ["--r" as string]: ratio }}
+      style={{ position: "absolute", left: box.left, top: box.top, width: box.width, height: box.height, x, y, ["--r" as string]: ratio }}
       initial={firstTime ? { opacity: 0, scale: 0.94 } : false}
-      // 位置由墙的绝对定位给出，不再开 layout 投影（每次渲染每个格子都要量一遍）：只在格子换了位置时让 left / top 滑过去
-      animate={{ opacity: dim ? 0.62 : 1, scale: 1, left: box.left, top: box.top }}
+      // 位置由墙的绝对定位给出，不开 layout 投影（每次渲染每个格子都要量一遍）；换位置的滑动在上面用 transform 做
+      animate={{ opacity: dim ? 0.62 : 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.94 }}
       whileHover={interactive ? { opacity: 1 } : undefined}
       whileTap={interactive ? { scale: 0.985, transition: SPRING.tap } : undefined}
-      transition={{ left: SPRING.glide, top: SPRING.glide, opacity: { duration: DUR.slow, delay: stagger }, scale: { ...SPRING.soft, delay: stagger } }}
+      transition={{ opacity: { duration: DUR.slow, delay: stagger }, scale: { ...SPRING.soft, delay: stagger } }}
       onKeyDown={onKey}
       onClick={(e) => interactive && onSelect(path, e.shiftKey ? "range" : e.metaKey || e.ctrlKey ? "toggle" : undefined)}
       onDoubleClick={() => { if (interactive) { onSelect(path); onOpen(path); } }}
@@ -145,12 +161,12 @@ function Tile({ path, ratio, photo, stage, state, reveal, dim, box, manual, grou
           <span className="dock" onClick={stop} onDoubleClick={stop} onPointerMove={stop}>
             <button className={`dk keep ${state === "keep" ? "on" : ""}`} aria-label={t("mark.keepAct")} aria-pressed={state === "keep"}
               data-tip={`${state === "keep" && manual ? t("mark.clear") : t("mark.keepAct")} · P`}
-              onClick={() => onDecide(path, state === "keep" && manual ? null : "keep")}>
+              onClick={() => onDecide(path, "keep", state === "keep" && manual)}>
               <Star filled size={18} />
             </button>
             <button className={`dk reject ${state === "reject" ? "on" : ""}`} aria-label={t("mark.rejectAct")} aria-pressed={state === "reject"}
               data-tip={`${state === "reject" && manual ? t("mark.clear") : t("mark.rejectAct")} · X`}
-              onClick={() => onDecide(path, state === "reject" && manual ? null : "reject")}>
+              onClick={() => onDecide(path, "reject", state === "reject" && manual)}>
               <Cross />
             </button>
           </span>

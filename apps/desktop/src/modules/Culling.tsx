@@ -11,7 +11,7 @@ import Single from "./Single";
 import ViewMenu from "../components/ViewMenu";
 import Resizer, { usePanelWidth } from "../components/Resizer";
 import SceneGallery from "../components/SceneGallery";
-import FilterPanel, { PersonItem } from "../components/FilterPanel";
+import FilterPanel, { PersonItem, SceneItem } from "../components/FilterPanel";
 import SearchBox from "../components/SearchBox";
 import { usePrefsRevision } from "../styles";
 import { ensurePack, ensurePacks, refreshPacks, usePacks } from "../models";
@@ -26,7 +26,7 @@ import Ticker from "../components/Ticker";
 import Tile, { StageInfo } from "../components/Tile";
 import { DUR, EASE_OUT, SPRING } from "../motion";
 import { newProjectFromDialog, openSamples, pickFolder, takeAutoStart } from "../projectActions";
-import { Project, setActive, trashProject, updateProject, useProjects, useProjectsStatus } from "../projects";
+import { Project, getStore, setActive, trashProject, updateProject, useProjects, useProjectsStatus } from "../projects";
 import { getSettings, ScanInfo, setScanInfo, useSettings, useCacheRev } from "../settings";
 import { Decision, Photo, Probe, ProbeFile, Reason, State, pct, thumbSrc } from "../types";
 import { NasProgress } from "../nas";
@@ -36,12 +36,28 @@ import ReadyStage from "./ReadyStage";
 import ProjectSettings from "./ProjectSettings";
 import ProjectHome from "./ProjectHome";
 import Viewer from "./Viewer";
+import { historyKey, setHistoryHandler } from "../history";
 
 type ViewMode = "all" | State;
 type Phase = "idle" | "probing" | "ready" | "scanning" | "loading" | "done";
 type SortBy = "group" | "order" | "time" | "score";
 type Item = { path: string; ratio: number };
+/** decide_photos 的紧凑回包（lib.rs 的 CompactDecisions）：路径表只在变了时才发，状态一张一个字符，理由另取（decide_reasons）。 */
+type CompactDecisions = { rev: number; paths?: string[]; states: string; manual: number[] };
+const STATE_OF: Record<string, State> = { k: "keep", r: "review", x: "reject" };
+const manualReason = (st: State): Reason => ({ k: "reason.manual", p: { stateKey: `state.${st}` } });
+/** 撤销栈的一步：一批改判（每张改前改后的手动标记，undefined = 系统建议），或转了一张照片。 */
+type HistoryStep = { kind: "mark"; items: { path: string; prev: State | undefined; next: State | undefined }[] } | { kind: "rotate"; path: string; dir: 1 | -1 };
+/**
+ * 离开项目时这一屏的样子（审查第二批：以前离开再回来一切归零）：筛选、选中、滚动位置和撤销栈，按项目记在这次运行里。
+ * 回到项目、照片出来以后原样放回去。
+ */
+type ViewMemo = { mode: ViewMode; sceneFilter: number | null; personFilter: number | null; selected: string | null; scroll: number; undo: HistoryStep[]; redo: HistoryStep[] };
+const viewMemo = new Map<string, ViewMemo>();
 const NONE: ReadonlySet<string> = new Set();
+/** 分析中筛选栏没有场景和人物：给同一个空数组，别让 FilterPanel 的 memo 每帧被新的 [] 打穿。 */
+const NO_SCENES: SceneItem[] = [];
+const NO_PEOPLE: PersonItem[] = [];
 
 function EditableTitle({ value, tip, onCommit }: { value: string; tip: string; onCommit: (v: string) => void }) {
   const [editing, setEditing] = useState(false);
@@ -74,10 +90,14 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const { t, i18n } = useTranslation();
   const store = useProjects();
   const { saveError, loadError } = useProjectsStatus();
+  /** 关掉的保存错误（同一句不再出现；下次换了一个错误照常出来）。 */
+  const [hiddenSave, setHiddenSave] = useState<string | null>(null);
   const project: Project | null = store.projects.find((p) => p.id === store.activeId && !p.trashed) ?? null;
   const settings = useSettings();
 
   const [phase, setPhase] = useState<Phase>("idle");
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
   const [files, setFiles] = useState<ProbeFile[]>([]);
   const [bytes, setBytes] = useState(0);
   const [uncached, setUncached] = useState(0);
@@ -149,7 +169,12 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const [searchRev, setSearchRev] = useState(0);
   const [previews, setPreviews] = useState<Record<string, string>>({});
   /** 每一步是一批（多选一起改判的那些），撤销一次撤回整批。 */
-  const undoStack = useRef<{ path: string; prev: State | undefined }[][]>([]);
+  const undoStack = useRef<HistoryStep[]>([]);
+  const redoStack = useRef<HistoryStep[]>([]);
+  /** 眼下这一屏的筛选与选中（每次渲染更新），和照片墙是不是正显示着（只有那时记的才有意义）。 */
+  const viewNow = useRef<{ shown: boolean; memo: Omit<ViewMemo, "undo" | "redo"> }>({ shown: false, memo: { mode: "all", sceneFilter: null, personFilter: null, selected: null, scroll: 0 } });
+  /** 回到项目后等照片出来再放回去的选中与滚动位置。 */
+  const restoreView = useRef<{ selected: string | null; scroll: number } | null>(null);
   const [hintUses, setHintUses] = useState(() => { try { return Number(localStorage.getItem("fg.hint.dock") ?? 0); } catch { return 0; } });
   const bumpHint = (n: number) => { setHintUses((u) => { const v = Math.max(u, n === 99 ? 99 : u + 1); try { localStorage.setItem("fg.hint.dock", String(v)); } catch { /* ignore */ } return v; }); };
 
@@ -167,6 +192,8 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const stages = useRef(new Map<string, StageInfo>());
   /** 边分析边判：引擎隔一会儿发来的判定（分析完换成正式的 decisions）。 */
   const live = useRef(new Map<string, Decision>());
+  /** 这次分析开始时的覆盖表：引擎边分析边判只认它（见 `liveArgs`）。 */
+  const scanOverrides = useRef<Record<string, State>>({});
   const lastStage = useRef<{ path: string; stage: string } | null>(null);
   const startedAt = useRef(0);
   const raf = useRef(0);
@@ -250,7 +277,11 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     try {
       // 边分析边判用和分析完一样的参数
       const liveArgs = quiet ? null : { keep_ratio: proj.keepCap ?? 1, pick_mode: proj.pickMode ?? "diverse", one_per_group: proj.onePerGroup ?? false, overrides: proj.overrides ?? {} };
-      const res = await invoke<Photo[]>("scan_project", { key: proj.id, dirs: proj.folders, compute: "auto", quality: currentTier(), style: proj.style, learn: getSettings().learn && proj.learn !== false, quiet, force, eyeMethod: eyeMethodNow(), live: liveArgs });
+      if (!quiet) scanOverrides.current = proj.overrides ?? {};
+      const got = await invoke<(Partial<Photo> & { path: string })[]>("scan_project", { key: proj.id, dirs: proj.folders, compute: "auto", quality: currentTier(), style: proj.style, learn: getSettings().learn && proj.learn !== false, quiet, force, eyeMethod: eyeMethodNow(), live: liveArgs });
+      // 安静读取回的是完整的照片；真正的分析只回事件里没送过、或送过之后又变了的字段（分组、打分……，见 lib.rs 的 slim），
+      // 和事件攒下的合起来，不再把几千张照片整包再传一遍（审查第二批）
+      const res: Photo[] = quiet ? (got as Photo[]) : got.map((r) => { const p = results.current.get(r.path); return (p ? { ...p, ...r } : r) as Photo; });
       if (!quiet) { running.current = null; setRunningId(null); }
       const cover = [...res].sort((a, b) => b.score - a.score).slice(0, 4).map((p) => p.thumb);
       if (!mine()) {
@@ -284,8 +315,13 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     const run = running.current;
     const left = enteredId.current;
     enteredId.current = project?.id ?? null;
-    undoStack.current = []; // the marks that could be undone belonged to the project just left
-    setSelected(null); setMulti(NONE); anchor.current = null; setQuery(""); setZoomed(false); setError(null); setMode("all"); setSceneFilter(null); setPersonFilter(null); setSceneView(false); setCelebrate(false); setDirty(0); setNasProg(null); setOffline(null);
+    // 离开的那个项目：记下筛选、选中、滚动和撤销栈；要进的这个有记下的就照着放回（选中与滚动等照片出来再放，见下）
+    if (left && viewNow.current.shown) viewMemo.set(left, { ...viewNow.current.memo, undo: undoStack.current, redo: redoStack.current });
+    const memo = project ? viewMemo.get(project.id) : undefined;
+    undoStack.current = memo?.undo ?? [];
+    redoStack.current = memo?.redo ?? [];
+    restoreView.current = memo && (memo.selected || memo.scroll) ? { selected: memo.selected, scroll: memo.scroll } : null;
+    setSelected(null); setMulti(NONE); anchor.current = null; setQuery(""); setZoomed(false); setError(null); setMode(memo?.mode ?? "all"); setSceneFilter(memo?.sceneFilter ?? null); setPersonFilter(memo?.personFilter ?? null); setSceneView(false); setCelebrate(false); setDirty(0); setNasProg(null); setOffline(null);
     setBgDone((d) => (d && project && d.id === project.id ? null : d));
     // 回到正在分析的那个项目（文件夹没变）：接上，照片墙和进度都还在，不重来
     if (project && run && run.id === project.id && run.folders.join("|") === project.folders.join("|")) {
@@ -347,14 +383,25 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
       .catch(() => { /* fall back to the originals */ });
   }, [phase, files]);
 
+  /** 正在等模型（询问 / 下载，可能转到了后台）的那个项目：这期间"开始分析"置灰、写"等待模型"，不能再点。 */
+  const [waitingModel, setWaitingModel] = useState<string | null>(null);
+  const waitingRef = useRef<string | null>(null);
   const startScan = async () => {
-    if (!project) return;
+    if (!project || waitingRef.current) return;
+    const id = project.id;
     // 同一时间只分析一个项目：另一个还在分析时先问一句
     const run = running.current;
-    if (run && run.id !== project.id) { setConflict({ id: run.id, name: run.name }); return; }
+    if (run && run.id !== id) { setConflict({ id: run.id, name: run.name }); return; }
     // The app picks the model (strategy.ts); what it needs, the eye model and people recognition included, is fetched under one question the first time.
-    if ((await settleTier()) === null) return;
-    runScan(project, files.length, false, token.current);
+    waitingRef.current = id; setWaitingModel(id);
+    let tier;
+    try { tier = await settleTier(); } finally { waitingRef.current = null; setWaitingModel(null); }
+    if (tier === null) return;
+    // 等模型可能等了很久（下载转到后台）：这期间换了项目、另一次分析开始了、或这一屏已经不在"准备"上，都放弃（审查第 42 条）。
+    // 项目和文件都取眼下的（闭包里的是点按钮那一刻的）
+    if (activeId.current !== id || running.current || phaseRef.current !== "ready") return;
+    const proj = getStore().projects.find((p) => p.id === id && !p.trashed);
+    if (proj) runScan(proj, filesRef.current.length, false, token.current);
   };
   useEffect(() => {
     if (phase === "ready" && autoStart.current) { autoStart.current = false; void startScan(); }
@@ -385,26 +432,51 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   // A photo marked by hand changes only that photo (what is kept otherwise does not depend on anyone's override unless a ceiling or "one per
   // group" is on), so it is patched here, at once, and the whole decision table is not asked for again and sent over for every click.
   const localPatch = useRef<{ path: string; state: State; photos: Photo[] } | null>(null);
+  /** 有一次 decide_photos 还没回来（它的 token）；0 = 没有。 */
+  const decideInflight = useRef(0);
+  /** decide_photos 上次给的路径表（按路径排好）与它的版本。 */
+  const decidePaths = useRef<{ rev: number; paths: string[] } | null>(null);
+  const decisionsRef = useRef(decisions);
+  decisionsRef.current = decisions;
   useEffect(() => {
-    if (photos.length === 0) { setDecisions(new Map()); return; }
+    if (photos.length === 0) { decideInflight.current = 0; setDecisions(new Map()); return; }
     const lp = localPatch.current;
     localPatch.current = null;
-    if (lp && lp.photos === photos && overrides.get(lp.path) === lp.state) {
+    // 本地补丁只在手里的表是最新的时候打：有请求在途（比如分析刚结束、正式判定还在路上）或表还是空的，
+    // 打了补丁就会作废那个回包，墙上的判定一直空着或停在上一轮（审查第 41 条）。这两种情况照常整表再要一次
+    if (lp && lp.photos === photos && overrides.get(lp.path) === lp.state && !decideInflight.current && decisionsRef.current.size > 0) {
       decideToken.current++;   // an answer still on its way is out of date now
       setDecisions((m) => {
         const cur = m.get(lp.path);
         if (!cur) return m;
         const n = new Map(m);
-        n.set(lp.path, { state: lp.state, manual: true, reasons: [{ k: "reason.manual", p: { stateKey: `state.${lp.state}` } }, ...(cur.manual ? cur.reasons.slice(1) : cur.reasons)] });
+        // 理由在检查器里按需取（selReasons），这里只记状态
+        n.set(lp.path, { state: lp.state, manual: true, reasons: [] });
         return n;
       });
       return;
     }
     const tok = ++decideToken.current;
-    invoke<Record<string, Decision>>("decide_photos", { key: project?.id ?? "", keepRatio, pickMode, onePerGroup, overrides: Object.fromEntries(overrides) })
-      .then((res) => { if (tok === decideToken.current) setDecisions(new Map(Object.entries(res))); })
+    decideInflight.current = tok;
+    const args = { key: project?.id ?? "", keepRatio, pickMode, onePerGroup, overrides: Object.fromEntries(overrides) };
+    // 紧凑格式：带着手里那份路径表的版本，没变就只回状态串；回包说的版本和手里的对不上（极少见）就不带版本再要一次
+    (async () => {
+      let res = await invoke<CompactDecisions>("decide_photos", { ...args, knownRev: decidePaths.current?.rev ?? null });
+      if (!res.paths && decidePaths.current?.rev !== res.rev) res = await invoke<CompactDecisions>("decide_photos", { ...args, knownRev: null });
+      return res;
+    })()
+      .then((res) => {
+        if (tok !== decideToken.current) return;
+        if (res.paths) decidePaths.current = { rev: res.rev, paths: res.paths };
+        const paths = decidePaths.current?.paths ?? [];
+        const manual = new Set(res.manual);
+        const m = new Map<string, Decision>();
+        for (let i = 0; i < paths.length; i++) m.set(paths[i], { state: STATE_OF[res.states[i]] ?? "review", manual: manual.has(i), reasons: [] });
+        decideInflight.current = 0;
+        setDecisions(m);
+      })
       // "stale": the backend holds another project's photos (a scan of this one is on its way); the next scan result asks again
-      .catch((e) => { if (tok === decideToken.current) { if (String(e) !== "stale") console.error("decide_photos:", e); setDecisions(new Map()); } });
+      .catch((e) => { if (tok === decideToken.current) { decideInflight.current = 0; if (String(e) !== "stale") console.error("decide_photos:", e); setDecisions(new Map()); } });
   }, [photos, keepRatio, pickMode, onePerGroup, overrides, project?.id]);
   const counts = useMemo(() => {
     const c = { all: photos.length, keep: 0, review: 0, reject: 0 };
@@ -416,21 +488,27 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const liveDecisions = useMemo(() => {
     if (phase !== "scanning") return new Map<string, Decision>();
     const m = new Map(live.current);
+    // 分析前就有、分析中交还了系统建议的（审查第 54 条）：引擎还按开始时的覆盖表判它是"手动"，系统自己的建议要等分析完才有，
+    // 这期间先不盖章，分析完换成正式判定
+    for (const path of Object.keys(scanOverrides.current)) if (!overrides.has(path) && m.get(path)?.manual) m.delete(path);
     overrides.forEach((st, path) => {
       if (!results.current.has(path)) return;
       const cur = m.get(path);
-      m.set(path, { state: st, manual: true, reasons: [{ k: "reason.manual", p: { stateKey: `state.${st}` } }, ...(cur && !cur.manual ? cur.reasons : [])] });
+      m.set(path, { state: st, manual: true, reasons: [manualReason(st), ...(cur && !cur.manual ? cur.reasons : [])] });
     });
     return m;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, tick, overrides]);
-  // 筛选栏上的保留 / 待复查 / 淘汰数
-  const liveCounts = useMemo(() => {
-    if (liveDecisions.size === 0) return null;
-    const c = { keep: 0, review: 0, reject: 0 };
+  // 筛选栏上的保留 / 待复查 / 淘汰数。liveDecisions 每帧都是新表，数没变时沿用上一份对象，FilterPanel 的 memo 才挡得住（第二批：字面量打穿 memo）
+  const liveCountsRaw = useMemo(() => {
+    const c = { all: files.length, keep: 0, review: 0, reject: 0 };
     liveDecisions.forEach((d) => { c[d.state]++; });
     return c;
-  }, [liveDecisions]);
+  }, [liveDecisions, files.length]);
+  const liveCountsRef = useRef(liveCountsRaw);
+  const lc = liveCountsRef.current;
+  if (lc.all !== liveCountsRaw.all || lc.keep !== liveCountsRaw.keep || lc.review !== liveCountsRaw.review || lc.reject !== liveCountsRaw.reject) liveCountsRef.current = liveCountsRaw;
+  const liveCounts = liveCountsRef.current;
 
   // Scenes are the same loose, look-alike clusters the backend already groups for scene-diverse picks (see decide.rs);
   // this just surfaces them as a filter, in the order they first appear, each with its highest-scoring photo as the cover.
@@ -597,8 +675,9 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     return ends;
   }, [shown, sortBy]);
 
-  // 分析中按眼下的判定筛（"全部"是整个文件夹）。判定每帧都可能变，可筛出来的还是同一批文件时沿用上一份，墙就不重排
-  const scanRaw = phase !== "scanning" ? null : mode === "all" ? files : files.filter((f) => liveDecisions.get(f.path)?.state === mode);
+  // 分析中按眼下的判定筛（"全部"是整个文件夹）。判定每帧都可能变，可筛出来的还是同一批文件时沿用上一份，墙就不重排。
+  // 选中的那张和分析完一样留在墙上，直到选了别的：引擎实时改判把它筛掉时，查看器不会直接关掉（审查第 52 条）
+  const scanRaw = phase !== "scanning" ? null : mode === "all" ? files : files.filter((f) => liveDecisions.get(f.path)?.state === mode || f.path === selected);
   const scanRef = useRef<ProbeFile[]>([]);
   if (scanRaw && scanRef.current !== scanRaw && (scanRef.current.length !== scanRaw.length || scanRef.current.some((f, k) => f !== scanRaw[k]))) scanRef.current = scanRaw;
   const scanList = scanRaw ? scanRef.current : null;
@@ -679,28 +758,39 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     }
     select(path);
   }, [goTo, select]);
-  /** 把一张照片顺时针（dir = 1）或逆时针转 90°：核心库换缩略图与显示尺寸（原文件不动），这里只替换手里那张。 */
-  const rotate = useCallback((path: string, dir: 1 | -1) => {
+  /** 记一步新的操作：进撤销栈（最多 50 步），重做栈作废。 */
+  const pushHistory = useCallback((step: HistoryStep) => {
+    undoStack.current.push(step);
+    if (undoStack.current.length > 50) undoStack.current.shift();
+    redoStack.current = [];
+  }, []);
+  /**
+   * 把一张照片顺时针（dir = 1）或逆时针转 90°：核心库换缩略图与显示尺寸（原文件不动），这里只替换手里那张。
+   * 转成了才进撤销栈（`fromHistory` 时是撤销 / 重做在转，不进）。返回是不是转了。
+   */
+  const rotate = useCallback((path: string, dir: 1 | -1, fromHistory = false): boolean => {
     const cur = photos.find((p) => p.path === path);
-    if (!cur) return;
+    if (!cur) return false;
     const deg = ((((cur.rotation ?? 0) + 90 * dir) % 360) + 360) % 360;
     invoke<Photo | null>("set_rotation", { path, deg })
       .then((p) => {
         if (!p) return;
         forgetLarge(path);
         setPhotos((ps) => ps.map((x) => (x.path === p.path ? { ...x, thumb: p.thumb, width: p.width, height: p.height, rotation: p.rotation } : x)));
+        if (!fromHistory) pushHistory({ kind: "rotate", path, dir });
       })
       .catch(() => { /* not analysed yet, or not in Tauri */ });
-  }, [photos]);
-  /** 改判一批照片：`changes` 里每张各自的新状态（null = 交还系统建议）；`fromUndo` 时不进撤销栈。 */
-  const mark = useCallback((changes: { path: string; state: State | null }[], fromUndo = false) => {
+    return true;
+  }, [photos, pushHistory]);
+  /** 改判一批照片：`changes` 里每张各自的新状态（null = 交还系统建议）；`fromHistory`（撤销 / 重做）时不进撤销栈。返回是不是真改了。 */
+  const mark = useCallback((changes: { path: string; state: State | null }[], fromHistory = false): boolean => {
     // only photos of the project in view: a stale key press or undo must not write another project's path into this one
     // （分析中是已经出结果的那些）
     const scanningNow = phase === "scanning";
     const list = changes.filter((c) => (scanningNow ? results.current.has(c.path) : byPath.has(c.path)));
-    if (!project || list.length === 0) return;
+    if (!project || list.length === 0) return false;
     const next = { ...project.overrides };
-    const undo = list.map((c) => ({ path: c.path, prev: project.overrides[c.path] }));
+    const step: HistoryStep = { kind: "mark", items: list.map((c) => ({ path: c.path, prev: project.overrides[c.path], next: c.state ?? undefined })) };
     for (const c of list) { if (c.state === null) delete next[c.path]; else next[c.path] = c.state; }
     const one = list.length === 1 ? list[0] : null;
     localPatch.current = one && one.state !== null && !scanningNow && project.keepCap === undefined && !project.onePerGroup ? { path: one.path, state: one.state, photos } : null;
@@ -710,12 +800,12 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
       for (const c of list) invoke("record_label", { path: c.path, label: c.state === null || c.state === "review" ? null : c.state === "keep", style: project?.style }).catch(() => { /* not in Tauri */ });
     }
     setDirty((d) => d + 1);
-    if (!fromUndo) {
-      undoStack.current.push(undo);
-      if (undoStack.current.length > 50) undoStack.current.shift();
+    if (!fromHistory) {
+      pushHistory(step);
       bumpHint(1);
     }
-  }, [project, photos, byPath, phase]);
+    return true;
+  }, [project, photos, byPath, phase, pushHistory]);
   /** 把一张或一批照片标成 `st`。 */
   const decide = useCallback((target: string | string[], st: State | null) => {
     const paths = Array.isArray(target) ? target : [target];
@@ -740,15 +830,51 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const decideSel = useCallback((st: State | null) => { const s = selection(); if (s.length) decide(s, st); }, [selection, decide]);
   const decideRef = useRef(decide);
   decideRef.current = decide;
-  // 格子上的按钮：点的是多选里的一张就整批改
-  const tileDecide = useCallback((path: string, st: State | null) => {
+  const selectionRef = useRef(selection);
+  selectionRef.current = selection;
+  // 格子上的按钮（审查第 53 条）：点的是多选里的一张就改眼下选着的那批（selection()，被筛掉的不算），整批统一设成按钮的状态，
+  // 不做"再点清除"——不然点在一张手动标过的格子上会把整批手动判定清掉。单张时照旧：再点自己的标记 = 交还系统建议
+  const tileDecide = useCallback((path: string, st: State, clear: boolean) => {
     const m = multiRef.current;
-    decideRef.current(m.size > 1 && m.has(path) ? [...m] : path, st);
+    if (m.size > 1 && m.has(path)) { const s = selectionRef.current(); if (s.length) decideRef.current(s, st); return; }
+    decideRef.current(path, clear ? null : st);
   }, []);
+  // 切筛选（状态、场景、人物、搜索）时：多选里不在墙上的拿掉，Shift 的起点复位到焦点那张（不然 rangeTo 找不到起点，只选得中一张）
+  useEffect(() => {
+    anchor.current = null;
+    setMulti((m) => {
+      if (m.size <= 1) return m;
+      const vis = new Set(pickRef.current.map((p) => p.path));
+      const n = new Set([...m].filter((p) => vis.has(p)));
+      return n.size > 1 ? n : NONE;
+    });
+  }, [mode, sceneFilter, personFilter, hits]);
+  /** 把一步撤回（`undo`）或重做（`redo`）。返回是不是落下了（照片都不在了就落不下）。 */
+  const applyStep = useCallback((s: HistoryStep, how: "undo" | "redo"): boolean => {
+    if (s.kind === "rotate") return rotate(s.path, how === "undo" ? (s.dir === 1 ? -1 : 1) : s.dir, true);
+    return mark(s.items.map((x) => ({ path: x.path, state: (how === "undo" ? x.prev : x.next) ?? null })), true);
+  }, [rotate, mark]);
+  // 一条撤销可能一张都落不下（分析失败、没出结果的照片）：不算一次，接着弹下一条，而不是按一下什么都没发生（审查第 60 条）。
+  // 撤回的那步进重做栈；新的操作会清掉重做栈
   const undoLast = useCallback(() => {
-    const e = undoStack.current.pop();
-    if (e) mark(e.map((x) => ({ path: x.path, state: x.prev ?? null })), true);
-  }, [mark]);
+    for (let e = undoStack.current.pop(); e; e = undoStack.current.pop()) {
+      if (applyStep(e, "undo")) { redoStack.current.push(e); return; }
+    }
+  }, [applyStep]);
+  const redoLast = useCallback(() => {
+    for (let e = redoStack.current.pop(); e; e = redoStack.current.pop()) {
+      if (applyStep(e, "redo")) { undoStack.current.push(e); return; }
+    }
+  }, [applyStep]);
+  // ⌘Z / ⌘⇧Z 和"编辑"菜单的撤销 / 重做（history.ts）：分析中、分析完，开着大图也算；对话框开着时不动
+  useEffect(() => {
+    if (!active || (phase !== "done" && phase !== "scanning")) return;
+    const guard = (f: () => void) => () => { if (!isModalOpen()) f(); };
+    const off = setHistoryHandler({ undo: guard(undoLast), redo: guard(redoLast) });
+    const onKey = (e: KeyboardEvent) => { historyKey(e); };
+    window.addEventListener("keydown", onKey);
+    return () => { off(); window.removeEventListener("keydown", onKey); };
+  }, [active, phase, undoLast, redoLast]);
   const move = useCallback((d: number, extend = false) => {
     if (!pickable.length) return;
     const i = Math.min(pickable.length - 1, Math.max(0, (selIndex < 0 ? (d > 0 ? -1 : 0) : selIndex) + d));
@@ -775,7 +901,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
       const tag = (e.target as HTMLElement).tagName;
       if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || isModalOpen()) return;
       const k = e.key.toLowerCase();
-      if ((e.metaKey || e.ctrlKey) && k === "z") { e.preventDefault(); undoLast(); return; }
+      if ((e.metaKey || e.ctrlKey) && k === "z") return; // 撤销 / 重做在上面单独处理（开着大图时也要能用）
       if ((e.metaKey || e.ctrlKey) && (e.key === "]" || e.key === "[")) { if (sel) { e.preventDefault(); rotate(sel.path, e.key === "]" ? 1 : -1); } return; }
       if (phase === "done" && layout === "compare" && ["arrowright", "arrowleft", "p", "r", "x"].includes(k)) return; // Compare handles these itself (groups; the photo under the pointer)
       if (k === "escape" && multi.size) { setMulti(NONE); return; }
@@ -789,7 +915,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, zoomed, phase, layout, move, moveRow, sel, multi, decideSel, rotate, undoLast, openViewer]);
+  }, [active, zoomed, phase, layout, move, moveRow, sel, multi, decideSel, rotate, openViewer]);
 
   // Single and Compare always show a photo: fall back to the first one when nothing (or something filtered out) is selected.
   useEffect(() => {
@@ -813,6 +939,31 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   }, [selected]);
 
   useEffect(() => { setQuery(""); }, [project?.id]);
+  // 滚动位置一直记着（离开项目那一刻 DOM 可能已经换了内容，到时候再读就晚了）
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = () => { if (viewLiveRef.current) viewNow.current.memo.scroll = el.scrollTop; };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+  // 回到项目、照片出来以后：放回选中的那张（还在的话，不触发"滚到选中"）和滚动位置。墙的排版要等量过宽度，所以多等几帧直到够高
+  useEffect(() => {
+    const r = restoreView.current;
+    if (!r || !(phase === "done" || phase === "scanning")) return;
+    restoreView.current = null;
+    // 不核对它在不在墙上：判定表这时可能还在路上（筛选下的墙是空的）；已经不在项目里的照片选了也没有格子，等于没选
+    if (r.selected) { clickedPath.current = r.selected; anchor.current = r.selected; setSelected(r.selected); }
+    let frames = 0, id = 0;
+    const apply = () => {
+      const el = scrollRef.current;
+      if (!el) return;
+      if (el.scrollHeight - el.clientHeight >= r.scroll || ++frames > 30) { el.scrollTop = r.scroll; return; }
+      id = requestAnimationFrame(apply);
+    };
+    id = requestAnimationFrame(apply);
+    return () => cancelAnimationFrame(id);
+  }, [phase]);
   // ---- search: the index is built in the background, the query runs shortly after typing stops
   // search is on for every project (a project can still have it switched off from before); its models are fetched when someone first goes to search
   const searchOf = (p: Project) => p.search !== false;
@@ -864,6 +1015,12 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
 
   const scanning = phase === "scanning";
   const showWall = scanning || phase === "done";
+  // 只认属于眼下这个项目的渲染：离开那一刻（项目已经换了、进项目的 effect 还没跑）这一帧不算，墙底下换内容引起的滚动也不记
+  const viewLive = showWall && !!project && project.id === enteredId.current;
+  if (viewLive) viewNow.current = { shown: true, memo: { mode, sceneFilter, personFilter, selected, scroll: viewNow.current.memo.scroll } };
+  else if (project && project.id === enteredId.current) viewNow.current.shown = false;
+  const viewLiveRef = useRef(viewLive);
+  viewLiveRef.current = viewLive;
   const elapsed = (performance.now() - startedAt.current) / 1000;
   const eta = progress.done >= 4 ? Math.max(1, Math.round((elapsed / progress.done) * (progress.total - progress.done))) : null;
   // 当前阶段那一行最多 600 ms 更新一次，不显示文件名（M4.2 / A5.2）；"可以离开"只在第一次分析时显示 6 秒
@@ -882,7 +1039,24 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scanning]);
   const showBanner = scanning || celebrate;
-  const decision = sel ? pickDecisions.get(sel.path) : undefined;
+  // 分析完的判定不带理由（紧凑格式）：选中哪张就按需取它的理由。核心那边的表可能还没含刚打的本地补丁，
+  // 所以"手动"那一句按手里的状态重新放在最前
+  const [selReasons, setSelReasons] = useState<{ path: string; reasons: Reason[] } | null>(null);
+  const selPath = sel?.path;
+  useEffect(() => {
+    if (phase !== "done" || !selPath || !project || !decisions.has(selPath)) return;
+    let live = true;
+    invoke<Reason[] | null>("decide_reasons", { key: project.id, path: selPath })
+      .then((r) => { if (live) setSelReasons({ path: selPath, reasons: r ?? [] }); })
+      .catch(() => { /* not in Tauri */ });
+    return () => { live = false; };
+  }, [phase, selPath, decisions, project?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const decision = useMemo(() => {
+    const d = sel ? pickDecisions.get(sel.path) : undefined;
+    if (!d || phase !== "done" || !sel) return d;
+    const base = selReasons?.path === sel.path ? selReasons.reasons.filter((r) => r.k !== "reason.manual") : [];
+    return { ...d, reasons: d.manual ? [manualReason(d.state), ...base] : base };
+  }, [sel, pickDecisions, phase, selReasons]);
   const pendingFiles = files.filter((f) => !f.cached);
 
   return (
@@ -975,13 +1149,15 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
         </Modal>
         <div className="body-split">
         {panelShown && (
-          <FilterPanel counts={scanning ? { all: files.length, keep: liveCounts?.keep ?? 0, review: liveCounts?.review ?? 0, reject: liveCounts?.reject ?? 0 } : facets.status}
-            mode={mode} onMode={setMode} scenes={scanning ? [] : sceneItems} sceneFilter={sceneFilter} onScene={setSceneFilter} onBrowseScenes={openSceneView} width={filterW.width}
-            people={scanning ? [] : peopleItems} personFilter={personFilter} onPerson={setPersonFilter} />
+          <FilterPanel counts={scanning ? liveCounts : facets.status}
+            mode={mode} onMode={setMode} scenes={scanning ? NO_SCENES : sceneItems} sceneFilter={sceneFilter} onScene={setSceneFilter} onBrowseScenes={openSceneView} width={filterW.width}
+            people={scanning ? NO_PEOPLE : peopleItems} personFilter={personFilter} onPerson={setPersonFilter} />
         )}
         {panelShown && <Resizer panel={filterW} edge="right" label={t("cull.filters")} />}
         <div className="scroll" ref={scrollRef}>
-          {error && error !== "cull.nasOffline" && error !== "cull.nasDisabled" && <p className="error">{t(error, { defaultValue: error })}</p>}
+          {error && error !== "cull.nasOffline" && error !== "cull.nasDisabled" && (
+            <p className="error closable">{t(error, { defaultValue: error })}<button className="error-x" onClick={() => setError(null)} aria-label={t("viewer.close")} title={t("viewer.close")}>×</button></p>
+          )}
           {error === "cull.nasDisabled" && <p className="error">{t(error, { name: nasOff })} <button className="btn sm" onClick={() => setReloadKey((k) => k + 1)}>{t("cull.nasRetry")}</button></p>}
           {(error === "cull.nasOffline" || offline) && (() => {
             // 密码不对 / 没权限 → 去设置；连不上（或说不清）→ 重试
@@ -999,7 +1175,9 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
               </p>
             );
           })()}
-          {saveError && <p className="error">{t("cull.saveFailed", { error: saveError })}</p>}
+          {saveError && saveError !== hiddenSave && (
+            <p className="error closable">{t("cull.saveFailed", { error: saveError })}<button className="error-x" onClick={() => setHiddenSave(saveError)} aria-label={t("viewer.close")} title={t("viewer.close")}>×</button></p>
+          )}
           {loadError === "corrupt" && <p className="error">{t("cull.loadCorrupt")}</p>}
 
           {(phase === "probing" || phase === "loading") && nasProg && <p className="ash pad loading">{t("cull.fetchingNas", { share: nasProg.share, done: nasProg.done, total: nasProg.total, size: fmtBytes(nasProg.bytes_total) })}</p>}
@@ -1034,7 +1212,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
           <AnimatePresence>
             {phase === "ready" && project && (
               <ReadyStage key="ready" project={project} count={uncached} sizeText={fmtBytes(bytes)} etaSeconds={etaSeconds} files={pendingFiles} thumbs={previews}
-                onStart={startScan} onAddFolder={addFolder} onRemoveFolder={removeFolder} />
+                onStart={startScan} waiting={waitingModel !== null} onAddFolder={addFolder} onRemoveFolder={removeFolder} />
             )}
           </AnimatePresence>
 

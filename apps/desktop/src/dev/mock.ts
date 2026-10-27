@@ -106,6 +106,10 @@ const emit = (event: string, payload: unknown) => (listeners.get(event) ?? []).f
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 let lastPhotos: Photo[] = [];
+/** decide_photos 的紧凑格式：上次的路径表、版本和整张表（理由从这里取）。 */
+let decideRev = 0;
+let decidePaths: string[] = [];
+let decideTable: Record<string, MockDecision> = {};
 
 type MockDecision = { state: string; manual: boolean; reasons: { k: string; p?: Record<string, number> }[] };
 /** 和 "decide_photos" 同一套粗糙的取舍（真正的算法只在 decide.rs）：分数排名，前面的保留，中间的待复查，其余淘汰。 */
@@ -124,19 +128,23 @@ function judge(photos: Photo[], keepRatio: number, overrides: Record<string, str
   return out;
 }
 
-async function scan(dirs: string[], quiet: boolean, live?: { keep_ratio?: number; overrides?: Record<string, string> } | null, force = false): Promise<Photo[]> {
+/** 和 lib.rs 的 scan_project 一样：真正的分析不再整包回照片，只回事件送过之后又变了的字段（这里就是分组、打分那几样）。 */
+const slim = (photos: Photo[]) => photos.map((p) => ({ path: p.path, score: p.score, group: p.group, scene: p.scene, group_best: p.group_best }));
+
+async function scan(dirs: string[], quiet: boolean, live?: { keep_ratio?: number; overrides?: Record<string, string> } | null, force = false): Promise<Photo[] | ReturnType<typeof slim>> {
   const list = inDirs(dirs);
   // "重新分析"：当作都没分析过
   if (force) list.forEach((s) => cached.delete(s.path));
   const photos = makePhotos(list);
   lastPhotos = photos;
   const todo = photos.filter((p) => !cached.has(p.path));
-  if (quiet || todo.length === 0) { list.forEach((s) => cached.add(s.path)); return photos; }
+  if (quiet) { list.forEach((s) => cached.add(s.path)); return photos; }
   const total = photos.length;
   let done = total - todo.length;
   emit("scan-info", { cpu_only: false, clip: "coreml-fp16", model: "ViT-L/14", vision: true, cores: 10 });
   emit("scan-progress", { done, total });
   { const known = photos.filter((p) => cached.has(p.path)); for (let i = 0; i < known.length; i += 250) emit("scan-photos", known.slice(i, i + 250)); }
+  if (todo.length === 0) return slim(photos);
   const order = todo.map((p) => photos.indexOf(p));
   // 边分析边判（引擎的判定线程）：每隔一会儿把已出结果的照片整体判一遍，只发变化的
   const judged = new Map<string, string>();
@@ -170,7 +178,7 @@ async function scan(dirs: string[], quiet: boolean, live?: { keep_ratio?: number
   await Promise.all([worker(), worker(), worker(), worker()]);
   clearInterval(judgeTimer);
   judgeNow();
-  return photos;
+  return slim(photos);
 }
 
 let dialogCalls = 0;
@@ -303,7 +311,15 @@ w.__TAURI_INTERNALS__ = {
       }
       // A rough stand-in for the real (Rust-side) keep/review/reject logic: just enough to exercise the UI in a
       // plain browser. The actual ranking algorithm lives only in src-tauri/src/decide.rs.
-      case "decide_photos": return judge(lastPhotos, Number(args.keepRatio ?? 1), (args.overrides ?? {}) as Record<string, string>);
+      // 和 lib.rs 一样回紧凑格式：路径表变了才发，状态一张一个字符，理由另取（decide_reasons）
+      case "decide_photos": {
+        const tbl = judge(lastPhotos, Number(args.keepRatio ?? 1), (args.overrides ?? {}) as Record<string, string>);
+        const paths = Object.keys(tbl).sort();
+        if (paths.join("\n") !== decidePaths.join("\n")) { decideRev++; decidePaths = paths; }
+        decideTable = tbl;
+        return { rev: decideRev, paths: args.knownRev === decideRev ? undefined : paths, states: paths.map((p) => ({ keep: "k", review: "r", reject: "x" } as Record<string, string>)[tbl[p].state]).join(""), manual: paths.flatMap((p, i) => (tbl[p].manual ? [i] : [])) };
+      }
+      case "decide_reasons": return decideTable[String(args.path)]?.reasons ?? null;
       case "record_label": {
         const cur = args.label;
         if (cur !== null) { labels++; if (cur) keeps++; }
@@ -337,7 +353,15 @@ w.__TAURI_INTERNALS__ = {
       }
       case "reveal": return null;
       case "large_preview": return (args.path as string);
-      case "set_rotation": return null;
+      // 转一张：角度记下、宽高按转过的对调（模拟的缩略图本身不转）
+      case "set_rotation": {
+        const p = lastPhotos.find((x) => x.path === args.path);
+        if (!p) return null;
+        const deg = Number(args.deg), odd = Math.abs(deg - (p.rotation ?? 0)) % 180 === 90;
+        const q = { ...p, rotation: deg, width: odd ? p.height : p.width, height: odd ? p.width : p.height };
+        lastPhotos = lastPhotos.map((x) => (x.path === q.path ? q : x));
+        return q;
+      }
       case "backup_peek": return null;
       case "photo_info": return { format: "JPEG", bytes: 9_400_000, color_space: "sRGB", bit_depth: "8, 8, 8", camera: "FUJIFILM X-T5", lens: "XF35mmF1.4 R", focal: "35 mm", aperture: "f/2", shutter: "1/250 s", iso: "400", software: null, taken: "2026-04-17 18:22:31" };
       case "machine_info": return { memory_gb: 32, cores: 10 };
@@ -400,7 +424,7 @@ w.__TAURI_INTERNALS__ = {
         return prefsInfo();
       }
       // 网络代理（proxy.rs）：系统的写死一个，手填的记在 localStorage；认不出来的照 proxy.rs 的错误码
-      case "proxy_info": return { system: "http://127.0.0.1:7890", manual: localStorage.getItem("fg.mock.proxy"), active: localStorage.getItem("fg.mock.proxy") ?? "http://127.0.0.1:7890" };
+      case "proxy_info": return { system: "http://127.0.0.1:7890", manual: localStorage.getItem("fg.mock.proxy"), active: localStorage.getItem("fg.mock.proxy") ?? "http://127.0.0.1:7890", exceptions: ["*.local", "169.254/16"], exclude_simple: true };
       case "proxy_set": {
         const raw = String(args.manual ?? "").trim();
         if (!raw) localStorage.removeItem("fg.mock.proxy");
@@ -413,6 +437,8 @@ w.__TAURI_INTERNALS__ = {
         return { system: "http://127.0.0.1:7890", manual: localStorage.getItem("fg.mock.proxy"), active: localStorage.getItem("fg.mock.proxy") ?? "http://127.0.0.1:7890" };
       }
       case "samples_folder": return "/mock/Samples";
+      // 拖进窗口（lib.rs 的 dropped_folders）：模拟的文件夹本身，或模拟照片所在的文件夹
+      case "dropped_folders": return [...new Set((args.paths as string[]).map((p) => (p in FOLDERS ? p : p.slice(0, p.lastIndexOf("/")))).filter((d) => d in FOLDERS))];
       case "plugin:dialog|save": return "/Users/me/Desktop/fleetinggleam-diagnostics.txt";
       case "diagnostics_export": await sleep(500); return String(args.out);
       case "diagnostics_dir": return "/Users/me/Library/Application Support/com.fleetinggleam.app/logs";

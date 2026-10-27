@@ -24,6 +24,17 @@ export async function newProjectFromDialog(): Promise<boolean> {
   return true;
 }
 
+/**
+ * 拖进窗口的文件夹建项目：只拖了一个、而它正好就是某个项目的文件夹，就打开那个项目；否则用这些文件夹建一个新的（名字取第一个）。
+ */
+export function projectFromFolders(dirs: string[]): boolean {
+  if (!dirs.length) return false;
+  const existing = dirs.length === 1 ? getStore().projects.find((p) => !p.trashed && p.folders.length === 1 && p.folders[0] === dirs[0]) : undefined;
+  if (existing) setActive(existing.id);
+  else createProject(baseName(dirs[0]), dirs);
+  return true;
+}
+
 /** 示例项目建好后第一次到准备页就自动开始分析（它本来就是来看效果的）；Culling 取一次就清掉。 */
 let autoStart: string | null = null;
 export function takeAutoStart(id: string): boolean {

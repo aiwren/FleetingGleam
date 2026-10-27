@@ -15,20 +15,83 @@ mod bench;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use fg_core::analyze::Photo;
 use fg_core::engine::{self, BackupMeta, BackupStatus, Engine, ExportResult, FileInfo, Hit, Listing, Machine, Probe, ScanArgs, SceneReq, SearchStatus, TargetArgs, TrashResult};
 use fg_core::{decide, modelfiles, modelpacks, nas, prefs, taste};
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
 
 /// 引擎的事件原样交给 WebView（事件名和载荷就是前端监听的那些）。
 struct WebviewEvents(AppHandle);
 
 impl engine::Events for WebviewEvents {
     fn emit(&self, event: &str, payload: serde_json::Value) {
+        if event == "scan-photo" || event == "scan-photos" {
+            remember_sent(&payload);
+        }
         let _ = self.0.emit(event, payload);
+    }
+}
+
+/// 分析中经 "scan-photo" / "scan-photos" 送到前端的照片（按路径）：scan_project 结束时只回传送过之后又变了的字段
+/// （分组、打分、补量的眼睛和人脸……），不再把几千张照片整包再传一遍（审查第二批）。只在有真正的分析在跑时记。
+#[derive(Default)]
+struct Sent {
+    scans: usize,
+    photos: HashMap<String, serde_json::Map<String, serde_json::Value>>,
+}
+
+fn sent() -> &'static Mutex<Sent> {
+    static SENT: std::sync::OnceLock<Mutex<Sent>> = std::sync::OnceLock::new();
+    SENT.get_or_init(Mutex::default)
+}
+
+fn remember_sent(payload: &serde_json::Value) {
+    let mut s = sent().lock().unwrap_or_else(|e| e.into_inner());
+    if s.scans == 0 {
+        return;
+    }
+    let one = |s: &mut Sent, v: &serde_json::Value| {
+        if let Some(o) = v.as_object() {
+            if let Some(path) = o.get("path").and_then(|p| p.as_str()) {
+                s.photos.insert(path.to_string(), o.clone());
+            }
+        }
+    };
+    match payload {
+        serde_json::Value::Array(list) => list.iter().for_each(|v| one(&mut s, v)),
+        v => one(&mut s, v),
+    }
+}
+
+/// 一次真正的分析期间（含被取消、出错的那些）记着送过的照片；最后一个结束时清掉。
+struct SentScan;
+
+impl SentScan {
+    fn begin() -> Self {
+        sent().lock().unwrap_or_else(|e| e.into_inner()).scans += 1;
+        SentScan
+    }
+}
+
+impl Drop for SentScan {
+    fn drop(&mut self) {
+        let mut s = sent().lock().unwrap_or_else(|e| e.into_inner());
+        s.scans = s.scans.saturating_sub(1);
+        if s.scans == 0 {
+            s.photos = HashMap::new();
+        }
+    }
+}
+
+/// 一张照片的最终记录，减去事件里送过、而且没变的字段（`path` 总在）；没送过的照整张给。
+fn slim(full: serde_json::Value, sent: Option<&serde_json::Map<String, serde_json::Value>>) -> serde_json::Value {
+    match (full, sent) {
+        (serde_json::Value::Object(full), Some(sent)) => serde_json::Value::Object(full.into_iter().filter(|(k, v)| k == "path" || sent.get(k) != Some(v)).collect()),
+        (full, _) => full,
     }
 }
 
@@ -105,11 +168,25 @@ async fn probe_folder(app: AppHandle, dirs: Vec<String>, compute: Option<String>
 }
 
 #[tauri::command]
-async fn scan_project(app: AppHandle, key: String, dirs: Vec<String>, compute: Option<String>, quality: Option<String>, learn: bool, quiet: bool, style: Option<String>, force: Option<bool>, eye_method: Option<String>, live: Option<fg_core::engine::LiveArgs>) -> Result<Vec<Photo>, String> {
+/// 安静读取（从缓存打开）回完整的照片；真正的分析只回每张在事件之后又变了的字段（见 `slim`），前端和事件攒下的合起来。
+async fn scan_project(app: AppHandle, key: String, dirs: Vec<String>, compute: Option<String>, quality: Option<String>, learn: bool, quiet: bool, style: Option<String>, force: Option<bool>, eye_method: Option<String>, live: Option<fg_core::engine::LiveArgs>) -> Result<Vec<serde_json::Value>, String> {
     let e = engine(&app);
     let args = ScanArgs { key, dirs, compute, quality, learn, quiet, style, force: force.unwrap_or(false), eye_method, live };
     let _awake = power::Awake::begin("FleetingGleam: analysing photos");
-    blocking(move || e.scan_project(args)).await?
+    let _sent = (!quiet).then(SentScan::begin);
+    let photos: Vec<Photo> = blocking(move || e.scan_project(args)).await??;
+    let mut s = sent().lock().unwrap_or_else(|e| e.into_inner());
+    Ok(photos
+        .into_iter()
+        .map(|p| {
+            let v = serde_json::to_value(&p).unwrap_or_default();
+            if quiet {
+                v
+            } else {
+                slim(v, s.photos.remove(&p.path).as_ref())
+            }
+        })
+        .collect())
 }
 
 /// 带 key 只停那个项目的分析 / 读取（离开项目时它自己的停，后台分析的那个照跑）；不带就全停。
@@ -121,11 +198,78 @@ fn scan_cancel(app: AppHandle, key: Option<String>) {
     }
 }
 
+/// 最近一次 decide_photos 算出的整张判定表：理由按需从这里取（`decide_reasons`），路径顺序带一个版本号，没变就不再整份发给前端。
+#[derive(Default)]
+struct DecideCache {
+    key: String,
+    rev: u64,
+    paths: Vec<String>,
+    table: HashMap<String, decide::Decision>,
+}
+
+#[derive(Default)]
+struct DecideState(Mutex<DecideCache>);
+
+/// decide_photos 回给前端的紧凑格式（审查第二批：以前每点一次整张表连理由来回一趟，万张项目几 MB JSON）。
+#[derive(serde::Serialize, Debug, PartialEq)]
+struct CompactDecisions {
+    /// 路径表的版本：前端带着上次拿到的来，一样就不再发 `paths`
+    rev: u64,
+    /// 按路径排好的全部照片；只在和前端手里的版本不同时给
+    #[serde(skip_serializing_if = "Option::is_none")]
+    paths: Option<Vec<String>>,
+    /// 每张一个字符，顺序同 `paths`：k = 保留、r = 待复查、x = 淘汰
+    states: String,
+    /// 手动标过的那些在 `paths` 里的下标
+    manual: Vec<u32>,
+}
+
+/// 把核心的判定表转成紧凑格式，并记进缓存（核心不动，转换只在这层封装里）。
+fn compact(cache: &mut DecideCache, key: &str, table: HashMap<String, decide::Decision>, known_rev: Option<u64>) -> CompactDecisions {
+    let mut paths: Vec<String> = table.keys().cloned().collect();
+    paths.sort_unstable();
+    if cache.key != key || cache.paths != paths {
+        cache.rev += 1;
+        cache.key = key.to_string();
+        cache.paths = paths;
+    }
+    let states = cache
+        .paths
+        .iter()
+        .map(|p| match table[p].state {
+            decide::State::Keep => 'k',
+            decide::State::Review => 'r',
+            decide::State::Reject => 'x',
+        })
+        .collect();
+    let manual = cache.paths.iter().enumerate().filter(|(_, p)| table[*p].manual).map(|(i, _)| i as u32).collect();
+    cache.table = table;
+    CompactDecisions { rev: cache.rev, paths: (known_rev != Some(cache.rev)).then(|| cache.paths.clone()), states, manual }
+}
+
 /// Deciding is seconds on a very large project, so it runs off the main thread.
+/// `known_rev`：前端手里那份路径表的版本（见 `CompactDecisions`）。
 #[tauri::command]
-async fn decide_photos(app: AppHandle, key: String, keep_ratio: f32, pick_mode: Option<String>, one_per_group: Option<bool>, overrides: HashMap<String, String>) -> Result<HashMap<String, decide::Decision>, String> {
+async fn decide_photos(app: AppHandle, key: String, keep_ratio: f32, pick_mode: Option<String>, one_per_group: Option<bool>, overrides: HashMap<String, String>, known_rev: Option<u64>) -> Result<CompactDecisions, String> {
     let e = engine(&app);
-    blocking(move || e.decide_photos(&key, keep_ratio, pick_mode.as_deref(), one_per_group.unwrap_or(false), &overrides)).await?
+    blocking(move || {
+        let table = e.decide_photos(&key, keep_ratio, pick_mode.as_deref(), one_per_group.unwrap_or(false), &overrides)?;
+        let state = app.state::<DecideState>();
+        let mut cache = state.0.lock().unwrap_or_else(|e| e.into_inner());
+        Ok(compact(&mut cache, &key, table, known_rev))
+    })
+    .await?
+}
+
+/// 一张照片的判定理由（检查器里那一句），取自最近一次 decide_photos；那次不是这个项目的就是 null。
+#[tauri::command]
+fn decide_reasons(app: AppHandle, key: String, path: String) -> Option<Vec<decide::Reason>> {
+    let state = app.state::<DecideState>();
+    let cache = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    if cache.key != key {
+        return None;
+    }
+    cache.table.get(&path).map(|d| d.reasons.clone())
 }
 
 // ---------------------------------------------------------------- 项目文件
@@ -292,6 +436,28 @@ fn export_cancel(app: AppHandle) {
 async fn trash_photos(app: AppHandle, paths: Vec<String>) -> Result<TrashResult, String> {
     let e = engine(&app);
     blocking(move || e.trash_photos(paths)).await
+}
+
+/// 拖进窗口的东西里能当项目文件夹的：文件夹本身；拖的是照片文件就取它所在的文件夹。去重，保持拖入的顺序。
+#[tauri::command]
+fn dropped_folders(paths: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for p in paths {
+        let path = std::path::Path::new(&p);
+        let dir = if path.is_dir() {
+            Some(path.to_path_buf())
+        } else if path.is_file() && fg_core::analyze::is_image(path) {
+            path.parent().map(|d| d.to_path_buf())
+        } else {
+            None
+        };
+        if let Some(d) = dir.map(|d| d.to_string_lossy().trim_end_matches('/').to_string()).filter(|d| !d.is_empty()) {
+            if !out.contains(&d) {
+                out.push(d);
+            }
+        }
+    }
+    out
 }
 
 /// Shows a file (or folder) in Finder / Explorer.
@@ -496,13 +662,15 @@ struct MenuText {
     open: &'static str,
     sidebar: &'static str,
     inspector: &'static str,
+    undo: &'static str,
+    redo: &'static str,
 }
 
 fn menu_text(locale: &str) -> MenuText {
     if locale.starts_with("zh") {
-        MenuText { settings: "设置…", file: "文件", edit: "编辑", view: "视图", window: "窗口", open: "打开文件夹…", sidebar: "显示/隐藏侧边栏", inspector: "显示/隐藏检查器" }
+        MenuText { settings: "设置…", file: "文件", edit: "编辑", view: "视图", window: "窗口", open: "打开文件夹…", sidebar: "显示/隐藏侧边栏", inspector: "显示/隐藏检查器", undo: "撤销", redo: "重做" }
     } else {
-        MenuText { settings: "Settings…", file: "File", edit: "Edit", view: "View", window: "Window", open: "Open Folder…", sidebar: "Toggle Sidebar", inspector: "Toggle Inspector" }
+        MenuText { settings: "Settings…", file: "File", edit: "Edit", view: "View", window: "Window", open: "Open Folder…", sidebar: "Toggle Sidebar", inspector: "Toggle Inspector", undo: "Undo", redo: "Redo" }
     }
 }
 
@@ -512,6 +680,9 @@ fn build_menu(app: &AppHandle, locale: &str) -> tauri::Result<tauri::menu::Menu<
     let sidebar = MenuItemBuilder::with_id("toggle-sidebar", tx.sidebar).accelerator("CmdOrCtrl+Alt+S").build(app)?;
     let inspector = MenuItemBuilder::with_id("toggle-inspector", tx.inspector).accelerator("CmdOrCtrl+Alt+I").build(app)?;
     let settings = MenuItemBuilder::with_id("open-settings", tx.settings).accelerator("CmdOrCtrl+,").build(app)?;
+    // 撤销 / 重做交给前端（history.ts）：文本框里是文字的撤销，别处是照片墙的撤销栈（系统自带的那两项只对文本框有效）
+    let undo = MenuItemBuilder::with_id("undo", tx.undo).accelerator("CmdOrCtrl+Z").build(app)?;
+    let redo = MenuItemBuilder::with_id("redo", tx.redo).accelerator("CmdOrCtrl+Shift+Z").build(app)?;
     let app_menu = SubmenuBuilder::new(app, "FleetingGleam")
         .about(None)
         .separator()
@@ -527,8 +698,8 @@ fn build_menu(app: &AppHandle, locale: &str) -> tauri::Result<tauri::menu::Menu<
         .build()?;
     let file = SubmenuBuilder::new(app, tx.file).item(&open).separator().close_window().build()?;
     let edit = SubmenuBuilder::new(app, tx.edit)
-        .undo()
-        .redo()
+        .item(&undo)
+        .item(&redo)
         .separator()
         .cut()
         .copy()
@@ -560,9 +731,58 @@ fn diagnostics_dir(app: AppHandle) -> String {
     engine(&app).diagnostics_dir()
 }
 
+// ---------------------------------------------------------------- 退出前冲刷
+
+/// 前端把还在防抖里的 projects.json 写完了（或等太久不等了）：可以真的退出。
+static QUIT_READY: AtomicBool = AtomicBool::new(false);
+/// 已经请前端冲刷过一次（重复的 ⌘Q / 关窗不再重复发）。
+static QUIT_ASKED: AtomicBool = AtomicBool::new(false);
+
+/// 要退出（⌘Q、关掉最后一个窗口）时先拦下来，请前端把还没写盘的项目写完；前端没反应时 2 秒后照样退出。
+fn ask_flush(app: &AppHandle) {
+    if QUIT_ASKED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    if app.emit("flush-before-quit", ()).is_err() {
+        quit_now(app);
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        quit_now(&app);
+    });
+}
+
+fn quit_now(app: &AppHandle) {
+    if !QUIT_READY.swap(true, Ordering::SeqCst) {
+        app.exit(0);
+    }
+}
+
+/// 前端冲刷完了。
+#[tauri::command]
+fn quit_ready(app: AppHandle) {
+    quit_now(&app);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // 单实例必须第一个注册：第二次启动（再点一次图标、开发版与正式版交替）不再起第二个进程，而是把已有的窗口叫到前面
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.unminimize();
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }))
+        // 窗口的大小、位置、最大化与全屏（不管可见性和标题栏样式，那两样由 tauri.conf.json 定）
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(tauri_plugin_window_state::StateFlags::SIZE | tauri_plugin_window_state::StateFlags::POSITION | tauri_plugin_window_state::StateFlags::MAXIMIZED | tauri_plugin_window_state::StateFlags::FULLSCREEN)
+                .build(),
+        )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -580,6 +800,7 @@ pub fn run() {
             // 启用的 NAS 在后台连上；缩略图旁边的草稿文件（大图、局部、动态照片的视频）修剪到上限以内
             e.start_background();
             app.manage(e);
+            app.manage(DecideState::default());
             let menu = build_menu(&handle, "en")?;
             app.set_menu(menu)?;
             Ok(())
@@ -587,9 +808,81 @@ pub fn run() {
         .on_menu_event(|app, event| {
             let _ = app.emit("menu", event.id().0.clone());
         })
-        .invoke_handler(tauri::generate_handler![forget_folders, probe_folder, scan_project, scan_cancel, decide_photos, projects_load, projects_save, projects_quarantine, taste_export, taste_import, nas_list, nas_add, nas_remove, nas_connect, nas_disconnect, nas_ensure, nas_browse, nas_probe, nas_update, nas_set_enabled, nas_mirror_usage, nas_mirror_clear, backup_status, backup_save_target, backup_remove_target, backup_set_options, backup_now, backup_restore, backup_peek, set_rotation, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, export_cancel, trash_photos, reveal, preview_thumbs, photo_info, large_preview, motion_clip, hdrview::hdr_overlay_supported, hdrview::hdr_overlay_show, hdrview::hdr_overlay_move, hdrview::hdr_overlay_hide, hdrview::hdr_overlay_detail, hdrview::hdr_overlay_detail_hide, photo_detail, machine_info, search_status, search_index, search_photos, scene_text, packs_status, pack_size, pack_download, pack_cancel, pack_remove, diagnostics_export, diagnostics_dir, proxy::proxy_info, proxy::proxy_set, samples::samples_folder])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        // 关窗（这个应用只有一个窗口，关掉就是退出）：先请前端把项目写完
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if !QUIT_READY.load(Ordering::SeqCst) {
+                    api.prevent_close();
+                    ask_flush(window.app_handle());
+                }
+            }
+        })
+        .invoke_handler(tauri::generate_handler![forget_folders, probe_folder, scan_project, scan_cancel, decide_photos, decide_reasons, projects_load, projects_save, projects_quarantine, taste_export, taste_import, nas_list, nas_add, nas_remove, nas_connect, nas_disconnect, nas_ensure, nas_browse, nas_probe, nas_update, nas_set_enabled, nas_mirror_usage, nas_mirror_clear, backup_status, backup_save_target, backup_remove_target, backup_set_options, backup_now, backup_restore, backup_peek, set_rotation, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, export_cancel, trash_photos, reveal, preview_thumbs, photo_info, large_preview, motion_clip, hdrview::hdr_overlay_supported, hdrview::hdr_overlay_show, hdrview::hdr_overlay_move, hdrview::hdr_overlay_hide, hdrview::hdr_overlay_detail, hdrview::hdr_overlay_detail_hide, photo_detail, machine_info, search_status, search_index, search_photos, scene_text, packs_status, pack_size, pack_download, pack_cancel, pack_remove, diagnostics_export, diagnostics_dir, proxy::proxy_info, proxy::proxy_set, samples::samples_folder, quit_ready, dropped_folders])
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // ⌘Q / 菜单里的退出：同样先冲刷
+            if let RunEvent::ExitRequested { api, .. } = event {
+                if !QUIT_READY.load(Ordering::SeqCst) {
+                    api.prevent_exit();
+                    ask_flush(app);
+                }
+            }
+        });
+}
+
+#[cfg(test)]
+mod compact_tests {
+    use super::*;
+
+    #[test]
+    fn slim_keeps_only_what_changed_since_the_event() {
+        let full = serde_json::json!({ "path": "/a.jpg", "name": "a.jpg", "thumb": "/t/a.jpg", "score": 0.8, "group": 3, "people": [0] });
+        let sent = serde_json::json!({ "path": "/a.jpg", "name": "a.jpg", "thumb": "/t/a.jpg", "score": 0.6, "group": 0, "people": [] });
+        let out = slim(full.clone(), sent.as_object());
+        assert_eq!(out, serde_json::json!({ "path": "/a.jpg", "score": 0.8, "group": 3, "people": [0] }));
+        // 没送过的照整张给
+        assert_eq!(slim(full.clone(), None), full);
+    }
+
+    #[test]
+    fn sent_photos_are_only_kept_while_a_scan_runs() {
+        remember_sent(&serde_json::json!({ "path": "/x.jpg" }));
+        assert!(!sent().lock().unwrap().photos.contains_key("/x.jpg"), "没有分析在跑时不记");
+        let guard = SentScan::begin();
+        remember_sent(&serde_json::json!([{ "path": "/x.jpg" }, { "path": "/y.jpg" }]));
+        assert!(sent().lock().unwrap().photos.contains_key("/y.jpg"));
+        drop(guard);
+        assert!(sent().lock().unwrap().photos.is_empty());
+    }
+
+    fn d(state: decide::State, manual: bool) -> decide::Decision {
+        decide::Decision { state, manual, reasons: Vec::new() }
+    }
+
+    #[test]
+    fn compact_decisions_send_paths_only_when_they_change() {
+        let mut cache = DecideCache::default();
+        let table = || HashMap::from([("/b.jpg".to_string(), d(decide::State::Reject, true)), ("/a.jpg".to_string(), d(decide::State::Keep, false)), ("/c.jpg".to_string(), d(decide::State::Review, false))]);
+        let first = compact(&mut cache, "p1", table(), None);
+        assert_eq!(first.paths.as_deref(), Some(&["/a.jpg".to_string(), "/b.jpg".to_string(), "/c.jpg".to_string()][..]));
+        assert_eq!(first.states, "kxr");
+        assert_eq!(first.manual, vec![1]);
+        // 同一批照片、前端带着这个版本：不再发路径
+        let again = compact(&mut cache, "p1", table(), Some(first.rev));
+        assert_eq!(again.rev, first.rev);
+        assert_eq!(again.paths, None);
+        // 前端手里是别的版本：照发
+        assert!(compact(&mut cache, "p1", table(), Some(first.rev + 7)).paths.is_some());
+        // 换了项目（哪怕路径一样）或照片变了：新版本
+        let other = compact(&mut cache, "p2", table(), Some(first.rev));
+        assert!(other.rev > first.rev && other.paths.is_some());
+        let mut fewer = table();
+        fewer.remove("/c.jpg");
+        let shrunk = compact(&mut cache, "p2", fewer, Some(other.rev));
+        assert!(shrunk.rev > other.rev);
+        assert_eq!(shrunk.states, "kx");
+    }
 }
 
 #[cfg(test)]

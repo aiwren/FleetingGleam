@@ -17,8 +17,10 @@ const duration = (s: number, t: (k: string, o?: Record<string, unknown>) => stri
  * 分析前的那一屏（设计审查 M3）：左边是名字、文件夹、偏好、备注；右边一张和 Android 一样的封面拼图（左一大右两小），压着张数、大小和预计时间。
  * 没有灯箱桌、不倾斜、不视差、不追光；底部只有"开始分析"。
  */
-export default function ReadyStage({ project, count, sizeText, etaSeconds, files, thumbs, onStart, onAddFolder, onRemoveFolder }: {
+export default function ReadyStage({ project, count, sizeText, etaSeconds, files, thumbs, onStart, waiting, onAddFolder, onRemoveFolder }: {
   project: Project; count: number; sizeText: string; etaSeconds: number | null; files: ProbeFile[]; thumbs: Record<string, string>;
+  /** 正在等模型（询问或下载中）：按钮置灰，写"等待模型"。 */
+  waiting: boolean;
   onStart: () => void; onAddFolder: () => void; onRemoveFolder: (dir: string) => void;
 }) {
   // typed into local state; written once the typing pauses or the field is left (every character would otherwise rewrite the projects file)
@@ -80,7 +82,7 @@ export default function ReadyStage({ project, count, sizeText, etaSeconds, files
 
         {/* 底部只有按钮：解释段删掉了，预计时间在拼图上（M3.2） */}
         <div className="ready-bar">
-          <button className="btn primary" onClick={onStart}>{t("cull.start")}</button>
+          <button className="btn primary" onClick={onStart} disabled={waiting}>{waiting ? t("cull.waitModel") : t("cull.start")}</button>
         </div>
       </motion.div>
 
