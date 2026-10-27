@@ -123,8 +123,8 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
     try { setProxy(await invoke<ProxyInfo>("proxy_set", { manual })); setProxyOpen(false); }
     catch (e) { const [code, scheme] = String(e).split(":"); setProxyErr(t(`settings.proxyBad.${code}`, { scheme, defaultValue: String(e) })); }
   };
-  // 系统设置了"不使用代理的主机"：惊鸿暂时做不到按地址直连（核心只收一个全局代理），说一声，局域网的备份存储连不上时知道为什么
-  const bypass = proxy && !proxy.manual && proxy.system ? [...(proxy.exceptions ?? []), ...(proxy.exclude_simple ? [t("settings.proxySimple")] : [])] : [];
+  // 系统设置的"不使用代理的主机"交给了核心，这些地址（以及局域网与本机）直连；走代理时把列表写出来
+  const bypass = proxy?.active ? [...(proxy.exceptions ?? []), ...(proxy.exclude_simple ? [t("settings.proxySimple")] : [])] : [];
   const proxyDesc = !proxy ? "" : (proxy.manual ? t("settings.proxyManual", { url: proxy.manual }) : proxy.system ? t("settings.proxySystem", { url: proxy.system }) : t("settings.proxyDirect"))
     + (bypass.length ? ` ${t("settings.proxyBypass", { list: bypass.join(i18n.language.startsWith("zh") ? "、" : ", ") })}` : "");
   // NAS 副本：每台 NAS 的照片在本机镜像里占多少（不算在缩略图缓存里），可以按 NAS 清掉；分析结果保留

@@ -1,9 +1,9 @@
 //! 联网用的代理：启动时读 macOS 的系统 HTTPS 代理（`scutil --proxy`，和"系统设置 › 网络 › 代理"是同一份），设置里手填的优先，
 //! 交给核心的 `platform::set_proxy`（模型下载、云备份都走它）。系统代理变了，下次启动生效。
 //! 只认 HTTP 类代理（`http://主机:端口`）：核心的 HTTP 客户端没编 SOCKS；自动代理配置（PAC）也不解析。
-//! 系统的"不使用代理的主机"（`ExceptionsList`）与"排除简单主机名"（`ExcludeSimpleHostnames`）也读出来：
-//! 核心的 `set_proxy` 只收一个全局代理、不收排除列表，暂时做不到按地址直连（局域网的 S3 / NAS 会被送去代理），
-//! 所以有排除列表时设置页说一声；等核心支持了再交给它。
+//! 系统的"不使用代理的主机"（`ExceptionsList`）与"排除简单主机名"（`ExcludeSimpleHostnames`）交给核心的
+//! `platform::set_proxy_bypass`：这些地址直连。局域网与本机（私有网段、`.local`、`localhost`）核心本来就直连。
+//! 手填代理时也照样按系统的排除列表绕开。
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -127,7 +127,9 @@ fn info(data: &Path) -> ProxyInfo {
 /// 启动时调用（放在后台线程里，`scutil` 不拖慢开窗口）：读系统代理，手填的优先，交给核心。
 pub fn init(data: PathBuf) {
     std::thread::spawn(move || {
-        let system = system().url.clone();
+        let s = system();
+        fg_core::platform::set_proxy_bypass(s.exceptions.clone(), s.exclude_simple);
+        let system = s.url.clone();
         let manual = read_manual(&data);
         // 先手填、后系统；两样都没有就直连
         fg_core::platform::set_proxy(manual.or(system));

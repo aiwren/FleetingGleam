@@ -193,8 +193,8 @@ fn request(cfg: &Target, secret: &str, method: &str, key: &str, query: &str, bod
     let k_signing = hmac(&k_service, b"aws4_request");
     let signature = hex(&hmac(&k_signing, to_sign.as_bytes()));
     let auth = format!("AWS4-HMAC-SHA256 Credential={}/{scope}, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature={signature}", cfg.access_key.trim());
-    let agent = crate::platform::http_agent(std::time::Duration::from_secs(15), std::time::Duration::from_secs(60));
     let url = if query.is_empty() { format!("{endpoint}{path}") } else { format!("{endpoint}{path}?{query}") };
+    let agent = crate::platform::http_agent(&url, std::time::Duration::from_secs(15), std::time::Duration::from_secs(60));
     let req = agent.request(method, &url).set("Authorization", &auth).set("x-amz-content-sha256", &payload_hash).set("x-amz-date", &amz_date);
     let resp = match if method == "PUT" { req.set("Content-Type", "application/json").send_bytes(body) } else { req.call() } {
         Ok(r) => r,

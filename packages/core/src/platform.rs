@@ -154,10 +154,88 @@ pub fn proxy() -> Option<String> {
     PROXY.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
-/// 核心所有联网（模型下载、云备份）共用的 HTTP 客户端构建器：超时由调用方定，代理按 `proxy()`。
-pub fn http_agent(connect: std::time::Duration, read: std::time::Duration) -> ureq::Agent {
+/// 不走代理的地址：宿主交来的系统排除列表（macOS 的 `ExceptionsList`），加上"排除简单主机名"。
+#[derive(Default)]
+struct Bypass {
+    patterns: Vec<String>,
+    simple: bool,
+}
+
+static BYPASS: std::sync::Mutex<Bypass> = std::sync::Mutex::new(Bypass { patterns: Vec::new(), simple: false });
+
+/// 宿主告诉核心哪些地址直连、不走代理。`patterns` 认这几种写法：`*.local` / `.example.com`（这个域名及其子域名）、
+/// `example.com`（只这一个主机）、`192.168.0.0/16` / `169.254/16`（IPv4 网段，省略的段按 0）。
+/// `simple` = 不带点的主机名（如 `nas`）也直连。
+pub fn set_proxy_bypass(patterns: Vec<String>, simple: bool) {
+    let patterns = patterns.into_iter().map(|p| p.trim().to_ascii_lowercase()).filter(|p| !p.is_empty()).collect();
+    *BYPASS.lock().unwrap_or_else(|e| e.into_inner()) = Bypass { patterns, simple };
+}
+
+/// 从 `scheme://[用户@]主机[:端口]/…` 里取出主机（小写；IPv6 去掉方括号）。
+fn host_of(url: &str) -> Option<String> {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    let auth = rest.split(['/', '?', '#']).next()?;
+    let auth = auth.rsplit_once('@').map_or(auth, |(_, h)| h);
+    let host = if let Some(v6) = auth.strip_prefix('[') { v6.split(']').next()? } else { auth.rsplit_once(':').map_or(auth, |(h, _)| h) };
+    (!host.is_empty()).then(|| host.to_ascii_lowercase())
+}
+
+fn ipv4(s: &str) -> Option<u32> {
+    s.parse::<std::net::Ipv4Addr>().ok().map(u32::from)
+}
+
+/// `169.254/16`、`10/8`、`192.168.1.0/24` 这样的网段：省略的段按 0 补齐。
+fn in_cidr(ip: u32, pattern: &str) -> bool {
+    let Some((net, bits)) = pattern.split_once('/') else { return false };
+    let Ok(bits) = bits.parse::<u32>() else { return false };
+    if bits > 32 {
+        return false;
+    }
+    let mut parts: Vec<&str> = net.split('.').collect();
+    if parts.is_empty() || parts.len() > 4 {
+        return false;
+    }
+    parts.resize(4, "0");
+    let Some(net) = ipv4(&parts.join(".")) else { return false };
+    let mask = if bits == 0 { 0 } else { u32::MAX << (32 - bits) };
+    ip & mask == net & mask
+}
+
+/// 这个主机要不要绕开代理直连：本机与局域网（回环、私有网段、链路本地、`.local`、`localhost`）一律直连，再看宿主交来的排除列表。
+fn bypasses(host: &str) -> bool {
+    if host == "localhost" || host.ends_with(".local") || host == "::1" {
+        return true;
+    }
+    let ip = ipv4(host);
+    if let Some(ip) = ip {
+        if ["127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"].iter().any(|c| in_cidr(ip, c)) {
+            return true;
+        }
+    }
+    let b = BYPASS.lock().unwrap_or_else(|e| e.into_inner());
+    if b.simple && ip.is_none() && !host.contains('.') && !host.contains(':') {
+        return true;
+    }
+    b.patterns.iter().any(|p| {
+        if p.contains('/') {
+            return ip.is_some_and(|ip| in_cidr(ip, p));
+        }
+        match p.strip_prefix("*.").or_else(|| p.strip_prefix('.')) {
+            Some(domain) => host == domain || host.ends_with(&format!(".{domain}")),
+            None if p == "*" => true,
+            None => host == p,
+        }
+    })
+}
+
+/// 核心所有联网（模型下载、云备份）共用的 HTTP 客户端构建器：超时由调用方定；代理按 `proxy()`，
+/// 但要去的地址在局域网或排除列表里就直连（局域网里的 S3 / NAS 不该被送去代理）。
+pub fn http_agent(url: &str, connect: std::time::Duration, read: std::time::Duration) -> ureq::Agent {
     let mut b = ureq::AgentBuilder::new().timeout_connect(connect).timeout_read(read);
     if let Some(p) = proxy() {
+        if host_of(url).is_some_and(|h| bypasses(&h)) {
+            return b.build();
+        }
         match ureq::Proxy::new(&p) {
             Ok(px) => b = b.proxy(px),
             Err(e) => log(&format!("proxy {p} ignored: {e}")),
@@ -235,6 +313,28 @@ pub fn physical_memory() -> u64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn proxy_bypass_rules() {
+        assert_eq!(host_of("https://User:pw@S3.example.com:9000/bucket?x=1").as_deref(), Some("s3.example.com"));
+        assert_eq!(host_of("http://[fe80::1]:80/").as_deref(), Some("fe80::1"));
+        assert_eq!(host_of("https://huggingface.co/x").as_deref(), Some("huggingface.co"));
+        // 局域网与本机一律直连
+        for h in ["localhost", "nas.local", "127.0.0.1", "10.1.2.3", "172.20.0.5", "192.168.1.9", "169.254.9.9", "::1"] {
+            assert!(bypasses(h), "{h}");
+        }
+        assert!(!bypasses("172.32.0.1"));
+        assert!(!bypasses("huggingface.co"));
+        set_proxy_bypass(vec!["*.corp.example".into(), "minio.home".into(), "100.64/10".into(), " ".into()], true);
+        assert!(bypasses("a.corp.example") && bypasses("corp.example"));
+        assert!(bypasses("MINIO.home".to_ascii_lowercase().as_str()));
+        assert!(!bypasses("x.minio.home"));
+        assert!(bypasses("100.100.1.1") && !bypasses("100.128.0.1"));
+        assert!(bypasses("nas"), "不带点的主机名");
+        assert!(!bypasses("github.com"));
+        set_proxy_bypass(Vec::new(), false);
+        assert!(!bypasses("nas"));
+    }
+
     use super::*;
 
     #[test]

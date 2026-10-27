@@ -234,7 +234,7 @@ fn fetch_once(url: &str, part: &Path, size: u64, cancel: &AtomicBool, progress: 
     if got == size && size > 0 {
         return Ok(());
     }
-    let agent = crate::platform::http_agent(std::time::Duration::from_secs(15), std::time::Duration::from_secs(30));
+    let agent = crate::platform::http_agent(url, std::time::Duration::from_secs(15), std::time::Duration::from_secs(30));
     let mut req = agent.get(url);
     if got > 0 {
         req = req.set("Range", &format!("bytes={got}-"));

@@ -241,7 +241,7 @@ const zh = {
     cache: "缩略图缓存", cacheDesc: "清除后，所有项目下次打开都要重新分析。",
     proxy: "网络代理", proxySystem: "跟随系统：{{url}}", proxyDirect: "直连（系统里没有设置 HTTPS 代理）", proxyManual: "手动：{{url}}", proxyEdit: "设置…",
     proxyHow: "下载模型和云备份走这个代理。留空就跟随系统设置；系统里的代理改了，下次打开应用时生效。只支持 HTTP 代理。", proxyField: "代理地址", proxyHint: "例如 127.0.0.1:7890", proxyUseSystem: "跟随系统", proxySave: "保存",
-    proxyBypass: "系统里这些地址不走代理：{{list}}。惊鸿暂时还做不到按地址绕开，它们也会经过代理；局域网里的备份存储连不上时，请在代理软件里放行。", proxySimple: "简单主机名",
+    proxyBypass: "这些地址直连：{{list}}，以及局域网与本机。", proxySimple: "简单主机名",
     proxyBad: { port: "要写上端口，例如 127.0.0.1:7890", host: "地址认不出来，例如 127.0.0.1:7890", unsupported: "只支持 HTTP 代理，{{scheme}} 用不了" },
     clear: "清除缓存", cleared: "已清除",
     mirror: "NAS 副本", mirrorDesc: "NAS 照片在本机的副本，不算在缩略图缓存里；清掉不影响分析结果。",
