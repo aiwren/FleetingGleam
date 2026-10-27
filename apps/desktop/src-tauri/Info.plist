@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- 打包时合并进应用的 Info.plist。声明应用支持英文和简体中文：
+     系统往菜单里塞的项（自动填充、听写、表情与符号）和系统对话框才会跟着 Mac 的语言显示，不再一律英文。 -->
+<plist version="1.0">
+<dict>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>zh-Hans</string>
+	</array>
+</dict>
+</plist>

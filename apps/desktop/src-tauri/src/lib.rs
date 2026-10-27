@@ -671,13 +671,32 @@ struct MenuText {
     inspector: &'static str,
     undo: &'static str,
     redo: &'static str,
+    // 下面是 Tauri 自带的系统项：不给文字就是英文，所以按语言配好（与 macOS 自带应用的叫法一致）
+    about: &'static str,
+    services: &'static str,
+    hide: &'static str,
+    hide_others: &'static str,
+    show_all: &'static str,
+    quit: &'static str,
+    close_window: &'static str,
+    cut: &'static str,
+    copy: &'static str,
+    paste: &'static str,
+    select_all: &'static str,
+    fullscreen: &'static str,
+    minimize: &'static str,
+    zoom: &'static str,
 }
 
 fn menu_text(locale: &str) -> MenuText {
     if locale.starts_with("zh") {
-        MenuText { settings: "设置…", file: "文件", edit: "编辑", view: "视图", window: "窗口", open: "打开文件夹…", sidebar: "显示/隐藏侧边栏", inspector: "显示/隐藏检查器", undo: "撤销", redo: "重做" }
+        MenuText { settings: "设置…", file: "文件", edit: "编辑", view: "视图", window: "窗口", open: "打开文件夹…", sidebar: "显示/隐藏侧边栏", inspector: "显示/隐藏检查器", undo: "撤销", redo: "重做",
+            about: "关于 FleetingGleam", services: "服务", hide: "隐藏 FleetingGleam", hide_others: "隐藏其他", show_all: "全部显示", quit: "退出 FleetingGleam",
+            close_window: "关闭窗口", cut: "剪切", copy: "拷贝", paste: "粘贴", select_all: "全选", fullscreen: "进入全屏幕", minimize: "最小化", zoom: "缩放" }
     } else {
-        MenuText { settings: "Settings…", file: "File", edit: "Edit", view: "View", window: "Window", open: "Open Folder…", sidebar: "Toggle Sidebar", inspector: "Toggle Inspector", undo: "Undo", redo: "Redo" }
+        MenuText { settings: "Settings…", file: "File", edit: "Edit", view: "View", window: "Window", open: "Open Folder…", sidebar: "Toggle Sidebar", inspector: "Toggle Inspector", undo: "Undo", redo: "Redo",
+            about: "About FleetingGleam", services: "Services", hide: "Hide FleetingGleam", hide_others: "Hide Others", show_all: "Show All", quit: "Quit FleetingGleam",
+            close_window: "Close Window", cut: "Cut", copy: "Copy", paste: "Paste", select_all: "Select All", fullscreen: "Enter Full Screen", minimize: "Minimize", zoom: "Zoom" }
     }
 }
 
@@ -691,30 +710,30 @@ fn build_menu(app: &AppHandle, locale: &str) -> tauri::Result<tauri::menu::Menu<
     let undo = MenuItemBuilder::with_id("undo", tx.undo).accelerator("CmdOrCtrl+Z").build(app)?;
     let redo = MenuItemBuilder::with_id("redo", tx.redo).accelerator("CmdOrCtrl+Shift+Z").build(app)?;
     let app_menu = SubmenuBuilder::new(app, "FleetingGleam")
-        .about(None)
+        .about_with_text(tx.about, None)
         .separator()
         .item(&settings)
         .separator()
-        .services()
+        .services_with_text(tx.services)
         .separator()
-        .hide()
-        .hide_others()
-        .show_all()
+        .hide_with_text(tx.hide)
+        .hide_others_with_text(tx.hide_others)
+        .show_all_with_text(tx.show_all)
         .separator()
-        .quit()
+        .quit_with_text(tx.quit)
         .build()?;
-    let file = SubmenuBuilder::new(app, tx.file).item(&open).separator().close_window().build()?;
+    let file = SubmenuBuilder::new(app, tx.file).item(&open).separator().close_window_with_text(tx.close_window).build()?;
     let edit = SubmenuBuilder::new(app, tx.edit)
         .item(&undo)
         .item(&redo)
         .separator()
-        .cut()
-        .copy()
-        .paste()
-        .select_all()
+        .cut_with_text(tx.cut)
+        .copy_with_text(tx.copy)
+        .paste_with_text(tx.paste)
+        .select_all_with_text(tx.select_all)
         .build()?;
-    let view = SubmenuBuilder::new(app, tx.view).item(&sidebar).item(&inspector).separator().fullscreen().build()?;
-    let window = SubmenuBuilder::new(app, tx.window).minimize().maximize().build()?;
+    let view = SubmenuBuilder::new(app, tx.view).item(&sidebar).item(&inspector).separator().fullscreen_with_text(tx.fullscreen).build()?;
+    let window = SubmenuBuilder::new(app, tx.window).minimize_with_text(tx.minimize).maximize_with_text(tx.zoom).build()?;
     MenuBuilder::new(app).items(&[&app_menu, &file, &edit, &view, &window]).build()
 }
 
