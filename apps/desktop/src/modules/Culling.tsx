@@ -45,6 +45,13 @@ type Item = { path: string; ratio: number };
 type CompactDecisions = { rev: number; paths?: string[]; states: string; manual: number[] };
 const STATE_OF: Record<string, State> = { k: "keep", r: "review", x: "reject" };
 const manualReason = (st: State): Reason => ({ k: "reason.manual", p: { stateKey: `state.${st}` } });
+type UndoStep = { path: string; prev: State | undefined }[];
+/**
+ * 离开项目时这一屏的样子（审查第二批：以前离开再回来一切归零）：筛选、选中、滚动位置和撤销栈，按项目记在这次运行里。
+ * 回到项目、照片出来以后原样放回去。
+ */
+type ViewMemo = { mode: ViewMode; sceneFilter: number | null; personFilter: number | null; selected: string | null; scroll: number; undo: UndoStep[] };
+const viewMemo = new Map<string, ViewMemo>();
 const NONE: ReadonlySet<string> = new Set();
 /** 分析中筛选栏没有场景和人物：给同一个空数组，别让 FilterPanel 的 memo 每帧被新的 [] 打穿。 */
 const NO_SCENES: SceneItem[] = [];
@@ -160,7 +167,11 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const [searchRev, setSearchRev] = useState(0);
   const [previews, setPreviews] = useState<Record<string, string>>({});
   /** 每一步是一批（多选一起改判的那些），撤销一次撤回整批。 */
-  const undoStack = useRef<{ path: string; prev: State | undefined }[][]>([]);
+  const undoStack = useRef<UndoStep[]>([]);
+  /** 眼下这一屏的筛选与选中（每次渲染更新），和照片墙是不是正显示着（只有那时记的才有意义）。 */
+  const viewNow = useRef<{ shown: boolean; memo: Omit<ViewMemo, "undo"> }>({ shown: false, memo: { mode: "all", sceneFilter: null, personFilter: null, selected: null, scroll: 0 } });
+  /** 回到项目后等照片出来再放回去的选中与滚动位置。 */
+  const restoreView = useRef<{ selected: string | null; scroll: number } | null>(null);
   const [hintUses, setHintUses] = useState(() => { try { return Number(localStorage.getItem("fg.hint.dock") ?? 0); } catch { return 0; } });
   const bumpHint = (n: number) => { setHintUses((u) => { const v = Math.max(u, n === 99 ? 99 : u + 1); try { localStorage.setItem("fg.hint.dock", String(v)); } catch { /* ignore */ } return v; }); };
 
@@ -301,8 +312,12 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     const run = running.current;
     const left = enteredId.current;
     enteredId.current = project?.id ?? null;
-    undoStack.current = []; // the marks that could be undone belonged to the project just left
-    setSelected(null); setMulti(NONE); anchor.current = null; setQuery(""); setZoomed(false); setError(null); setMode("all"); setSceneFilter(null); setPersonFilter(null); setSceneView(false); setCelebrate(false); setDirty(0); setNasProg(null); setOffline(null);
+    // 离开的那个项目：记下筛选、选中、滚动和撤销栈；要进的这个有记下的就照着放回（选中与滚动等照片出来再放，见下）
+    if (left && viewNow.current.shown) viewMemo.set(left, { ...viewNow.current.memo, undo: undoStack.current });
+    const memo = project ? viewMemo.get(project.id) : undefined;
+    undoStack.current = memo?.undo ?? [];
+    restoreView.current = memo && (memo.selected || memo.scroll) ? { selected: memo.selected, scroll: memo.scroll } : null;
+    setSelected(null); setMulti(NONE); anchor.current = null; setQuery(""); setZoomed(false); setError(null); setMode(memo?.mode ?? "all"); setSceneFilter(memo?.sceneFilter ?? null); setPersonFilter(memo?.personFilter ?? null); setSceneView(false); setCelebrate(false); setDirty(0); setNasProg(null); setOffline(null);
     setBgDone((d) => (d && project && d.id === project.id ? null : d));
     // 回到正在分析的那个项目（文件夹没变）：接上，照片墙和进度都还在，不重来
     if (project && run && run.id === project.id && run.folders.join("|") === project.folders.join("|")) {
@@ -890,6 +905,31 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   }, [selected]);
 
   useEffect(() => { setQuery(""); }, [project?.id]);
+  // 滚动位置一直记着（离开项目那一刻 DOM 可能已经换了内容，到时候再读就晚了）
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = () => { if (viewLiveRef.current) viewNow.current.memo.scroll = el.scrollTop; };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+  // 回到项目、照片出来以后：放回选中的那张（还在的话，不触发"滚到选中"）和滚动位置。墙的排版要等量过宽度，所以多等几帧直到够高
+  useEffect(() => {
+    const r = restoreView.current;
+    if (!r || !(phase === "done" || phase === "scanning")) return;
+    restoreView.current = null;
+    // 不核对它在不在墙上：判定表这时可能还在路上（筛选下的墙是空的）；已经不在项目里的照片选了也没有格子，等于没选
+    if (r.selected) { clickedPath.current = r.selected; anchor.current = r.selected; setSelected(r.selected); }
+    let frames = 0, id = 0;
+    const apply = () => {
+      const el = scrollRef.current;
+      if (!el) return;
+      if (el.scrollHeight - el.clientHeight >= r.scroll || ++frames > 30) { el.scrollTop = r.scroll; return; }
+      id = requestAnimationFrame(apply);
+    };
+    id = requestAnimationFrame(apply);
+    return () => cancelAnimationFrame(id);
+  }, [phase]);
   // ---- search: the index is built in the background, the query runs shortly after typing stops
   // search is on for every project (a project can still have it switched off from before); its models are fetched when someone first goes to search
   const searchOf = (p: Project) => p.search !== false;
@@ -941,6 +981,12 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
 
   const scanning = phase === "scanning";
   const showWall = scanning || phase === "done";
+  // 只认属于眼下这个项目的渲染：离开那一刻（项目已经换了、进项目的 effect 还没跑）这一帧不算，墙底下换内容引起的滚动也不记
+  const viewLive = showWall && !!project && project.id === enteredId.current;
+  if (viewLive) viewNow.current = { shown: true, memo: { mode, sceneFilter, personFilter, selected, scroll: viewNow.current.memo.scroll } };
+  else if (project && project.id === enteredId.current) viewNow.current.shown = false;
+  const viewLiveRef = useRef(viewLive);
+  viewLiveRef.current = viewLive;
   const elapsed = (performance.now() - startedAt.current) / 1000;
   const eta = progress.done >= 4 ? Math.max(1, Math.round((elapsed / progress.done) * (progress.total - progress.done))) : null;
   // 当前阶段那一行最多 600 ms 更新一次，不显示文件名（M4.2 / A5.2）；"可以离开"只在第一次分析时显示 6 秒
