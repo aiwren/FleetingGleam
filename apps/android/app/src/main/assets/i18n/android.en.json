@@ -63,7 +63,9 @@
    "diagnosticsDesc": "Version, system, settings (no passwords or tokens), recent logs and crash records, saved as one text file where you choose. Whether to send it is up to you.",
    "diagnosticsBtn": "Export",
    "diagnosticsDone": "Saved",
-   "diagnosticsFailed": "Could not export: {{error}}"
+   "diagnosticsFailed": "Could not export: {{error}}",
+   "mirrorClearTitle": "Clear the local copy of “{{name}}”?",
+   "mirrorClearBody": "The project “{{project}}” is open and uses this copy. After clearing, its photos are fetched again from the source, and full-size views are unavailable until then. Analysis results are kept."
   },
   "cull": {
    "hint": "Tap a photo to select it; the bar below keeps, rejects or opens it. In single view, push up to keep and pull down to reject.",

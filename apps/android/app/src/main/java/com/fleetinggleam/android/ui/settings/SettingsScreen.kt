@@ -52,6 +52,8 @@ import com.fleetinggleam.android.core.Media
 import com.fleetinggleam.android.core.Models
 import com.fleetinggleam.android.core.Nas
 import com.fleetinggleam.android.core.Pickers
+import com.fleetinggleam.android.core.Projects
+import com.fleetinggleam.android.core.Session
 import com.fleetinggleam.android.core.PrefsInfo
 import com.fleetinggleam.android.core.Settings
 import com.fleetinggleam.android.core.Share
@@ -137,6 +139,8 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
     var nasUsage by remember { mutableStateOf<List<com.fleetinggleam.android.core.MirrorUsage>?>(null) }
     var safUsage by remember { mutableStateOf<List<Pair<Media.Mirror, Long>>>(emptyList()) }
     var mirrorBusy by remember { mutableStateOf<String?>(null) }
+    /** 要清的镜像正被开着的项目用着：先问一句（名字、项目名、真正去清的动作）。 */
+    var confirmMirror by remember { mutableStateOf<Triple<String, String, () -> Unit>?>(null) }
     suspend fun loadMirrors() {
         nasUsage = runCatching { Core.get<List<com.fleetinggleam.android.core.MirrorUsage>>("nas_mirror_usage") }.getOrNull()?.filter { it.bytes > 0 }
         safUsage = withContext(Dispatchers.IO) { runCatching { Media.mirrorUsage(ctx).filter { it.second > 0 } }.getOrDefault(emptyList()) }
@@ -311,24 +315,47 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                 }
                 // NAS / 网盘的本机副本：单列出来（以前不算进缓存，实际可能几十 GB），一台一台地清（审查第 31 条）
                 val mirrorTotal = (nasUsage?.sumOf { it.bytes } ?: 0L) + safUsage.sumOf { it.second }
+                // 占用保护（审查第 57 条）：正在分析（或暂停着等接着分析）的项目用着的镜像置灰；开着的项目用着的先确认
+                val running by Session.running.collectAsState()
+                val paused by Session.paused.collectAsState()
+                val store by Projects.store.collectAsState()
+                val live = store.projects.filter { it.trashed == null }
+                val busyIds = setOfNotNull(running?.id, Session.pausedId.takeIf { paused != com.fleetinggleam.android.core.Pause.None })
+                val openId = store.activeId
+                /** 点"清除"：用着它的项目在分析就不该点到（按钮已灰）；开着就先问；否则直接清。 */
+                fun guarded(name: String, uses: (String) -> Boolean, clear: () -> Unit) {
+                    val open = live.firstOrNull { it.id == openId && it.folders.any(uses) }
+                    if (open != null) confirmMirror = Triple(name, open.name, clear) else clear()
+                }
                 if (!nasUsage.isNullOrEmpty() || safUsage.isNotEmpty()) SettingRow(t("android.settings.mirrors"), t("android.settings.mirrorsDesc"), below = {
                     Column {
                         nasUsage.orEmpty().forEach { u ->
-                            MirrorLine(t("android.settings.mirrorNas", "name" to u.name.ifEmpty { u.id }), u.bytes, mirrorBusy == u.id) {
-                                scope.launch {
-                                    mirrorBusy = u.id
-                                    runCatching { Core.call("nas_mirror_clear", args("id" to u.id)); Settings.bumpCacheRev() }
-                                    loadMirrors(); mirrorBusy = null
+                            val name = t("android.settings.mirrorNas", "name" to u.name.ifEmpty { u.id })
+                            val uses = { d: String -> d.contains("/nas/${u.id}/") || d.endsWith("/nas/${u.id}") }
+                            val inUse = live.any { it.id in busyIds && it.folders.any(uses) }
+                            MirrorLine(name, u.bytes, mirrorBusy == u.id || inUse) {
+                                guarded(name, uses) {
+                                    scope.launch {
+                                        mirrorBusy = u.id
+                                        runCatching { Core.call("nas_mirror_clear", args("id" to u.id)); Settings.bumpCacheRev() }
+                                        loadMirrors(); mirrorBusy = null
+                                    }
                                 }
                             }
                         }
                         safUsage.forEach { (m, bytes) ->
-                            MirrorLine(t("android.settings.mirrorSaf", "name" to m.name), bytes, mirrorBusy == m.id) {
-                                scope.launch {
-                                    mirrorBusy = m.id
-                                    withContext(Dispatchers.IO) { runCatching { Media.clearMirror(ctx, m.id) } }
-                                    Settings.bumpCacheRev()
-                                    loadMirrors(); mirrorBusy = null
+                            val name = t("android.settings.mirrorSaf", "name" to m.name)
+                            val root = Media.mirrorDir(ctx, m.id).absolutePath
+                            val uses = { d: String -> d == root || d.startsWith("$root/") }
+                            val inUse = live.any { it.id in busyIds && it.folders.any(uses) }
+                            MirrorLine(name, bytes, mirrorBusy == m.id || inUse) {
+                                guarded(name, uses) {
+                                    scope.launch {
+                                        mirrorBusy = m.id
+                                        withContext(Dispatchers.IO) { runCatching { Media.clearMirror(ctx, m.id) } }
+                                        Settings.bumpCacheRev()
+                                        loadMirrors(); mirrorBusy = null
+                                    }
                                 }
                             }
                         }
@@ -492,6 +519,14 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
         }
     }
     }
+    }
+
+    // ---- 清掉开着的项目正在用的镜像：先问（审查第 57 条）
+    confirmMirror?.let { (name, project, clear) ->
+        FgDialog(true, { confirmMirror = null }, t("android.settings.mirrorClearTitle", "name" to name), footer = {
+            FgButton(t("organize.cancel"), { confirmMirror = null })
+            FgButton(t("settings.clear"), { confirmMirror = null; clear() }, on = true)
+        }) { Text(t("android.settings.mirrorClearBody", "project" to project), style = Type.body.copy(color = c.ink)) }
     }
 
     // ---- 重置已学习的偏好：和删除风格同样的确认框
