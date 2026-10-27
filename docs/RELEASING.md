@@ -103,6 +103,14 @@ apps/android/gradlew -p apps/android assembleRelease
 `FG_KEYSTORE`、`FG_KEYSTORE_PASSWORD`、`FG_KEY_ALIAS`、`FG_KEY_PASSWORD`；没配就用调试密钥签（能装，但不能覆盖正式签名的包）。
 构建前置条件见 [apps/android/README.md](../apps/android/README.md)。
 
+发布时把这个 APK 上传到同一个 GitHub Release，**文件名固定为 `FleetingGleam-android.apk`**（不带版本号）：落地页的"下载安卓版"直接指向
+`releases/latest/download/FleetingGleam-android.apk`，名字不对按钮就是 404。
+
+```bash
+cp apps/android/app/build/outputs/apk/release/app-release.apk FleetingGleam-android.apk
+gh release upload v<版本号> FleetingGleam-android.apk
+```
+
 ## 部署落地页
 
 落地页（`apps/web`）构建时会预渲染成静态 HTML，由 Cloudflare 以“静态资源”的方式托管，没有服务端代码。配置在 [`apps/web/wrangler.jsonc`](../apps/web/wrangler.jsonc)。静态资源的请求在 Cloudflare 上免费且不限量。

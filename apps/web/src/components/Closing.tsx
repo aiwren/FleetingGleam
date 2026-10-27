@@ -31,6 +31,8 @@ export default function Closing({ lang }: { lang: Lang }) {
               <>
                 <div className="mt-9 flex flex-wrap items-center gap-3">
                   <a href={release.download} className="inline-flex min-h-12 items-center whitespace-nowrap rounded-full bg-white px-6 py-3 font-medium text-black transition-transform duration-150 active:translate-y-px">{c.final.download}</a>
+                  {/* 安卓直接下载 APK（Release 里固定的文件名），不用再到 Release 页里找 */}
+                  <a href={release.android} className="inline-flex min-h-12 items-center whitespace-nowrap rounded-full bg-white px-6 py-3 font-medium text-black transition-transform duration-150 active:translate-y-px">{c.final.downloadAndroid}</a>
                   <a href={release.repo} className="inline-flex min-h-12 items-center whitespace-nowrap rounded-full border border-white/30 bg-black/35 px-6 py-3 font-medium backdrop-blur-md">{c.final.source}</a>
                 </div>
                 <p className="mt-5 max-w-lg text-sm text-white/70">{c.final.req}</p>
