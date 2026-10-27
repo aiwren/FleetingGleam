@@ -169,6 +169,8 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const stages = useRef(new Map<string, StageInfo>());
   /** 边分析边判：引擎隔一会儿发来的判定（分析完换成正式的 decisions）。 */
   const live = useRef(new Map<string, Decision>());
+  /** 这次分析开始时的覆盖表：引擎边分析边判只认它（见 `liveArgs`）。 */
+  const scanOverrides = useRef<Record<string, State>>({});
   const lastStage = useRef<{ path: string; stage: string } | null>(null);
   const startedAt = useRef(0);
   const raf = useRef(0);
@@ -252,6 +254,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     try {
       // 边分析边判用和分析完一样的参数
       const liveArgs = quiet ? null : { keep_ratio: proj.keepCap ?? 1, pick_mode: proj.pickMode ?? "diverse", one_per_group: proj.onePerGroup ?? false, overrides: proj.overrides ?? {} };
+      if (!quiet) scanOverrides.current = proj.overrides ?? {};
       const res = await invoke<Photo[]>("scan_project", { key: proj.id, dirs: proj.folders, compute: "auto", quality: currentTier(), style: proj.style, learn: getSettings().learn && proj.learn !== false, quiet, force, eyeMethod: eyeMethodNow(), live: liveArgs });
       if (!quiet) { running.current = null; setRunningId(null); }
       const cover = [...res].sort((a, b) => b.score - a.score).slice(0, 4).map((p) => p.thumb);
@@ -436,6 +439,9 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const liveDecisions = useMemo(() => {
     if (phase !== "scanning") return new Map<string, Decision>();
     const m = new Map(live.current);
+    // 分析前就有、分析中交还了系统建议的（审查第 54 条）：引擎还按开始时的覆盖表判它是"手动"，系统自己的建议要等分析完才有，
+    // 这期间先不盖章，分析完换成正式判定
+    for (const path of Object.keys(scanOverrides.current)) if (!overrides.has(path) && m.get(path)?.manual) m.delete(path);
     overrides.forEach((st, path) => {
       if (!results.current.has(path)) return;
       const cur = m.get(path);
