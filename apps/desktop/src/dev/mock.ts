@@ -400,7 +400,7 @@ w.__TAURI_INTERNALS__ = {
         return prefsInfo();
       }
       // 网络代理（proxy.rs）：系统的写死一个，手填的记在 localStorage；认不出来的照 proxy.rs 的错误码
-      case "proxy_info": return { system: "http://127.0.0.1:7890", manual: localStorage.getItem("fg.mock.proxy"), active: localStorage.getItem("fg.mock.proxy") ?? "http://127.0.0.1:7890" };
+      case "proxy_info": return { system: "http://127.0.0.1:7890", manual: localStorage.getItem("fg.mock.proxy"), active: localStorage.getItem("fg.mock.proxy") ?? "http://127.0.0.1:7890", exceptions: ["*.local", "169.254/16"], exclude_simple: true };
       case "proxy_set": {
         const raw = String(args.manual ?? "").trim();
         if (!raw) localStorage.removeItem("fg.mock.proxy");

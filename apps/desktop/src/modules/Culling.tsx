@@ -719,13 +719,13 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
       })
       .catch(() => { /* not analysed yet, or not in Tauri */ });
   }, [photos]);
-  /** 改判一批照片：`changes` 里每张各自的新状态（null = 交还系统建议）；`fromUndo` 时不进撤销栈。 */
-  const mark = useCallback((changes: { path: string; state: State | null }[], fromUndo = false) => {
+  /** 改判一批照片：`changes` 里每张各自的新状态（null = 交还系统建议）；`fromUndo` 时不进撤销栈。返回是不是真改了。 */
+  const mark = useCallback((changes: { path: string; state: State | null }[], fromUndo = false): boolean => {
     // only photos of the project in view: a stale key press or undo must not write another project's path into this one
     // （分析中是已经出结果的那些）
     const scanningNow = phase === "scanning";
     const list = changes.filter((c) => (scanningNow ? results.current.has(c.path) : byPath.has(c.path)));
-    if (!project || list.length === 0) return;
+    if (!project || list.length === 0) return false;
     const next = { ...project.overrides };
     const undo = list.map((c) => ({ path: c.path, prev: project.overrides[c.path] }));
     for (const c of list) { if (c.state === null) delete next[c.path]; else next[c.path] = c.state; }
@@ -742,6 +742,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
       if (undoStack.current.length > 50) undoStack.current.shift();
       bumpHint(1);
     }
+    return true;
   }, [project, photos, byPath, phase]);
   /** 把一张或一批照片标成 `st`。 */
   const decide = useCallback((target: string | string[], st: State | null) => {
@@ -786,9 +787,11 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
       return n.size > 1 ? n : NONE;
     });
   }, [mode, sceneFilter, personFilter, hits]);
+  // 一条撤销可能一张都落不下（分析失败、没出结果的照片）：不算一次，接着弹下一条，而不是按一下什么都没发生（审查第 60 条）
   const undoLast = useCallback(() => {
-    const e = undoStack.current.pop();
-    if (e) mark(e.map((x) => ({ path: x.path, state: x.prev ?? null })), true);
+    for (let e = undoStack.current.pop(); e; e = undoStack.current.pop()) {
+      if (mark(e.map((x) => ({ path: x.path, state: x.prev ?? null })), true)) return;
+    }
   }, [mark]);
   const move = useCallback((d: number, extend = false) => {
     if (!pickable.length) return;

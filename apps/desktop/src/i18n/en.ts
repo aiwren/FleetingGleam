@@ -245,6 +245,7 @@ const en = {
     cache: "Thumbnail cache", cacheDesc: "After clearing, every project is analysed again the next time it is opened.",
     proxy: "Network proxy", proxySystem: "Following the system: {{url}}", proxyDirect: "Direct (no HTTPS proxy set in the system)", proxyManual: "Manual: {{url}}", proxyEdit: "Set…",
     proxyHow: "Model downloads and cloud backup go through this proxy. Leave it empty to follow the system setting; a change of the system proxy takes effect the next time the app opens. HTTP proxies only.", proxyField: "Proxy address", proxyHint: "e.g. 127.0.0.1:7890", proxyUseSystem: "Follow the system", proxySave: "Save",
+    proxyBypass: "The system skips the proxy for: {{list}}. FleetingGleam can't bypass it per address yet, so these go through the proxy too; if backup storage on your local network can't be reached, allow it in your proxy app.", proxySimple: "simple host names",
     proxyBad: { port: "Add the port, e.g. 127.0.0.1:7890", host: "That address can't be read, e.g. 127.0.0.1:7890", unsupported: "HTTP proxies only; {{scheme}} won't work" },
     clear: "Clear cache", cleared: "Cleared",
     privacy: "Privacy", privacyBody: "Photos are processed on this computer only. Nothing is uploaded.",

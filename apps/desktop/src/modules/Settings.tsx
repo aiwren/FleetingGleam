@@ -110,7 +110,7 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
 
   const bytes = (b: number) => fmtBytes(i18n.language, b);
   // 网络代理：系统的（启动时读）和手填的（优先）；下载模型、云备份走它
-  type ProxyInfo = { system: string | null; manual: string | null; active: string | null };
+  type ProxyInfo = { system: string | null; manual: string | null; active: string | null; exceptions?: string[]; exclude_simple?: boolean };
   const [proxy, setProxy] = useState<ProxyInfo | null>(null);
   const [proxyOpen, setProxyOpen] = useState(false);
   const [proxyText, setProxyText] = useState("");
@@ -123,7 +123,10 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
     try { setProxy(await invoke<ProxyInfo>("proxy_set", { manual })); setProxyOpen(false); }
     catch (e) { const [code, scheme] = String(e).split(":"); setProxyErr(t(`settings.proxyBad.${code}`, { scheme, defaultValue: String(e) })); }
   };
-  const proxyDesc = !proxy ? "" : proxy.manual ? t("settings.proxyManual", { url: proxy.manual }) : proxy.system ? t("settings.proxySystem", { url: proxy.system }) : t("settings.proxyDirect");
+  // 系统设置了"不使用代理的主机"：惊鸿暂时做不到按地址直连（核心只收一个全局代理），说一声，局域网的备份存储连不上时知道为什么
+  const bypass = proxy && !proxy.manual && proxy.system ? [...(proxy.exceptions ?? []), ...(proxy.exclude_simple ? [t("settings.proxySimple")] : [])] : [];
+  const proxyDesc = !proxy ? "" : (proxy.manual ? t("settings.proxyManual", { url: proxy.manual }) : proxy.system ? t("settings.proxySystem", { url: proxy.system }) : t("settings.proxyDirect"))
+    + (bypass.length ? ` ${t("settings.proxyBypass", { list: bypass.join(i18n.language.startsWith("zh") ? "、" : ", ") })}` : "");
   // NAS 副本：每台 NAS 的照片在本机镜像里占多少（不算在缩略图缓存里），可以按 NAS 清掉；分析结果保留
   type MirrorUsage = { id: string; name: string; bytes: number };
   const [mirrors, setMirrors] = useState<MirrorUsage[]>([]);
