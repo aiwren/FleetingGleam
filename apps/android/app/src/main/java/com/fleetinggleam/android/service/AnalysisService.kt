@@ -27,7 +27,10 @@ import kotlinx.coroutines.launch
  */
 class AnalysisService : Service() {
     private var off: (() -> Unit)? = null
-    /** 分析期间不让 CPU 睡下去：熄屏后前台服务还在，可 CPU 一睡分析就停了。最多拿 6 小时，分析结束就放。 */
+    /**
+     * 分析期间不让 CPU 睡下去：熄屏后前台服务还在，可 CPU 一睡分析就停了。最多拿 6 小时，分析结束就放；
+     * 太热 / 电量低暂停期间也放掉（没东西要算，低电时攥着反而更耗电），接着分析时再拿（审查第 49 条）。
+     */
     private var wake: android.os.PowerManager.WakeLock? = null
     private var name = ""
     private var lastShown = 0L
@@ -49,10 +52,7 @@ class AnalysisService : Service() {
         val type = if (Build.VERSION.SDK_INT >= 35) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING else ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
         // 直接调系统的 startForeground：androidx 的 ServiceCompat 不认识 API 35 新加的 mediaProcessing，会把它屏蔽成"无类型"，系统随即拒绝
         startForeground(ID, build(Progress()), type)
-        if (wake == null) wake = getSystemService(android.os.PowerManager::class.java).newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "fleetinggleam:analysis").apply {
-            setReferenceCounted(false)
-            acquire(6 * 60 * 60 * 1000L)
-        }
+        holdWake(Session.paused.value == Pause.None)
         off?.invoke()
         off = Core.listen("scan-progress") { raw ->
             val p = runCatching { Fg.json.decodeFromString<Progress>(raw) }.getOrNull() ?: return@listen
@@ -64,8 +64,16 @@ class AnalysisService : Service() {
         }
         // 太热 / 电量低停下时服务留着：通知改成"已暂停（n/N）"，接着分析时换回进度
         pauseJob?.cancel()
-        pauseJob = scope.launch { Session.paused.collect { nm.notify(ID, build(Session.progress.value)) } }
+        pauseJob = scope.launch { Session.paused.collect { holdWake(it == Pause.None); nm.notify(ID, build(Session.progress.value)) } }
         return START_NOT_STICKY
+    }
+
+    /** 拿着或放掉 wake lock（重复拿、重复放都没事）。 */
+    private fun holdWake(on: Boolean) {
+        if (on) {
+            val w = wake ?: getSystemService(android.os.PowerManager::class.java).newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "fleetinggleam:analysis").apply { setReferenceCounted(false) }.also { wake = it }
+            if (!w.isHeld) w.acquire(6 * 60 * 60 * 1000L)
+        } else wake?.let { if (it.isHeld) it.release() }
     }
 
     private fun build(p: Progress): Notification {
