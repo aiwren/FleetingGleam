@@ -5,7 +5,7 @@
 | 什么时候 | 跑什么 | 结果 |
 |---|---|---|
 | 每次推送到 `main`、每个 Pull Request | [`ci.yml`](../.github/workflows/ci.yml) | 只做检查：落地页类型检查与构建；桌面前端构建、`cargo check`、`cargo test`（含 Android 绑定 crate 在宿主上的测试）；Android 目标的 `cargo check` 与 Gradle `assembleRelease`。不发布任何东西 |
-| 推送形如 `v0.1.0` 的**版本标签** | [`release.yml`](../.github/workflows/release.yml) | 在 macOS 上构建安装包，创建一个**草稿** GitHub Release，把 `.dmg` 传上去 |
+| 推送形如 `v0.1.0` 的**版本标签** | [`release.yml`](../.github/workflows/release.yml) | 在 macOS 上构建 `.dmg`、在 Linux 上构建正式签名的安卓 `.apk`，创建一个**草稿** GitHub Release，两个都传上去。也能在 Actions 页手动运行，那样只编安卓包检查签名，不碰 Release |
 
 **发布是由标签触发的，不是由某个“发布分支”触发的。** 日常提交到 `main` 不会打包；只有你主动打一个版本标签才会。这是开源项目里最常见的做法：标签就是版本的唯一标记，Release 页面上的每个版本都能对应到一个确切的提交。
 
@@ -93,7 +93,24 @@ sh scripts/release.sh
 
 ## Android 安装包
 
-目前 Android 包在本地构建（CI 只确认它能编出来，不发布）：
+**打版本标签时由发布工作流自动编**：`release.yml` 的 `android` 任务在 GitHub 上交叉编译、用正式密钥签名，`android-upload` 等 Mac 任务建好草稿 Release 后，把它以固定文件名 **`FleetingGleam-android.apk`** 放进去。落地页的"下载安卓版"直接指向 `releases/latest/download/FleetingGleam-android.apk`，名字不对按钮就是 404。
+
+### 一次性配置：把正式签名密钥存进仓库 Secrets
+
+必须用和本机同一把密钥（证书 SHA-256 以 `0d258392c804` 开头），手机上已装的正式版才能直接覆盖升级。在**你自己的终端**里跑下面这段（从本机的密钥库和 `~/.gradle/gradle.properties` 读，屏幕上不显示任何值）：
+
+```bash
+P=~/.gradle/gradle.properties; R=lcopilot/FleetingGleam
+base64 -i "$(grep -E '^FG_KEYSTORE=' $P | cut -d= -f2-)" | tr -d '\n' | gh secret set FG_KEYSTORE_BASE64 --repo $R
+for n in FG_KEYSTORE_PASSWORD FG_KEY_ALIAS FG_KEY_PASSWORD; do grep -E "^$n=" $P | head -1 | cut -d= -f2- | tr -d '\r\n' | gh secret set $n --repo $R; done
+gh secret list --repo $R
+```
+
+配好后在 Actions 页手动运行一次 Release 工作流（或 `gh workflow run release.yml --ref main`）：它只编安卓包、作为工作流产物留 7 天，不碰任何 Release；日志里"核对签名并改名"一步会打出证书指纹，和上面的对得上就说明配置对了。缺任何一项 Secret 时安卓任务直接失败，不会把调试密钥签的包放进 Release。
+
+注意：有仓库写权限的人改了工作流就能用这把密钥签名，不要随便给别人写权限。
+
+### 在本机编
 
 ```bash
 apps/android/gradlew -p apps/android assembleRelease
@@ -101,14 +118,11 @@ apps/android/gradlew -p apps/android assembleRelease
 
 产物在 `apps/android/app/build/outputs/apk/release/`。正式签名的密钥库放在仓库外，路径与密码写在 `~/.gradle/gradle.properties` 的
 `FG_KEYSTORE`、`FG_KEYSTORE_PASSWORD`、`FG_KEY_ALIAS`、`FG_KEY_PASSWORD`；没配就用调试密钥签（能装，但不能覆盖正式签名的包）。
-构建前置条件见 [apps/android/README.md](../apps/android/README.md)。
-
-发布时把这个 APK 上传到同一个 GitHub Release，**文件名固定为 `FleetingGleam-android.apk`**（不带版本号）：落地页的"下载安卓版"直接指向
-`releases/latest/download/FleetingGleam-android.apk`，名字不对按钮就是 404。
+构建前置条件见 [apps/android/README.md](../apps/android/README.md)。要手动放进 Release 时同样用固定文件名：
 
 ```bash
 cp apps/android/app/build/outputs/apk/release/app-release.apk FleetingGleam-android.apk
-gh release upload v<版本号> FleetingGleam-android.apk
+gh release upload v<版本号> FleetingGleam-android.apk --clobber
 ```
 
 ## 部署落地页

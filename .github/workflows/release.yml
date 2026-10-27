@@ -1,10 +1,12 @@
-# 发布：只在推送形如 v0.1.0 的版本标签时运行，构建 macOS 安装包并创建 GitHub Release（草稿）。
+# 发布：只在推送形如 v0.1.0 的版本标签时运行，构建 macOS 安装包与安卓安装包，放进同一个 GitHub Release（草稿）。
 # 日常提交不会触发它。发布步骤见 docs/RELEASING.md。
+# 也可以在 Actions 页手动运行（workflow_dispatch）：那样只编安卓包、用正式密钥签名，作为工作流产物留下，不碰任何 Release，用来检查签名配置。
 name: Release
 
 on:
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+  workflow_dispatch:
 
 # 创建 Release、上传安装包需要写权限，仅此工作流使用
 permissions:
@@ -20,6 +22,8 @@ jobs:
         include:
           - { runner: macos-15, target: aarch64-apple-darwin, label: Apple Silicon }
     runs-on: ${{ matrix.runner }}
+    # 手动运行只为检查安卓签名，不编 Mac 包
+    if: github.event_name == 'push'
     # macOS runner 按 10 倍计费；一次正常构建约 15 分钟，挂死的任务不该烧满默认的 6 小时
     timeout-minutes: 60
     steps:
@@ -115,7 +119,9 @@ jobs:
                xattr -cr /Applications/FleetingGleam.app
                ```
 
-            照片只在本机处理；应用只会联网下载模型文件。 / Your photos stay on your Mac; the app only goes online to download model files.
+            **安卓 / Android**：下载 `FleetingGleam-android.apk`，在手机上打开安装。需要 Android 12 及以上的 64 位 ARM 手机；安装时按提示允许浏览器安装应用。 / Download `FleetingGleam-android.apk` and open it on the phone. Needs Android 12 or later on a 64-bit ARM phone; allow your browser to install apps when asked.
+
+            照片只在你自己的设备上处理；应用只为下载模型、连接你自己设置的 NAS 或备份才联网。 / Your photos stay on your own devices; the app only goes online to download models and to reach a NAS or backup you set up yourself.
 
             更新内容 / What's new: [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)
           # 先作为草稿，维护者检查安装包后再手动发布
@@ -123,3 +129,91 @@ jobs:
           # 没有自动更新功能：不生成 .app.tar.gz 与 latest.json，Release 里只有 .dmg，用户不会下错
           includeUpdaterJson: false
           prerelease: ${{ contains(github.ref_name, '-') }}
+
+  # 安卓：和 CI 一样交叉编译核心库、Gradle 出 release 包，但用正式密钥签名（密钥在仓库的 Secrets 里，见 docs/RELEASING.md），
+  # 这样它能覆盖安装手机上已有的正式版。和 Mac 包并行编；打标签时由下面的 android-upload 放进 Release。
+  android:
+    name: Android
+    runs-on: ubuntu-latest
+    # 核心库按 release（LTO）交叉编译，再 R8 压缩，冷缓存要二三十分钟
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # versionCode 是提交数：浅克隆数不对，Gradle 会拒绝构建
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: .
+          key: android
+      - name: 安装 cargo-ndk
+        run: cargo install cargo-ndk --locked
+      - name: 选 NDK
+        run: echo "ANDROID_NDK_HOME=${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}" >> "$GITHUB_ENV"
+
+      # 正式签名：密钥库以 base64 存在 Secret 里，还原到临时目录；路径与密码用 ORG_GRADLE_PROJECT_* 交给 Gradle（等同 -P，见 app/build.gradle.kts）。
+      # 没配齐就直接失败：用调试密钥签出来的包装不上已有的正式版，不能放进 Release。
+      - name: 还原签名密钥
+        env:
+          FG_KEYSTORE_BASE64: ${{ secrets.FG_KEYSTORE_BASE64 }}
+          FG_KEYSTORE_PASSWORD: ${{ secrets.FG_KEYSTORE_PASSWORD }}
+          FG_KEY_ALIAS: ${{ secrets.FG_KEY_ALIAS }}
+          FG_KEY_PASSWORD: ${{ secrets.FG_KEY_PASSWORD }}
+        run: |
+          for name in FG_KEYSTORE_BASE64 FG_KEYSTORE_PASSWORD FG_KEY_ALIAS FG_KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::仓库 Secrets 里缺 $name：安卓包没法用正式密钥签名。配置方法见 docs/RELEASING.md 的“Android 安装包”。"
+              exit 1
+            fi
+          done
+          ks="$RUNNER_TEMP/release.jks"
+          printf '%s' "$FG_KEYSTORE_BASE64" | base64 -d > "$ks"
+          {
+            echo "ORG_GRADLE_PROJECT_FG_KEYSTORE=$ks"
+            echo "ORG_GRADLE_PROJECT_FG_KEYSTORE_PASSWORD=$FG_KEYSTORE_PASSWORD"
+            echo "ORG_GRADLE_PROJECT_FG_KEY_ALIAS=$FG_KEY_ALIAS"
+            echo "ORG_GRADLE_PROJECT_FG_KEY_PASSWORD=$FG_KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+
+      - name: Gradle 编译（正式签名）
+        run: apps/android/gradlew -p apps/android assembleRelease --no-daemon --stacktrace
+
+      # 确认真的是正式密钥签的（不是调试密钥），把证书指纹打在日志里，和本机那份对得上才算数
+      - name: 核对签名并改名
+        run: |
+          apk=apps/android/app/build/outputs/apk/release/app-release.apk
+          signer="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)/apksigner"
+          certs=$("$signer" verify --print-certs "$apk")
+          echo "$certs" | grep -E "Signer #1 certificate (DN|SHA-256)"
+          if echo "$certs" | grep -q "CN=Android Debug"; then
+            echo "::error::安装包是调试密钥签的，没有用上正式密钥。"
+            exit 1
+          fi
+          cp "$apk" FleetingGleam-android.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FleetingGleam-android
+          path: FleetingGleam-android.apk
+          retention-days: 7
+
+  # 打标签时：等 Mac 任务建好草稿 Release，再把安卓包以固定文件名放进去（落地页的“下载安卓版”指向 releases/latest/download/FleetingGleam-android.apk）
+  android-upload:
+    name: 安卓包放进 Release
+    needs: [macos, android]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: FleetingGleam-android
+      - name: 上传
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" FleetingGleam-android.apk --clobber --repo "$GITHUB_REPOSITORY"
