@@ -35,13 +35,16 @@ const setGate = (g: Gate | null) => { gate = g; notify(); };
 export const packInstalled = (id: PackId) => !!packs.find((p) => p.id === id)?.installed;
 
 /**
- * 核心同时只下一个包：已经有一个在问 / 在下时，后来的先等它结束（转到后台的那个叫回前台，让人知道在等什么），再问自己的。
+ * 核心同时只下一个包，所以"问 + 下载"整体排成一条 Promise 链：后来的等前面那个答完（下完、取消或选了标准模型）再问自己的，
+ * 排着的每一个都拿到自己的回答（审查第 47 条：以前两个以上排队时，后一个覆盖前一个的对话框，前一个永远等不到结果）。
+ * 排队时前面那个要是转在后台，叫回前台，让人知道在等什么。
  */
-async function idle() {
-  while (gate) {
-    if (gate.hidden) setGate({ ...gate, hidden: false });
-    await new Promise<void>((r) => { const un = subscribe(() => { if (!gate) { un(); r(); } }); });
-  }
+let queue: Promise<unknown> = Promise.resolve();
+function serial<T>(job: () => Promise<T>): Promise<T> {
+  if (gate?.hidden) setGate({ ...gate, hidden: false });
+  const run = queue.then(job, job);
+  queue = run.catch(() => undefined);
+  return run;
 }
 
 /** 眼下还缺哪些包（先刷新一次已装列表）；不在应用里（拿不到列表）时当作都不缺。 */
@@ -59,17 +62,17 @@ export async function ensurePack(id: PackId, offerStandard = false): Promise<Ans
  * Several packs under one question: the person is told the whole size once and agrees once. What is already here is left out; answers "ready"
  * when nothing is missing.
  * 先算缺哪些：都在就马上返回，不管别处是不是正在下别的包（审查第 46 条：后台下搜索模型时，分析要的模型都在也被卡住）；
- * 真要下载才等前一个下完，等完再算一遍（前一个可能正好把它装上了）。
+ * 真要下载才排进队里等前一个答完，轮到时再算一遍（前一个可能正好把它装上了）。
  */
 export async function ensurePacks(ids: PackId[], offerStandard = false): Promise<Answer> {
   if (!(await missingOf(ids)).length) return "ready";
-  await idle();
-  const missing = await missingOf(ids);
-  if (!missing.length) return "ready";
-  return ask(missing, offerStandard);
+  return serial(async () => {
+    const missing = await missingOf(ids);
+    return missing.length ? ask(missing, offerStandard) : "ready";
+  });
 }
 
-/** 问一句（大小写清楚）再下载；只在没有别的询问 / 下载时调用。 */
+/** 问一句（大小写清楚）再下载；回答在下完 / 取消时才给。只在队里调用，同一时间只有一个。 */
 async function ask(missing: PackId[], offerStandard: boolean): Promise<Answer> {
   const big = (id: PackId) => id === "high" || id === "ultra";
   if (missing.length === 1) {
