@@ -227,7 +227,7 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, re
                 val p = shown[page]
                 val isOrigin = page == start
                 ZoomPage(
-                    p, active = page == pager.currentPage, resident = page == pager.currentPage || page == pager.settledPage,
+                    p, active = page == pager.currentPage, resident = page == pager.currentPage || page == pager.settledPage, settled = !pager.isScrollInProgress,
                     clip = if (page == pager.currentPage) clip else null, clipRun = playing, quiet = quiet, onClipEnd = { clip = null },
                     onZoomed = { if (page == pager.currentPage) zoomed = it },
                     onTap = { chrome = !chrome },
@@ -326,7 +326,7 @@ private fun fitRect(ratio: Float, w: Float, h: Float): androidx.compose.ui.geome
  * 一页：照片按比例放在中间，可以缩放、平移。缩放画的是照片本身（不是放大一张位图），清晰的部分到了再叠上去。
  */
 @Composable
-private fun ZoomPage(p: Photo, active: Boolean, resident: Boolean, clip: String?, clipRun: Int, quiet: Boolean, onClipEnd: () -> Unit, onZoomed: (Boolean) -> Unit, onTap: () -> Unit, modifier: Modifier) {
+private fun ZoomPage(p: Photo, active: Boolean, resident: Boolean, settled: Boolean, clip: String?, clipRun: Int, quiet: Boolean, onClipEnd: () -> Unit, onZoomed: (Boolean) -> Unit, onTap: () -> Unit, modifier: Modifier) {
     val ctx = LocalContext.current
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
@@ -335,13 +335,18 @@ private fun ZoomPage(p: Photo, active: Boolean, resident: Boolean, clip: String?
     val pan = remember(p.thumb) { Animatable(Offset.Zero, Offset.VectorConverter) }
     // 大图解码的最长边：屏幕长边 × 2（再细由下面的清晰块接手），封顶 4096。一张 4096² 就是 64 MB，以前左右两页也各解一张
     val decodeMax = remember { ctx.resources.displayMetrics.let { min(4096, max(it.widthPixels, it.heightPixels) * 2) } }
-    // 大图只给眼前这一页（翻页途中还看得到的上一页也留着）；左右预备的那两页先只放缩略图，翻到了再解
-    var large by remember(p.thumb) { mutableStateOf(if (active) Large.ready(p.path, true) else null) }
+    // 全尺寸只给眼前这一页（翻页途中还看得到的上一页也留着）；左右预备的那两页按一半尺寸先解好，翻过来时不再从缩略图糊着开始，
+    // 来回翻也不用每次重解（审查第 55 条）。不在眼前的那页等翻页停稳了才放掉全尺寸，翻到一半又翻回来时它还在
+    var large by remember(p.thumb) { mutableStateOf(Large.ready(p.path, true)) }
+    var full by remember(p.thumb) { mutableStateOf(active) }
     var sharp by remember(p.thumb) { mutableStateOf(false) }
+    // 当过相邻页（翻过来的）：全尺寸解出来之前先垫着一半尺寸的；一打开就在眼前的那张不垫，省一次解码
+    val wasNeighbour = remember(p.thumb) { !active }
     var detail by remember(p.thumb) { mutableStateOf<Pair<String, androidx.compose.ui.geometry.Rect>?>(null) }
-    LaunchedEffect(p.thumb, active, resident) {
-        if (!resident) { large = null; sharp = false; detail = null; return@LaunchedEffect }
-        if (large == null && active) large = Large.get(p.path, full = true) ?: Large.get(p.path)
+    LaunchedEffect(p.thumb, resident, settled) {
+        if (resident) full = true
+        else if (settled) { full = false; sharp = false; detail = null }
+        if (large == null) large = Large.get(p.path, full = true) ?: Large.get(p.path)
     }
     // 只在跨过 1 倍时告诉外面（以前每帧回调一次，外面的状态跟着每帧变）
     LaunchedEffect(zoom, active) { if (active) snapshotFlow { zoom.value > 1.01f }.distinctUntilChanged().collect { onZoomed(it) } }
@@ -432,8 +437,15 @@ private fun ZoomPage(p: Photo, active: Boolean, resident: Boolean, clip: String?
             AsyncImage(File(p.thumb), null, Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
             large?.let { src ->
                 // 不进 Coil 的内存缓存：几十 MB 一张，进去就把墙上那些 480 px 的缩略图挤出去，退回墙上又得重解
-                val req = remember(src) { ImageRequest.Builder(ctx).data(File(src)).size(decodeMax, decodeMax).memoryCachePolicy(coil3.request.CachePolicy.DISABLED).build() }
-                AsyncImage(req, p.name, Modifier.fillMaxSize().graphicsLayer { alpha = if (sharp) 1f else 0f }, contentScale = ContentScale.FillBounds, onSuccess = { sharp = true })
+                if (!full || (wasNeighbour && !sharp)) {
+                    var halfReady by remember(src) { mutableStateOf(false) }
+                    val half = remember(src) { ImageRequest.Builder(ctx).data(File(src)).size(decodeMax / 2, decodeMax / 2).memoryCachePolicy(coil3.request.CachePolicy.DISABLED).build() }
+                    AsyncImage(half, if (full) null else p.name, Modifier.fillMaxSize().graphicsLayer { alpha = if (halfReady) 1f else 0f }, contentScale = ContentScale.FillBounds, onSuccess = { halfReady = true })
+                }
+                if (full) {
+                    val req = remember(src) { ImageRequest.Builder(ctx).data(File(src)).size(decodeMax, decodeMax).memoryCachePolicy(coil3.request.CachePolicy.DISABLED).build() }
+                    AsyncImage(req, p.name, Modifier.fillMaxSize().graphicsLayer { alpha = if (sharp) 1f else 0f }, contentScale = ContentScale.FillBounds, onSuccess = { sharp = true })
+                }
             }
             detail?.let { (src, g) ->
                 AsyncImage(File(src), null, contentScale = ContentScale.FillBounds,
