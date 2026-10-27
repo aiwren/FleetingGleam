@@ -1,5 +1,6 @@
 package com.fleetinggleam.android.ui.project
 
+import androidx.compose.ui.semantics.selected
 import android.graphics.RenderEffect
 import android.graphics.Shader
 import androidx.compose.animation.core.Animatable
@@ -422,6 +423,9 @@ fun Star(filled: Boolean, size: Dp = 20.dp, color: Color = Color.White, glow: Bo
     }
 }
 
+/** 读屏用的说法（无障碍）：文件名 + 判定，"IMG_0001.HEIC，保留"；还没判就只有文件名。 */
+fun photoLabel(name: String, state: String?): String = if (state.isNullOrEmpty()) name else t("android.a11y.photo", "name" to name, "state" to t("state.$state"))
+
 // ---------------------------------------------------------------- 照片的入场：对焦
 
 /** 墙上缩略图统一的解码边长（像素）：和格子大小无关，这样换档、换布局都复用同一份位图；640px 的缩略图解到 480 够 2 列的格子用。 */
@@ -562,6 +566,8 @@ fun Tile(
             .clip(shape)
             .background(c.surface)
             .then(if (kept) Modifier.border(1.dp, c.gleam.copy(alpha = 0.55f), shape) else Modifier)
+            // 读屏：文件名 + 判定（审查第二批：格子以前什么都不说）
+            .semantics { contentDescription = photoLabel(photo?.name ?: path.substringAfterLast('/'), state); if (selected) this.selected = true }
             // 单击就进大图（作者 2026-10-26）；不再注册双击，否则 Compose 要等双击超时才认单击，点下去会迟 300ms
             .combinedClickable(interactionSource = src, indication = null, enabled = interactive, onClick = { onSelect(path) }, onLongClick = { onSelect(path); onOpen(path) }),
     ) {

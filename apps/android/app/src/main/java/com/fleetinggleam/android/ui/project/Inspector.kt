@@ -1,5 +1,9 @@
 package com.fleetinggleam.android.ui.project
 
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import com.fleetinggleam.android.core.Session
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
@@ -171,7 +175,8 @@ private fun Mates(photo: Photo, mates: List<Photo>, onSelect: (String) -> Unit) 
         Row(Modifier.padding(top = 8.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             mates.forEach { g ->
                 val cur = g.path == photo.path
-                Box(Modifier.size(56.dp).clip(RoundedCornerShape(6.dp)).border(2.dp, if (cur) c.ink else Color.Transparent, RoundedCornerShape(6.dp)).clickable { onSelect(g.path) }) {
+                Box(Modifier.size(56.dp).clip(RoundedCornerShape(6.dp)).border(2.dp, if (cur) c.ink else Color.Transparent, RoundedCornerShape(6.dp))
+                    .semantics { contentDescription = photoLabel(g.name, Session.decisions.value[g.path]?.state); selected = cur }.clickable { onSelect(g.path) }) {
                     AsyncImage(File(g.thumb), null, Modifier.size(56.dp).graphicsLayer { alpha = if (cur) 1f else 0.6f }, contentScale = ContentScale.Crop)
                     if (g.groupBest) Box(Modifier.align(Alignment.TopEnd).padding(4.dp).size(7.dp).clip(CircleShape).background(c.gleam))
                 }

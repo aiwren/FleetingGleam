@@ -1,5 +1,8 @@
 package com.fleetinggleam.android.ui.project
 
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -165,6 +168,7 @@ private fun SwipeDecide(p: Photo, d: Decision?, onDecide: (String) -> Unit, onOp
                 .shadow(10.dp, RoundedCornerShape(10.dp), ambientColor = Color.Black, spotColor = Color.Black)
                 .clip(RoundedCornerShape(10.dp))
                 .border(if (kept) 1.dp else 0.dp, if (kept) c.gleam.copy(alpha = 0.6f) else Color.Transparent, RoundedCornerShape(10.dp))
+                .semantics { contentDescription = photoLabel(p.name, d?.state) }
                 .clickable { onOpen() }
                 .pointerInput(p.path) {
                     detectVerticalDragGestures(
@@ -183,7 +187,7 @@ private fun SwipeDecide(p: Photo, d: Decision?, onDecide: (String) -> Unit, onOp
             AsyncImage(File(p.thumb), null, Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
             large?.let { src ->
                 val req = remember(src) { ImageRequest.Builder(ctx).data(File(src)).size(2560, 2560).build() }
-                AsyncImage(req, p.name, Modifier.fillMaxSize().graphicsLayer { alpha = if (sharp) 1f else 0f }, contentScale = ContentScale.FillBounds, onSuccess = { sharp = true })
+                AsyncImage(req, null, Modifier.fillMaxSize().graphicsLayer { alpha = if (sharp) 1f else 0f }, contentScale = ContentScale.FillBounds, onSuccess = { sharp = true })
             }
             PhotoTags(p, Modifier.align(Alignment.TopStart).padding(8.dp))
             if (kept) Box(Modifier.align(Alignment.TopEnd).padding(9.dp)) { Star(true, 20.dp) }
@@ -212,6 +216,7 @@ fun Filmstrip(shown: List<Photo>, decisions: Map<String, Decision>, index: Int, 
             Box(
                 Modifier.size(56.dp).graphicsLayer { alpha = if (cur) 1f else if (st == "reject") 0.4f else 0.6f }
                     .clip(RoundedCornerShape(6.dp)).border(if (cur) 2.dp else 0.dp, if (cur) (ring ?: c.ink) else Color.Transparent, RoundedCornerShape(6.dp))
+                    .semantics { contentDescription = photoLabel(p.name, st); selected = cur }
                     .clickable { onPick(p.path) },
             ) {
                 AsyncImage(File(p.thumb), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)

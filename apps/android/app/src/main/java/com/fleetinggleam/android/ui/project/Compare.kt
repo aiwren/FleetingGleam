@@ -1,5 +1,8 @@
 package com.fleetinggleam.android.ui.project
 
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -204,6 +207,7 @@ fun CompareView(photos: List<Photo>, all: List<Photo>, scopeProp: String, cull: 
                 Box(
                     Modifier.size(40.dp).clip(RoundedCornerShape(6.dp))
                         .border(if (at >= 0) 2.dp else 0.dp, if (at >= 0) c.ink else Color.Transparent, RoundedCornerShape(6.dp))
+                        .semantics { contentDescription = photoLabel(p.name, decisions[p.path]?.state); selected = at >= 0 }
                         .clickable(enabled = at < 0) { slots = slots.toMutableList().also { if (it.isNotEmpty()) it[it.size - 1] = p.path } },
                 ) {
                     AsyncImage(File(p.thumb), null, Modifier.fillMaxSize().graphicsLayer { alpha = if (at >= 0) 1f else 0.55f }, contentScale = ContentScale.Crop)
@@ -272,6 +276,7 @@ private fun Cell(
                 .clip(shape)
                 .border(if (st == "keep") 1.5.dp else 0.dp, if (st == "keep") c.gleam else Color.Transparent, shape)
                 .background(c.surface)
+                .semantics { contentDescription = photoLabel(p.name, st) }
                 .pointerInput(p.path) {
                     detectTapGestures(onDoubleTap = { at ->
                         if (view().s > 1.02f) reset()

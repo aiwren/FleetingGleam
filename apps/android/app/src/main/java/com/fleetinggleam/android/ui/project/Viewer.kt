@@ -226,7 +226,7 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, re
                 val p = shown[page]
                 val isOrigin = page == start
                 ZoomPage(
-                    p, active = page == pager.currentPage, resident = page == pager.currentPage || page == pager.settledPage, settled = !pager.isScrollInProgress,
+                    p, label = photoLabel(p.name, decisions[p.path]?.state), active = page == pager.currentPage, resident = page == pager.currentPage || page == pager.settledPage, settled = !pager.isScrollInProgress,
                     clip = if (page == pager.currentPage) clip else null, clipRun = playing, quiet = quiet, onClipEnd = { clip = null },
                     onZoomed = { if (page == pager.currentPage) zoomed = it },
                     onTap = { chrome = !chrome },
@@ -325,7 +325,7 @@ private fun fitRect(ratio: Float, w: Float, h: Float): androidx.compose.ui.geome
  * 一页：照片按比例放在中间，可以缩放、平移。缩放画的是照片本身（不是放大一张位图），清晰的部分到了再叠上去。
  */
 @Composable
-private fun ZoomPage(p: Photo, active: Boolean, resident: Boolean, settled: Boolean, clip: String?, clipRun: Int, quiet: Boolean, onClipEnd: () -> Unit, onZoomed: (Boolean) -> Unit, onTap: () -> Unit, modifier: Modifier) {
+private fun ZoomPage(p: Photo, label: String, active: Boolean, resident: Boolean, settled: Boolean, clip: String?, clipRun: Int, quiet: Boolean, onClipEnd: () -> Unit, onZoomed: (Boolean) -> Unit, onTap: () -> Unit, modifier: Modifier) {
     val ctx = LocalContext.current
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
@@ -396,6 +396,8 @@ private fun ZoomPage(p: Photo, active: Boolean, resident: Boolean, settled: Bool
         Box(
             Modifier.size(with(density) { fit.width.toDp() }, with(density) { fit.height.toDp() })
                 .graphicsLayer { scaleX = zoom.value; scaleY = zoom.value; translationX = pan.value.x; translationY = pan.value.y }
+                // 读屏：文件名 + 判定（审查第二批）
+                .semantics { contentDescription = label }
                 .pointerInput(p.path) {
                     detectTapGestures(
                         onTap = { onTap() },
@@ -439,11 +441,11 @@ private fun ZoomPage(p: Photo, active: Boolean, resident: Boolean, settled: Bool
                 if (!full || (wasNeighbour && !sharp)) {
                     var halfReady by remember(src) { mutableStateOf(false) }
                     val half = remember(src) { ImageRequest.Builder(ctx).data(File(src)).size(decodeMax / 2, decodeMax / 2).memoryCachePolicy(coil3.request.CachePolicy.DISABLED).build() }
-                    AsyncImage(half, if (full) null else p.name, Modifier.fillMaxSize().graphicsLayer { alpha = if (halfReady) 1f else 0f }, contentScale = ContentScale.FillBounds, onSuccess = { halfReady = true })
+                    AsyncImage(half, null, Modifier.fillMaxSize().graphicsLayer { alpha = if (halfReady) 1f else 0f }, contentScale = ContentScale.FillBounds, onSuccess = { halfReady = true })
                 }
                 if (full) {
                     val req = remember(src) { ImageRequest.Builder(ctx).data(File(src)).size(decodeMax, decodeMax).memoryCachePolicy(coil3.request.CachePolicy.DISABLED).build() }
-                    AsyncImage(req, p.name, Modifier.fillMaxSize().graphicsLayer { alpha = if (sharp) 1f else 0f }, contentScale = ContentScale.FillBounds, onSuccess = { sharp = true })
+                    AsyncImage(req, null, Modifier.fillMaxSize().graphicsLayer { alpha = if (sharp) 1f else 0f }, contentScale = ContentScale.FillBounds, onSuccess = { sharp = true })
                 }
             }
             detail?.let { (src, g) ->
