@@ -34,7 +34,8 @@ type Props = {
   /** `range` = Shift 点击（成段多选），`toggle` = ⌘ 点击（加进 / 拿出多选）。 */
   onSelect: (path: string, how?: "range" | "toggle") => void;
   onOpen: (path: string) => void;
-  onDecide: (path: string, s: State | null) => void;
+  /** 点了格子上的按钮：`s` 是按钮的状态，`clear` = 这张已经手动标成它了（单张时再点一次是交还系统建议；多选时不用它）。 */
+  onDecide: (path: string, s: State, clear: boolean) => void;
 };
 
 /** The app's own mark: the four-point gleam from the logo. Filled = keep, outline = maybe. */
@@ -145,12 +146,12 @@ function Tile({ path, ratio, photo, stage, state, reveal, dim, box, manual, grou
           <span className="dock" onClick={stop} onDoubleClick={stop} onPointerMove={stop}>
             <button className={`dk keep ${state === "keep" ? "on" : ""}`} aria-label={t("mark.keepAct")} aria-pressed={state === "keep"}
               data-tip={`${state === "keep" && manual ? t("mark.clear") : t("mark.keepAct")} · P`}
-              onClick={() => onDecide(path, state === "keep" && manual ? null : "keep")}>
+              onClick={() => onDecide(path, "keep", state === "keep" && manual)}>
               <Star filled size={18} />
             </button>
             <button className={`dk reject ${state === "reject" ? "on" : ""}`} aria-label={t("mark.rejectAct")} aria-pressed={state === "reject"}
               data-tip={`${state === "reject" && manual ? t("mark.clear") : t("mark.rejectAct")} · X`}
-              onClick={() => onDecide(path, state === "reject" && manual ? null : "reject")}>
+              onClick={() => onDecide(path, "reject", state === "reject" && manual)}>
               <Cross />
             </button>
           </span>

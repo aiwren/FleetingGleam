@@ -761,11 +761,25 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const decideSel = useCallback((st: State | null) => { const s = selection(); if (s.length) decide(s, st); }, [selection, decide]);
   const decideRef = useRef(decide);
   decideRef.current = decide;
-  // 格子上的按钮：点的是多选里的一张就整批改
-  const tileDecide = useCallback((path: string, st: State | null) => {
+  const selectionRef = useRef(selection);
+  selectionRef.current = selection;
+  // 格子上的按钮（审查第 53 条）：点的是多选里的一张就改眼下选着的那批（selection()，被筛掉的不算），整批统一设成按钮的状态，
+  // 不做"再点清除"——不然点在一张手动标过的格子上会把整批手动判定清掉。单张时照旧：再点自己的标记 = 交还系统建议
+  const tileDecide = useCallback((path: string, st: State, clear: boolean) => {
     const m = multiRef.current;
-    decideRef.current(m.size > 1 && m.has(path) ? [...m] : path, st);
+    if (m.size > 1 && m.has(path)) { const s = selectionRef.current(); if (s.length) decideRef.current(s, st); return; }
+    decideRef.current(path, clear ? null : st);
   }, []);
+  // 切筛选（状态、场景、人物、搜索）时：多选里不在墙上的拿掉，Shift 的起点复位到焦点那张（不然 rangeTo 找不到起点，只选得中一张）
+  useEffect(() => {
+    anchor.current = null;
+    setMulti((m) => {
+      if (m.size <= 1) return m;
+      const vis = new Set(pickRef.current.map((p) => p.path));
+      const n = new Set([...m].filter((p) => vis.has(p)));
+      return n.size > 1 ? n : NONE;
+    });
+  }, [mode, sceneFilter, personFilter, hits]);
   const undoLast = useCallback(() => {
     const e = undoStack.current.pop();
     if (e) mark(e.map((x) => ({ path: x.path, state: x.prev ?? null })), true);
