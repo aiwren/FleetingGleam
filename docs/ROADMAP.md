@@ -11,7 +11,7 @@
 **正在进行：NAS 改为应用内直连的纯 Rust SMB 客户端（替换 NetFS 方案）。**
 - 原因：作者要求 Mac 与 Android 共用一份实现，系统挂载只有 Mac 有。
 - 已做：`smb2 = "0.34"`（纯 Rust，MIT/Apache，SMB 2/3 签名加密、NTLM/Kerberos、列共享 / 列目录 / stat / 流式读 / 重命名 / 删除）已加入 `apps/desktop/src-tauri/Cargo.toml`；试探程序 `src-tauri/examples/smbspike.rs` 已编译，由作者在自己终端里带密码运行：
-  `FG_NAS_HOST=192.168.1.9 FG_NAS_USER=me FG_NAS_PASSWORD='…' cargo run --example smbspike`（作者的 NAS；密码不进仓库、不进对话）。
+  `FG_NAS_HOST=192.168.1.9 FG_NAS_USER=me FG_NAS_PASSWORD='…' cargo run --example smbspike`（地址、用户名换成你自己的 NAS；密码只在自己的终端里输入，不进仓库、不进对话）。
 - 下一步：试探通过后，做 `Source` 接口（本地文件夹 / SMB 共享：列目录、读文件、重命名、建目录、删除），NAS 项目的原图通过客户端流式拉到本地缓存再分析，整理操作经客户端在共享上执行；凭据 Mac 存钥匙串、Android 存 Keystore；然后**删掉** `vision/fg-mount.swift`、`nas.rs` 里的挂载 / 卸载部分与设置页对系统挂载的依赖，只留一条路径。
 - 账号与网页端的区别：这台 NAS 钥匙串里只有 5005 端口 http 的密码，SMB 的要单独存（若仍走钥匙串）。
 
