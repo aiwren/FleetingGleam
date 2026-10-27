@@ -350,27 +350,32 @@ object Session {
      * 要下的是大模型时询问框里可以"先用标准模型"。另一个项目还在分析时先问一句。
      * `sample`：示例照片——用不必下载或最小的那档，不记下档位，询问框里说明为什么要下载。
      */
-    fun startScan(sample: Boolean = false, force: Boolean = false) {
-        val project = current() ?: return
-        val run = running.value
-        if (run != null && run.id != project.id) { conflict.value = run; return }
+    fun startScan(sample: Boolean = false, force: Boolean = false, resume: Boolean = false) {
+        val project = current()
+        val busy = running.value
+        if (project == null || (busy != null && busy.id != project.id)) {
+            if (resume) endResume() else if (project != null) conflict.value = busy
+            return
+        }
         val tok = token
         val demo = sample || Samples.isSample(app, project)
-        scope.launch {
-            val extras = setOf(PackIds.DETECT, PackIds.EYES, PackIds.FACES)
-            var tier = if (demo) Strategy.sampleTier() else Strategy.predictTier()
-            val alt = if (tier != "fast") Strategy.analysisPacks("fast") else null
-            var answer = Models.ensurePacks(Strategy.analysisPacks(tier), optional = extras, fallback = alt, note = if (demo) "android.models.sampleNote" else null)
-            if (answer == Answer.Fallback) {
-                tier = "fast"
-                answer = Models.ensurePacks(Strategy.analysisPacks(tier), optional = extras, note = if (demo) "android.models.sampleNote" else null)
-            }
-            if (answer == Answer.Cancelled) return@launch
-            if (!demo) Strategy.settle(tier)
-            if (tok != token) return@launch
-            paused.value = Pause.None; pausedProject = null
-            runScan(project, files.value.size, quiet = false, tok = tok, tier = tier, force = force)
+        scope.launch { try { startScanNow(project, demo, tok, force) } finally { if (resume) endResume() } }
+    }
+
+    private suspend fun startScanNow(project: Project, demo: Boolean, tok: Int, force: Boolean) {
+        val extras = setOf(PackIds.DETECT, PackIds.EYES, PackIds.FACES)
+        var tier = if (demo) Strategy.sampleTier() else Strategy.predictTier()
+        val alt = if (tier != "fast") Strategy.analysisPacks("fast") else null
+        var answer = Models.ensurePacks(Strategy.analysisPacks(tier), optional = extras, fallback = alt, note = if (demo) "android.models.sampleNote" else null)
+        if (answer == Answer.Fallback) {
+            tier = "fast"
+            answer = Models.ensurePacks(Strategy.analysisPacks(tier), optional = extras, note = if (demo) "android.models.sampleNote" else null)
         }
+        if (answer == Answer.Cancelled) return
+        if (!demo) Strategy.settle(tier)
+        if (tok != token) return
+        paused.value = Pause.None; pausedProject = null
+        runScan(project, files.value.size, quiet = false, tok = tok, tier = tier, force = force)
     }
 
     /**
@@ -415,18 +420,34 @@ object Session {
         val p = pausedProject
         val force = pausedForce
         pausedProject = null; pausedForce = false
-        // 留着的前台服务：接着分析时还用它；没接上（项目没了、下载被取消、页面换了）就撤掉，别一直挂着"已暂停"
-        scope.launch { delay(30_000); if (running.value == null && paused.value == Pause.None) Scans.stopped() }
-        if (p == null) return
-        val project = Projects.store.value.projects.firstOrNull { it.id == p.id && it.trashed == null } ?: return
-        if (current()?.id == project.id) { if (phase.value == Phase.Ready || (force && phase.value == Phase.Done)) startScan(force = force); return }
+        // 留着的前台服务：接着分析时还用它；没接上（项目没了、下载被取消、页面换了）就撤掉，别一直挂着"已暂停"。
+        // 接续还在路上（读文件夹、NAS 慢、等下载确认）时不撤：撤了之后应用在后台，前台服务就再也起不来（审查第 50 条）；接续结束时 endResume 收尾
+        resuming = true
+        scope.launch { delay(30_000); if (!resuming && running.value == null && paused.value == Pause.None) Scans.stopped() }
+        if (p == null) { endResume(); return }
+        val project = Projects.store.value.projects.firstOrNull { it.id == p.id && it.trashed == null } ?: run { endResume(); return }
+        if (current()?.id == project.id) {
+            if (phase.value == Phase.Ready || (force && phase.value == Phase.Done)) startScan(force = force, resume = true) else endResume()
+            return
+        }
         // 那个项目已经不在眼前：在后台接着分析（先把文件列表拿回来，回到它时照片墙要用）
         scope.launch {
-            val probe = runCatching { Core.get<Probe>("probe_folder", args("dirs" to project.folders, "compute" to "auto", "quality" to Strategy.currentTier())) }.getOrNull() ?: return@launch
-            if (running.value != null) return@launch
-            runningFiles = probe.files
-            runScan(project, probe.files.size, quiet = false, tok = token, attach = false, force = force)
+            try {
+                val probe = runCatching { Core.get<Probe>("probe_folder", args("dirs" to project.folders, "compute" to "auto", "quality" to Strategy.currentTier())) }.getOrNull() ?: return@launch
+                if (running.value != null) return@launch
+                runningFiles = probe.files
+                runScan(project, probe.files.size, quiet = false, tok = token, attach = false, force = force)
+            } finally { endResume() }
         }
+    }
+
+    /** 暂停后的接续正在路上（从好转到真的发起分析之间）：这期间不撤留着的前台服务。 */
+    @Volatile private var resuming = false
+
+    /** 接续结束（发起过分析、又停下了，或者没接上）：没在分析也没在等着接着分析，就撤掉留着的前台服务。 */
+    private fun endResume() {
+        resuming = false
+        if (running.value == null && paused.value == Pause.None) Scans.stopped()
     }
 
     /** 用现在学到的喜好重新给这个项目打分（只读缓存、重新分组取舍，不重新分析），做完说一声。 */
