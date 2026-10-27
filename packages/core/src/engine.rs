@@ -1546,9 +1546,11 @@ impl Engine {
     /// Copies the given photos into `dest`. Originals are never touched and nothing is overwritten.
     /// `dest` 落在某台 NAS 的镜像里（文件夹选择器选 NAS 上的文件夹时给的就是镜像路径）：直接上传到 NAS 上那个文件夹。
     ///
-    /// 目标里已有同名、同大小、同修改时间的视为导出过，计入 `skipped`（复制时把修改时间设成原图的，再导出一次就全是这种）。
-    /// 开始前看空间，不够就 `space:` 错误、一张都不复制。每张先写到旁边的 `.名字.part`，写完才改名，失败就删掉它：目标里永远没有半张照片；
-    /// 失败的和原因进 `failed`，中途磁盘满了后面的都不再试。`export_cancel` 让它做完当前这张就停（`cancelled`）。
+    /// 目标里已有同名（或重名时加了序号的 `名字 (n).扩展名`）、同大小、同修改时间的视为导出过，计入 `skipped`（复制时把修改时间设成原图的，
+    /// 再导出一次就全是这种）；修改时间没设上的（有的文件系统不让设）同大小时再比一遍内容。
+    /// 开始前看空间，不够就 `space:` 错误、一张都不复制。每张先写到旁边的 `.名字.fgpart.扩展名`，写完才改名，失败就删掉它：目标里永远没有半张照片；
+    /// 临时名保留图片扩展名，是因为 Android 11 起 `Pictures/` 这类公共目录只许建图片 / 视频类型的文件，`.part` 会被拒。
+    /// 失败的和原因（带目标路径；磁盘满时是目标卷的可用空间）进 `failed`，中途磁盘满了后面的都不再试。`export_cancel` 让它做完当前这张就停（`cancelled`）。
     pub fn export_photos(self: &Arc<Self>, paths: &[String], dest: &str) -> Result<ExportResult, String> {
         self.export_stop.store(false, Ordering::Relaxed);
         let shares = nas::load(&self.paths.data);
@@ -1563,11 +1565,12 @@ impl Engine {
         let total = paths.len();
         let mut skipped = 0usize;
         let mut todo: Vec<(&str, u64)> = Vec::new();
+        let there = exported_index(&dest_dir);
         for p in paths {
             let src = Path::new(p);
             match std::fs::metadata(src) {
                 Ok(m) if m.is_file() && analyze::is_image(src) => {
-                    if same_file_at(&dest_dir, src, &m) {
+                    if same_file_at(&there, src, &m) {
                         skipped += 1;
                     } else {
                         todo.push((p, m.len()));
@@ -1577,7 +1580,7 @@ impl Engine {
             }
         }
         crate::errors::check_space(&dest_dir, todo.iter().map(|(_, n)| n).sum())?;
-        let (mut copied, mut failed, mut cancelled) = (0usize, Vec::new(), false);
+        let (mut copied, mut failed, mut cancelled, mut untimed) = (0usize, Vec::new(), false, 0usize);
         self.emit("export-progress", &Progress { done: skipped, total });
         for (i, &(p, size)) in todo.iter().enumerate() {
             if self.export_stop.load(Ordering::Relaxed) {
@@ -1585,7 +1588,10 @@ impl Engine {
                 break;
             }
             match copy_into(Path::new(p), &dest_dir, size) {
-                Ok(()) => copied += 1,
+                Ok(timed) => {
+                    copied += 1;
+                    untimed += usize::from(!timed);
+                }
                 Err(e) => {
                     let full = e.starts_with("space:");
                     failed.push(ExportFailure { path: p.to_string(), error: e.clone() });
@@ -1597,6 +1603,9 @@ impl Engine {
                 }
             }
             self.emit("export-progress", &Progress { done: skipped + i + 1, total });
+        }
+        if untimed > 0 {
+            crate::platform::log(&format!("导出到 {dest}：{untimed} 张没能设上原图的修改时间（下次导出时按内容认）"));
         }
         Ok(ExportResult { copied, skipped, dest: dest.to_string(), remote: false, failed, cancelled })
     }
@@ -2435,27 +2444,113 @@ NAS：
     }
 }
 
-/// `dir` 里已有和 `src` 同名、同大小、同修改时间（秒）的文件：导出过了。
-fn same_file_at(dir: &Path, src: &Path, m: &std::fs::Metadata) -> bool {
-    let secs = |t: std::io::Result<std::time::SystemTime>| t.ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs());
-    let Some(name) = src.file_name() else { return false };
-    std::fs::metadata(dir.join(name)).map_or(false, |d| d.is_file() && d.len() == m.len() && secs(d.modified()).is_some() && secs(d.modified()) == secs(m.modified()))
+/// `名字 (n).扩展名` → `名字.扩展名`（`unique_path` 重名时加的序号）；不是这个样子的给 None。
+fn without_number(name: &str) -> Option<String> {
+    let p = Path::new(name);
+    let stem = p.file_stem()?.to_str()?;
+    let base = stem.strip_suffix(')')?;
+    let (base, n) = base.rsplit_once(" (")?;
+    if base.is_empty() || n.is_empty() || !n.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    Some(match p.extension().and_then(|e| e.to_str()) {
+        Some(ext) => format!("{base}.{ext}"),
+        None => base.to_string(),
+    })
 }
 
-/// 把一张照片复制进 `dir`：先写到 `.名字.part`，修改时间设成原图的（下次导出认得出），再改成不重名的正式名字。失败就删掉 `.part`。
-fn copy_into(src: &Path, dir: &Path, size: u64) -> Result<(), String> {
-    let name = src.file_name().unwrap_or_default();
-    let tmp = dir.join(format!(".{}.part", name.to_string_lossy()));
-    let r = (|| -> std::io::Result<()> {
-        std::fs::copy(src, &tmp)?;
-        let modified = std::fs::metadata(src)?.modified()?;
-        std::fs::OpenOptions::new().write(true).open(&tmp)?.set_modified(modified)?;
-        std::fs::rename(&tmp, unique_path(dir, name))
-    })();
-    r.map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        crate::errors::io(&e, src, size)
+/// 导出目标里已有的文件，按"它可能是哪个名字的副本"分好：原名，加上去掉序号后的名字（`a (2).jpg` 也算在 `a.jpg` 名下）。
+/// 隐藏文件（含导出时的临时文件）不算。
+fn exported_index(dir: &Path) -> HashMap<String, Vec<PathBuf>> {
+    let mut out: HashMap<String, Vec<PathBuf>> = HashMap::new();
+    let Ok(rd) = std::fs::read_dir(dir) else { return out };
+    for e in rd.filter_map(Result::ok) {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') {
+            continue;
+        }
+        if let Some(base) = without_number(&name) {
+            out.entry(base).or_default().push(e.path());
+        }
+        out.entry(name).or_default().push(e.path());
+    }
+    out
+}
+
+/// 目标里已有 `src` 的副本：同名或同名加序号、同大小，修改时间（秒）一样；时间不一样（设不上时间的文件系统）就比内容。
+fn same_file_at(there: &HashMap<String, Vec<PathBuf>>, src: &Path, m: &std::fs::Metadata) -> bool {
+    let secs = |t: std::io::Result<std::time::SystemTime>| t.ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs());
+    let Some(name) = src.file_name() else { return false };
+    let Some(cands) = there.get(name.to_string_lossy().as_ref()) else { return false };
+    cands.iter().any(|c| {
+        std::fs::metadata(c).map_or(false, |d| {
+            d.is_file() && d.len() == m.len() && ((secs(d.modified()).is_some() && secs(d.modified()) == secs(m.modified())) || same_bytes(src, c))
+        })
     })
+}
+
+/// 两个文件内容一样（逐块比，遇到不同就停）。
+fn same_bytes(a: &Path, b: &Path) -> bool {
+    use std::io::Read;
+    fn fill(r: &mut impl Read, buf: &mut [u8]) -> std::io::Result<usize> {
+        let mut n = 0;
+        while n < buf.len() {
+            match r.read(&mut buf[n..])? {
+                0 => break,
+                k => n += k,
+            }
+        }
+        Ok(n)
+    }
+    let (Ok(mut fa), Ok(mut fb)) = (std::fs::File::open(a), std::fs::File::open(b)) else { return false };
+    let (mut ba, mut bb) = (vec![0u8; 1 << 18], vec![0u8; 1 << 18]);
+    loop {
+        match (fill(&mut fa, &mut ba), fill(&mut fb, &mut bb)) {
+            (Ok(na), Ok(nb)) if na == nb && ba[..na] == bb[..nb] => {
+                if na == 0 {
+                    return true;
+                }
+            }
+            _ => return false,
+        }
+    }
+}
+
+/// 导出时的临时名：`.名字.fgpart.扩展名`。保留图片扩展名：Android 11 起 `Pictures/` 这类公共目录只许建图片 / 视频类型的文件。
+fn export_temp_name(name: &std::ffi::OsStr) -> String {
+    let p = Path::new(name);
+    let stem = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    match p.extension() {
+        Some(ext) => format!(".{stem}.fgpart.{}", ext.to_string_lossy()),
+        None => format!(".{stem}.fgpart"),
+    }
+}
+
+/// 把一张照片复制进 `dir`：先写到 `.名字.fgpart.扩展名`，修改时间设成原图的（下次导出认得出），再改成不重名的正式名字。失败就删掉临时文件。
+/// 设修改时间失败只降级（有的文件系统不让设；下次导出按内容认），返回 `false`。错误里是目标路径（读不了原图时是原图路径），
+/// 磁盘满时 `space:` 带的是目标卷的可用空间。
+fn copy_into(src: &Path, dir: &Path, size: u64) -> Result<bool, String> {
+    let name = src.file_name().unwrap_or_default();
+    let tmp = dir.join(export_temp_name(name));
+    let target = dir.join(name);
+    let r = (|| -> Result<bool, String> {
+        std::fs::copy(src, &tmp).map_err(|e| {
+            // 原图打不开是读的问题，说原图；否则是写的问题，说目标
+            if std::fs::File::open(src).is_err() { crate::errors::io(&e, src, size) } else { crate::errors::io(&e, &target, size) }
+        })?;
+        let timed = (|| -> std::io::Result<()> {
+            let modified = std::fs::metadata(src)?.modified()?;
+            std::fs::OpenOptions::new().write(true).open(&tmp)?.set_modified(modified)
+        })()
+        .is_ok();
+        let to = unique_path(dir, name);
+        std::fs::rename(&tmp, &to).map_err(|e| crate::errors::io(&e, &to, size))?;
+        Ok(timed)
+    })();
+    if r.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    r
 }
 
 /// 没有系统解码器时的局部：`image` crate 解出摆正的原图，裁出那一块，宽不超过 `out_w`。
@@ -2682,6 +2777,65 @@ mod tests {
         assert!(r.failed[0].error.starts_with("denied:"), "{}", r.failed[0].error);
         let left: Vec<String> = std::fs::read_dir(&out2).unwrap().map(|x| x.unwrap().file_name().to_string_lossy().into_owned()).collect();
         assert_eq!(left, vec!["p2.jpg"], "没有半截的 .part");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 导出的临时名保留图片扩展名（Android 的公共目录只许建图片类型的文件）；`名字 (n).扩展名` 认作同一张的副本。
+    #[test]
+    fn export_names_keep_the_picture_extension_and_numbered_copies_count() {
+        use std::ffi::OsStr;
+        assert_eq!(export_temp_name(OsStr::new("IMG_1.HEIC")), ".IMG_1.fgpart.HEIC");
+        assert_eq!(export_temp_name(OsStr::new("a.b.jpg")), ".a.b.fgpart.jpg");
+        assert_eq!(export_temp_name(OsStr::new("惊鸿 照片.jpeg")), ".惊鸿 照片.fgpart.jpeg");
+        assert_eq!(export_temp_name(OsStr::new("noext")), ".noext.fgpart");
+        assert!(crate::analyze::is_image(Path::new(&export_temp_name(OsStr::new("x.jpg")))), "临时文件本身还是图片类型");
+        assert_eq!(without_number("a (2).jpg").as_deref(), Some("a.jpg"));
+        assert_eq!(without_number("旅行 (12).HEIC").as_deref(), Some("旅行.HEIC"));
+        assert_eq!(without_number("a (2) (3).jpg").as_deref(), Some("a (2).jpg"));
+        for n in ["a.jpg", "a (x).jpg", "(2).jpg", "a(2).jpg", "a ().jpg"] {
+            assert_eq!(without_number(n), None, "{n}");
+        }
+    }
+
+    /// 改了序号的副本认得出；修改时间没设上（有的文件系统不让设）时按内容认；同大小内容不同的照常复制；写不进去的错误说的是目标。
+    #[test]
+    fn exporting_recognises_numbered_and_untimed_copies() {
+        use std::os::unix::fs::PermissionsExt;
+        let (e, root, _) = engine("export-numbered");
+        let dir = root.join("photos");
+        photos(&dir, 2);
+        let p0 = dir.join("p0.jpg").to_string_lossy().into_owned();
+        let out = root.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        // 目标里先有一张不相干的同名照片：这次的副本成了 `p0 (2).jpg`
+        std::fs::write(out.join("p0.jpg"), b"someone else's picture").unwrap();
+        let r = e.export_photos(std::slice::from_ref(&p0), &out.to_string_lossy()).unwrap();
+        assert_eq!(r.copied, 1);
+        assert!(out.join("p0 (2).jpg").exists());
+        let r = e.export_photos(std::slice::from_ref(&p0), &out.to_string_lossy()).unwrap();
+        assert_eq!((r.copied, r.skipped), (0, 1), "带序号的副本认得出");
+        // 修改时间对不上、内容一样：也算导出过
+        std::fs::OpenOptions::new().write(true).open(out.join("p0 (2).jpg")).unwrap().set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000)).unwrap();
+        let r = e.export_photos(std::slice::from_ref(&p0), &out.to_string_lossy()).unwrap();
+        assert_eq!((r.copied, r.skipped), (0, 1), "按内容认");
+        // 同大小、时间不同、内容不同：是另一张，照常复制
+        let mut other = std::fs::read(&p0).unwrap();
+        let last = other.len() - 3;
+        other[last] ^= 0xFF;
+        std::fs::write(out.join("p0 (2).jpg"), &other).unwrap();
+        std::fs::OpenOptions::new().write(true).open(out.join("p0 (2).jpg")).unwrap().set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000)).unwrap();
+        let r = e.export_photos(std::slice::from_ref(&p0), &out.to_string_lossy()).unwrap();
+        assert_eq!(r.copied, 1);
+        assert!(out.join("p0 (3).jpg").exists());
+        // 目标写不进去：错误带目标路径，不是原图的
+        let locked = root.join("locked");
+        std::fs::create_dir_all(&locked).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let r = e.export_photos(std::slice::from_ref(&p0), &locked.to_string_lossy()).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(r.failed.len(), 1);
+        let err = &r.failed[0].error;
+        assert!(err.starts_with("denied:") && err.contains(&*locked.to_string_lossy()) && !err.contains(&*dir.to_string_lossy()), "{err}");
         let _ = std::fs::remove_dir_all(&root);
     }
 
