@@ -617,8 +617,9 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     return ends;
   }, [shown, sortBy]);
 
-  // 分析中按眼下的判定筛（"全部"是整个文件夹）。判定每帧都可能变，可筛出来的还是同一批文件时沿用上一份，墙就不重排
-  const scanRaw = phase !== "scanning" ? null : mode === "all" ? files : files.filter((f) => liveDecisions.get(f.path)?.state === mode);
+  // 分析中按眼下的判定筛（"全部"是整个文件夹）。判定每帧都可能变，可筛出来的还是同一批文件时沿用上一份，墙就不重排。
+  // 选中的那张和分析完一样留在墙上，直到选了别的：引擎实时改判把它筛掉时，查看器不会直接关掉（审查第 52 条）
+  const scanRaw = phase !== "scanning" ? null : mode === "all" ? files : files.filter((f) => liveDecisions.get(f.path)?.state === mode || f.path === selected);
   const scanRef = useRef<ProbeFile[]>([]);
   if (scanRaw && scanRef.current !== scanRaw && (scanRef.current.length !== scanRaw.length || scanRef.current.some((f, k) => f !== scanRaw[k]))) scanRef.current = scanRaw;
   const scanList = scanRaw ? scanRef.current : null;
