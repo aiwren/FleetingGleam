@@ -27,12 +27,15 @@ object Strategy {
         else -> listOf(PackIds.STANDARD)
     }
 
-    /** What the app would settle on: what is already on the phone decides first, then what the phone can run. */
+    /**
+     * 应用会定下哪一档：已经定下的；手机上已经有的高质量包；否则看手机跑不跑得动。
+     * "标准包已装"不算依据（审查第 51 条）：标准包多半是示例照片顺手下的（示例不记档位），拿它当依据，
+     * 高配手机以后就被定成标准模型、再也不问。
+     */
     suspend fun predictTier(): String {
         Settings.value.tier?.let { return it }
         Models.refresh()
         if (Models.installed(PackIds.HIGH) && !Models.installed(PackIds.STANDARD)) return "high"
-        if (Models.installed(PackIds.STANDARD) && !Models.installed(PackIds.HIGH)) return "fast"
         return if (capableOfHigh(machine())) "high" else "fast"
     }
 
