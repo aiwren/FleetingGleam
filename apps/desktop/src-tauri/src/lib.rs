@@ -15,13 +15,14 @@ mod bench;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use fg_core::analyze::Photo;
 use fg_core::engine::{self, BackupMeta, BackupStatus, Engine, ExportResult, FileInfo, Hit, Listing, Machine, Probe, ScanArgs, SceneReq, SearchStatus, TargetArgs, TrashResult};
 use fg_core::{decide, modelfiles, modelpacks, nas, prefs, taste};
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
 
 /// 引擎的事件原样交给 WebView（事件名和载荷就是前端监听的那些）。
 struct WebviewEvents(AppHandle);
@@ -560,6 +561,41 @@ fn diagnostics_dir(app: AppHandle) -> String {
     engine(&app).diagnostics_dir()
 }
 
+// ---------------------------------------------------------------- 退出前冲刷
+
+/// 前端把还在防抖里的 projects.json 写完了（或等太久不等了）：可以真的退出。
+static QUIT_READY: AtomicBool = AtomicBool::new(false);
+/// 已经请前端冲刷过一次（重复的 ⌘Q / 关窗不再重复发）。
+static QUIT_ASKED: AtomicBool = AtomicBool::new(false);
+
+/// 要退出（⌘Q、关掉最后一个窗口）时先拦下来，请前端把还没写盘的项目写完；前端没反应时 2 秒后照样退出。
+fn ask_flush(app: &AppHandle) {
+    if QUIT_ASKED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    if app.emit("flush-before-quit", ()).is_err() {
+        quit_now(app);
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        quit_now(&app);
+    });
+}
+
+fn quit_now(app: &AppHandle) {
+    if !QUIT_READY.swap(true, Ordering::SeqCst) {
+        app.exit(0);
+    }
+}
+
+/// 前端冲刷完了。
+#[tauri::command]
+fn quit_ready(app: AppHandle) {
+    quit_now(&app);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -587,9 +623,27 @@ pub fn run() {
         .on_menu_event(|app, event| {
             let _ = app.emit("menu", event.id().0.clone());
         })
-        .invoke_handler(tauri::generate_handler![forget_folders, probe_folder, scan_project, scan_cancel, decide_photos, projects_load, projects_save, projects_quarantine, taste_export, taste_import, nas_list, nas_add, nas_remove, nas_connect, nas_disconnect, nas_ensure, nas_browse, nas_probe, nas_update, nas_set_enabled, nas_mirror_usage, nas_mirror_clear, backup_status, backup_save_target, backup_remove_target, backup_set_options, backup_now, backup_restore, backup_peek, set_rotation, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, export_cancel, trash_photos, reveal, preview_thumbs, photo_info, large_preview, motion_clip, hdrview::hdr_overlay_supported, hdrview::hdr_overlay_show, hdrview::hdr_overlay_move, hdrview::hdr_overlay_hide, hdrview::hdr_overlay_detail, hdrview::hdr_overlay_detail_hide, photo_detail, machine_info, search_status, search_index, search_photos, scene_text, packs_status, pack_size, pack_download, pack_cancel, pack_remove, diagnostics_export, diagnostics_dir, proxy::proxy_info, proxy::proxy_set, samples::samples_folder])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        // 关窗（这个应用只有一个窗口，关掉就是退出）：先请前端把项目写完
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if !QUIT_READY.load(Ordering::SeqCst) {
+                    api.prevent_close();
+                    ask_flush(window.app_handle());
+                }
+            }
+        })
+        .invoke_handler(tauri::generate_handler![forget_folders, probe_folder, scan_project, scan_cancel, decide_photos, projects_load, projects_save, projects_quarantine, taste_export, taste_import, nas_list, nas_add, nas_remove, nas_connect, nas_disconnect, nas_ensure, nas_browse, nas_probe, nas_update, nas_set_enabled, nas_mirror_usage, nas_mirror_clear, backup_status, backup_save_target, backup_remove_target, backup_set_options, backup_now, backup_restore, backup_peek, set_rotation, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, export_cancel, trash_photos, reveal, preview_thumbs, photo_info, large_preview, motion_clip, hdrview::hdr_overlay_supported, hdrview::hdr_overlay_show, hdrview::hdr_overlay_move, hdrview::hdr_overlay_hide, hdrview::hdr_overlay_detail, hdrview::hdr_overlay_detail_hide, photo_detail, machine_info, search_status, search_index, search_photos, scene_text, packs_status, pack_size, pack_download, pack_cancel, pack_remove, diagnostics_export, diagnostics_dir, proxy::proxy_info, proxy::proxy_set, samples::samples_folder, quit_ready])
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // ⌘Q / 菜单里的退出：同样先冲刷
+            if let RunEvent::ExitRequested { api, .. } = event {
+                if !QUIT_READY.load(Ordering::SeqCst) {
+                    api.prevent_exit();
+                    ask_flush(app);
+                }
+            }
+        });
 }
 
 #[cfg(test)]

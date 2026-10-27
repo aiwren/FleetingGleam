@@ -125,13 +125,13 @@ async function load() {
 }
 
 /* Writes go one at a time: a change made while one is in flight is written once it is done, as the latest state. */
-let saving = false;
+let running: Promise<void> | null = null;
 let again = false;
-async function persist() {
+function persist(): Promise<void> {
   if (status.readOnly) {
     // the file could not be read at start-up; refusing to write keeps it from being replaced, and the person is told
     if (status.saveError !== status.loadError) { status = { ...status, saveError: status.loadError }; notify(); }
-    return;
+    return Promise.resolve();
   }
   if (!backend) {
     try {
@@ -140,27 +140,45 @@ async function persist() {
     } catch (e) {
       status = { ...status, saveError: String(e) }; notify();
     }
-    return;
+    return Promise.resolve();
   }
-  if (saving) { again = true; return; }
-  saving = true;
-  try {
-    do {
-      again = false;
-      await invoke("projects_save", { json: JSON.stringify(store) });
-    } while (again);
-    if (status.saveError) { status = { ...status, saveError: null }; notify(); }
-  } catch (e) {
-    // the state on screen is still right; the person is told, and the next change tries again
-    status = { ...status, saveError: String(e) }; notify();
-  } finally {
-    saving = false;
-  }
+  if (running) { again = true; return running; }
+  running = (async () => {
+    try {
+      do {
+        again = false;
+        await invoke("projects_save", { json: JSON.stringify(store) });
+      } while (again);
+      if (status.saveError) { status = { ...status, saveError: null }; notify(); }
+    } catch (e) {
+      // the state on screen is still right; the person is told, and the next change tries again
+      status = { ...status, saveError: String(e) }; notify();
+    } finally {
+      running = null;
+    }
+  })();
+  return running;
+}
+
+/**
+ * 写盘有 300 ms 的尾随防抖（审查第二批）：连着标记几十张只写最后一次，不再每点一下整份 projects.json 全量写一遍。
+ * 界面上的状态马上变（notify 不等写盘）；退出、关窗前由 `flushProjects` 冲刷掉还没写的那次。
+ */
+const SAVE_DELAY = 300;
+let timer: number | null = null;
+function schedule() {
+  if (timer !== null) window.clearTimeout(timer);
+  timer = window.setTimeout(() => { timer = null; void persist(); }, SAVE_DELAY);
+}
+/** 把还在防抖里的修改马上写下去，并等正在进行的那次写完。 */
+export function flushProjects(): Promise<void> {
+  if (timer !== null) { window.clearTimeout(timer); timer = null; return persist(); }
+  return running ?? Promise.resolve();
 }
 function commit(next: Store) {
   store = next;
   notify();
-  void persist();
+  schedule();
 }
 
 export const useProjects = () => useSyncExternalStore(subscribe, () => store);
