@@ -143,6 +143,14 @@ struct Entry {
 // 锁外写新底稿、改名、再删旧日志；中途断电，下次读时旧底稿 + 旧日志 + 新日志照样拼得回来。
 //
 // 锁里只决定要写什么（`save` 返回一个 `Pending`），序列化与写盘都在锁外由调用方 `write()`。
+//
+// 同一个数据目录可能有两个进程同时用（开发版和正式版共用目录、没有单实例保护）：两边各自追加、各自整理，日志就乱了。
+// 所以读之前先拿 `analysis-cache.lock` 的文件锁（flock，进程退出系统自动放掉），拿到的才写；拿不到（另一个进程开着）
+// 这个进程就只读：照常读出来用，分析结果不落盘（下次再分析），绝不碰对方的文件。文件系统不支持文件锁时照旧可写。
+//
+// 旧版本写的底稿没有 `seq`。降级用过旧版本再升级回来时，旧版本整份重写过底稿（它不认识日志），日志里却还是降级前的行：
+// 按 `seq` 0 重放会把旧版本之后的改动盖回去。所以读到没有 `seq` 的底稿就不认日志残迹（删掉），并立刻整理一次、写出带 `seq`
+// 的底稿；这次没写成就这个进程只读，免得新日志和没有 `seq` 的底稿混在一起、下次又被当成残迹丢掉。
 
 /// 日志长过这么多、而且超过底稿的一半，下一次存就顺带整理。
 const COMPACT_AT: u64 = 8 << 20;
@@ -160,6 +168,26 @@ struct Disk {
     retry: AtomicBool,
     /// 底稿多大（决定什么时候整理）。
     base: AtomicU64,
+    /// 拿不到文件锁（另一个进程在用这份缓存）或旧底稿没整理成：什么都不写。
+    read_only: bool,
+    /// 拿着的文件锁（`analysis-cache.lock`）：最后一个 `Pending` 写完、缓存也放掉时才放。
+    _lock: Option<std::fs::File>,
+}
+
+/// 拿这份缓存的写锁：`Some(文件)` 拿到了，`None` 别的进程拿着；文件系统不支持锁、锁文件建不了时当作拿到（和以前一样可写）。
+fn take_lock(path: &Path) -> Option<Option<std::fs::File>> {
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let Ok(f) = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(lock_path(path)) else { return Some(None) };
+    match f.try_lock() {
+        Ok(()) => Some(Some(f)),
+        Err(std::fs::TryLockError::WouldBlock) => None,
+        Err(std::fs::TryLockError::Error(e)) => {
+            crate::platform::log(&format!("{}: 文件锁不可用，照旧读写：{e}", lock_path(path).display()));
+            Some(None)
+        }
+    }
 }
 
 #[derive(Default)]
@@ -179,13 +207,13 @@ pub fn file_key(path: &Path) -> Option<(u64, i64)> {
     Some((m.len(), mtime))
 }
 
-/// 底稿读进来的样子；旧文件没有 `seq`。
+/// 底稿读进来的样子；旧版本写的没有 `seq`（None）。
 #[derive(Deserialize)]
 struct BaseIn {
     #[serde(default)]
     entries: HashMap<String, Entry>,
     #[serde(default)]
-    seq: u64,
+    seq: Option<u64>,
 }
 
 /// 日志的一行。
@@ -231,6 +259,10 @@ fn log_path(base: &Path) -> PathBuf {
 
 fn old_log_path(base: &Path) -> PathBuf {
     base.with_extension("log.old")
+}
+
+fn lock_path(base: &Path) -> PathBuf {
+    base.with_extension("lock")
 }
 
 /// 在锁里定好、锁外再写的一次落盘。什么都不用写时 `write` 什么也不做。
@@ -343,20 +375,47 @@ fn write_base(path: &Path, entries: &HashMap<String, Arc<Entry>>, seq: u64) -> b
 
 impl Cache {
     pub fn load(path: PathBuf) -> Self {
+        let lock = take_lock(&path);
+        let mut read_only = lock.is_none();
+        if read_only {
+            crate::platform::log(&format!("{}: 另一个惊鸿进程正在用这份分析缓存，这个进程只读（分析结果不落盘）", path.display()));
+        }
         let base: Option<BaseIn> = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok());
-        let base_len = std::fs::metadata(&path).map_or(0, |m| m.len());
-        let (entries, base_seq) = base.map(|b| (b.entries, b.seq)).unwrap_or_default();
+        let mut base_len = std::fs::metadata(&path).map_or(0, |m| m.len());
+        // 旧版本写的底稿（没有 `seq`）：日志是它之前的残迹，不认
+        let legacy = base.as_ref().map_or(false, |b| b.seq.is_none());
+        let (entries, base_seq) = base.map(|b| (b.entries, b.seq.unwrap_or(0))).unwrap_or_default();
         let mut c = Cache { entries: entries.into_iter().map(|(k, v)| (k, Arc::new(v))).collect(), seq: base_seq, ..Default::default() };
+        let old = old_log_path(&path);
+        let mut had_old = old.exists();
+        let mut log_len = 0;
+        if legacy && !read_only {
+            for f in [log_path(&path), old.clone()] {
+                if f.exists() {
+                    crate::platform::log(&format!("{}: 底稿是旧版本写的，丢掉之前的日志残迹", f.display()));
+                    let _ = std::fs::remove_file(&f);
+                }
+            }
+            had_old = false;
+            // 立刻写成带 `seq` 的底稿；写不成就只读（见上面的说明）
+            if write_base(&path, &c.entries, c.seq) {
+                base_len = std::fs::metadata(&path).map_or(0, |m| m.len());
+            } else {
+                crate::platform::log(&format!("{}: 旧底稿没能整理，这个进程只读", path.display()));
+                read_only = true;
+            }
+        }
         // 日志：旧的（上次整理没做完）在前，当前的在后；同一张照片以序号最大的一行为准，底稿已经包含的跳过
         let mut at: HashMap<String, u64> = HashMap::new();
-        let old = old_log_path(&path);
-        let had_old = old.exists();
-        let mut log_len = 0;
         for (file, current) in [(old, false), (log_path(&path), true)] {
+            if legacy {
+                break;
+            }
             let Ok(bytes) = std::fs::read(&file) else { continue };
-            // 最后一行写到一半（断电）：丢掉，并把文件截到最后一个完整行，免得下一次追加接在半行后面
+            // 最后一行写到一半（断电）：丢掉，并把文件截到最后一个完整行，免得下一次追加接在半行后面。
+            // 只读时不截：那可能是另一个进程正写着的一行
             let whole = bytes.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
-            if whole < bytes.len() {
+            if whole < bytes.len() && !read_only {
                 if let Ok(f) = std::fs::OpenOptions::new().write(true).open(&file) {
                     let _ = f.set_len(whole as u64);
                 }
@@ -377,6 +436,7 @@ impl Cache {
                 };
             }
         }
+        c.disk = Arc::new(Disk { read_only, _lock: lock.flatten(), ..Default::default() });
         *c.disk.log.lock().unwrap_or_else(|e| e.into_inner()) = log_len;
         c.disk.log_len.store(log_len, Ordering::Relaxed);
         c.disk.base.store(base_len, Ordering::Relaxed);
@@ -384,6 +444,11 @@ impl Cache {
         c.disk.retry.store(had_old, Ordering::Relaxed);
         c.path = path;
         c
+    }
+
+    /// 拿不到文件锁（另一个进程在用）等原因只读：改动只在内存里。
+    pub fn read_only(&self) -> bool {
+        self.disk.read_only
     }
 
     /// Whether `get` would answer, without copying the photo (and its vectors) out: for the many places that only need to know.
@@ -519,6 +584,11 @@ impl Cache {
     pub fn save(&mut self) -> Pending {
         let disk = self.disk.clone();
         let path = self.path.clone();
+        if disk.read_only {
+            // 只读：不写，也不攒着（改动都在内存的记录里）
+            self.dirty.clear();
+            return Pending { path, disk, job: Job::Nothing };
+        }
         let log_len = disk.log_len.load(Ordering::Relaxed);
         let base = disk.base.load(Ordering::Relaxed);
         let due = disk.retry.load(Ordering::Relaxed) || (log_len >= COMPACT_AT && log_len > base / 2);
@@ -668,8 +738,9 @@ mod tests {
         assert_eq!(back.photo("/p/2.jpg").unwrap().rotation, 90);
         assert_eq!(back.semantic("/p/3.jpg").unwrap(), &[9.0; 4]);
         assert_eq!(back.get("/p/4.jpg", 1, 1, "t").unwrap().embedding, vec![4.0, 0.5]);
-        // 忘掉的记下"删掉"，读回来就没有
-        let mut c = back;
+        // 忘掉的记下"删掉"，读回来就没有（先放掉写锁，再读一份可写的）
+        drop((c, back));
+        let mut c = Cache::load(path.clone());
         assert_eq!(c.forget_under(&["/p".into()], &[]).len(), 5);
         c.put(1, 1, "t", &photo(9));
         c.save().write();
@@ -689,6 +760,9 @@ mod tests {
         std::fs::write(&path, serde_json::to_vec(&as_old_file(&c)).unwrap()).unwrap();
         let mut c = Cache::load(path.clone());
         assert_eq!(c.entries.len(), 3);
+        assert!(!c.read_only());
+        let raw: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(raw.get("seq").is_some(), "旧底稿一读就整理成带 seq 的");
         c.put(1, 1, "t", &photo(3));
         c.photo_mut("/p/0.jpg").unwrap().rotation = 180;
         c.save().write();
@@ -708,7 +782,7 @@ mod tests {
         let half = br#"{"seq":99,"key":"/p/1.jpg","e":{"tag":"t","si"#;
         let mut f = std::fs::OpenOptions::new().append(true).open(log_path(&path)).unwrap();
         std::io::Write::write_all(&mut f, half).unwrap();
-        drop(f);
+        drop((f, c));
         let mut c = Cache::load(path.clone());
         assert_eq!(c.entries.keys().collect::<Vec<_>>(), vec!["/p/0.jpg"]);
         c.put(1, 1, "t", &photo(2));
@@ -742,7 +816,7 @@ mod tests {
         append.write();
         // 这时断电：旧底稿（没有）+ 旧日志 + 新日志
         let mid = Cache::load(path.clone());
-        assert_eq!(mid.entries.len(), 5, "photo 4 was only in the snapshot, the rest are in the logs");
+        assert_eq!(mid.entries.len(), 6, "photo 4 went into the old log before the rename, the rest are in the logs too");
         assert_eq!(mid.photo("/p/1.jpg").unwrap().rotation, 270);
         compact.write();
         assert!(path.exists() && !old_log_path(&path).exists());
@@ -776,6 +850,56 @@ mod tests {
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
+    /// 第二个进程（这里是同一个进程里第二次打开，文件锁一样冲突）只读：读得到，写不进去、不截对方的日志；第一个放掉以后照常可写。
+    #[test]
+    fn a_second_user_of_the_same_cache_only_reads() {
+        let path = place("two");
+        let mut a = Cache::load(path.clone());
+        a.put(1, 1, "t", &photo(0));
+        a.save().write();
+        // 对方正写着半行
+        let mut f = std::fs::OpenOptions::new().append(true).open(log_path(&path)).unwrap();
+        std::io::Write::write_all(&mut f, br#"{"seq":2,"key":"/p/1"#).unwrap();
+        drop(f);
+        let len = std::fs::metadata(log_path(&path)).unwrap().len();
+        let mut b = Cache::load(path.clone());
+        assert!(b.read_only() && !a.read_only());
+        assert_eq!(b.entries.len(), 1);
+        assert_eq!(std::fs::metadata(log_path(&path)).unwrap().len(), len, "只读的不截别人的日志");
+        b.put(1, 1, "t", &photo(5));
+        b.disk.retry.store(true, Ordering::Relaxed);
+        assert!(matches!(b.save().job, Job::Nothing), "只读的不追加、也不整理");
+        drop((a, b));
+        let c = Cache::load(path.clone());
+        assert!(!c.read_only());
+        assert_eq!(c.entries.keys().collect::<Vec<_>>(), vec!["/p/0.jpg"]);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// 降级用过旧版本（它整份重写了没有 `seq` 的底稿）再升级回来：降级前的日志是残迹，不能盖掉旧版本之后的改动。
+    #[test]
+    fn logs_left_from_before_a_downgrade_are_dropped() {
+        let path = place("downgrade");
+        let mut c = Cache::load(path.clone());
+        c.put(1, 1, "t", &photo(0));
+        c.photo_mut("/p/0.jpg").unwrap().rotation = 90;
+        c.save().write();
+        drop(c);
+        // 旧版本：读了没有日志的底稿（这里是空的），自己分析、转回 0 度，整份写回去，没有 seq
+        let mut old = Cache::default();
+        old.put(1, 1, "t", &photo(0));
+        old.put(1, 1, "t", &photo(1));
+        std::fs::write(&path, serde_json::to_vec(&as_old_file(&old)).unwrap()).unwrap();
+        std::fs::write(old_log_path(&path), b"").unwrap();
+        let c = Cache::load(path.clone());
+        assert_eq!(c.entries.len(), 2);
+        assert_eq!(c.photo("/p/0.jpg").unwrap().rotation, 0, "旧版本之后的样子，不是降级前日志里的");
+        assert!(!log_path(&path).exists() && !old_log_path(&path).exists(), "残迹删掉");
+        drop(c);
+        assert_eq!(Cache::load(path.clone()).photo("/p/0.jpg").unwrap().rotation, 0);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
     /// 上次整理没做完（旧日志还在）：读回来不缺东西，下一次存就整理掉。
     #[test]
     fn an_unfinished_compaction_is_finished_later() {
@@ -785,6 +909,7 @@ mod tests {
             c.put(1, 1, "t", &photo(i));
         }
         c.save().write();
+        drop(c);
         std::fs::rename(log_path(&path), old_log_path(&path)).unwrap();
         let mut c = Cache::load(path.clone());
         assert_eq!(c.entries.len(), 3);
