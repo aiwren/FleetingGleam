@@ -464,10 +464,18 @@ impl Dirs for SmbDirs<'_> {
     }
 }
 
+/// 远端列出来的样子：照片，和因为没权限而跳过的子文件夹（路径都相对共享根）。
+struct Walked {
+    photos: Vec<Remote>,
+    /// 这些子文件夹里有什么不知道：镜像里它们下面的照片不能当成"远端已经没有"删掉。
+    skipped: Vec<String>,
+}
+
 /// 共享里一个文件夹下的全部照片，连同子文件夹；路径相对共享根。
-async fn walk(dirs: &mut impl Dirs, rel: &str, cancel: &dyn Fn() -> bool) -> Result<Vec<Remote>, smb2::Error> {
+async fn walk(dirs: &mut impl Dirs, rel: &str, cancel: &dyn Fn() -> bool) -> Result<Walked, smb2::Error> {
     let mut stack = vec![rel.to_string()];
     let mut out = Vec::new();
+    let mut skipped = Vec::new();
     while let Some(dir) = stack.pop() {
         if cancel() {
             return Err(smb2::Error::Cancelled);
@@ -477,6 +485,7 @@ async fn walk(dirs: &mut impl Dirs, rel: &str, cancel: &dyn Fn() -> bool) -> Res
             // 里面某个文件夹没权限（NAS 上别人的私人文件夹、系统目录）：跳过它、记一笔，不让整次同步失败；选的那个文件夹本身没权限照旧报错
             Err(e) if e.kind() == ErrorKind::AccessDenied && dir != rel => {
                 crate::platform::log(&format!("NAS：没有权限打开 {dir}，跳过（{e}）"));
+                skipped.push(dir);
                 continue;
             }
             Err(e) => return Err(e),
@@ -490,7 +499,7 @@ async fn walk(dirs: &mut impl Dirs, rel: &str, cancel: &dyn Fn() -> bool) -> Res
             }
         }
     }
-    Ok(out)
+    Ok(Walked { photos: out, skipped })
 }
 
 fn secs(t: SystemTime) -> i64 {
@@ -510,7 +519,7 @@ async fn sync(c: &mut Conn, rel: &str, local_root: &Path, progress: &dyn Fn(Sync
     // 镜像里这个共享自己的一格
     let local_root = local_root.join(&share);
     let local_root = local_root.as_path();
-    let remote = walk(&mut SmbDirs { client, tree }, path, cancel).await?;
+    let Walked { photos: remote, skipped } = walk(&mut SmbDirs { client, tree }, path, cancel).await?;
     let need: Vec<&Remote> = remote.iter().filter(|r| !mirrored(&local_root.join(&r.rel), r)).collect();
     let total = need.len();
     let bytes_total: u64 = need.iter().map(|r| r.size).sum();
@@ -560,19 +569,27 @@ async fn sync(c: &mut Conn, rel: &str, local_root: &Path, progress: &dyn Fn(Sync
         std::fs::rename(&tmp, &local)?;
         report(i + 1, bytes_done);
     }
-    // 远端已经没有的照片，镜像里也不留（只动照片文件和半截的临时文件；镜像里别的东西不是我们放的，不碰）
+    prune_mirror(local_root, path, &remote, &skipped);
+    Ok(())
+}
+
+/// 远端已经没有的照片，镜像里也不留（只动照片文件和半截的临时文件；镜像里别的东西不是我们放的，不碰）。
+/// 这次没权限打开、跳过了的子文件夹（`skipped`）整个不碰：以前同步过、现在被拒的文件夹，它的照片还在镜像里、项目里照常可看。
+fn prune_mirror(local_root: &Path, path: &str, remote: &[Remote], skipped: &[String]) {
     let keep: HashSet<PathBuf> = remote.iter().map(|r| local_root.join(&r.rel)).collect();
+    let unknown: Vec<PathBuf> = skipped.iter().map(|d| local_root.join(d)).collect();
     let root = local_root.join(path);
-    if root.is_dir() {
-        for e in walkdir::WalkDir::new(&root).into_iter().filter_map(Result::ok).filter(|e| e.file_type().is_file()) {
-            let name = e.file_name().to_string_lossy();
-            let stale = (crate::imageio::is_supported(e.path()) && !keep.contains(e.path())) || (name.starts_with('.') && name.ends_with(".part"));
-            if stale {
-                let _ = std::fs::remove_file(e.path());
-            }
+    if !root.is_dir() {
+        return;
+    }
+    let walker = walkdir::WalkDir::new(&root).into_iter().filter_entry(|e| !(e.file_type().is_dir() && unknown.iter().any(|u| e.path() == u.as_path())));
+    for e in walker.filter_map(Result::ok).filter(|e| e.file_type().is_file()) {
+        let name = e.file_name().to_string_lossy();
+        let stale = (crate::imageio::is_supported(e.path()) && !keep.contains(e.path())) || (name.starts_with('.') && name.ends_with(".part"));
+        if stale {
+            let _ = std::fs::remove_file(e.path());
         }
     }
-    Ok(())
 }
 
 /// 今天的日期（UTC），回收文件夹按天分开。
@@ -778,13 +795,33 @@ mod tests {
         ]));
         let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
         let found = rt.block_on(walk(&mut fake, "photos", &|| false)).expect("the private folder is skipped");
-        let mut names: Vec<String> = found.into_iter().map(|r| r.rel).collect();
+        assert_eq!(found.skipped, vec!["photos/private"]);
+        let mut names: Vec<String> = found.photos.into_iter().map(|r| r.rel).collect();
         names.sort();
         assert_eq!(names, vec!["photos/a.jpg", "photos/trip/b.jpg"]);
         // 选的那个文件夹本身没权限：照旧报错，说成没权限，不说密码错
         let e = rt.block_on(walk(&mut fake, "photos/private", &|| false)).err().expect("the chosen folder itself is refused");
         assert_eq!(e.kind(), ErrorKind::AccessDenied);
         assert!(explain(&e).starts_with("denied:"), "{}", explain(&e));
+    }
+
+    /// 删"远端已经没有的"时绕开这次没权限、跳过了的子文件夹：以前同步下来的照片留着；真没了的照样删。
+    #[test]
+    fn a_skipped_folder_keeps_its_mirrored_photos() {
+        let root = std::env::temp_dir().join(format!("fg_nas_prune_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for f in ["photos/a.jpg", "photos/gone.jpg", "photos/private/p.jpg", "photos/private/deeper/q.jpg", "photos/privateer/x.jpg", "photos/trip/.b.jpg.part", "photos/notes.txt"] {
+            let p = root.join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, b"x").unwrap();
+        }
+        let remote = vec![Remote { rel: "photos/a.jpg".into(), size: 1, modified: UNIX_EPOCH }];
+        prune_mirror(&root, "photos", &remote, &["photos/private".to_string()]);
+        let mut left: Vec<String> = walkdir::WalkDir::new(&root).into_iter().filter_map(Result::ok).filter(|e| e.file_type().is_file())
+            .map(|e| e.path().strip_prefix(&root).unwrap().to_string_lossy().into_owned()).collect();
+        left.sort();
+        assert_eq!(left, vec!["photos/a.jpg", "photos/notes.txt", "photos/private/deeper/q.jpg", "photos/private/p.jpg"], "被跳过的子树不动；名字只是开头一样的文件夹照删");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// 排错用：直接连一次，把错误的完整样子打出来。
