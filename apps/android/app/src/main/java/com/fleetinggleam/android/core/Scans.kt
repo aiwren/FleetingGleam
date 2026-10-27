@@ -64,13 +64,15 @@ object Scans {
         else -> Pause.None
     }
 
-    /** 一次有进度的分析开始了：挂上前台服务（暂停期间留着的那个就接着用，不从后台再启一次）。 */
+    /**
+     * 一次有进度的分析开始了，或者还没开始就因为太热 / 电量低进了暂停：挂上前台服务（暂停期间留着的那个就接着用，不从后台再启一次）。
+     * 适不适合分析由调用方（`Session.runScan`）在发起之前查 `blocker()`，这里不再补一个取消：那时核心还没登记任务，取消会被丢掉（审查第 40 条）。
+     */
     fun started(ctx: Context, projectName: String) {
-        if (running) { blocker().takeIf { it != Pause.None }?.let { Session.pauseFor(it) }; return }
+        if (running) return
         running = true
         val i = Intent(ctx, AnalysisService::class.java).putExtra(AnalysisService.EXTRA_NAME, projectName)
         runCatching { ContextCompat.startForegroundService(ctx, i) }
-        blocker().takeIf { it != Pause.None }?.let { Session.pauseFor(it) }
     }
 
     /** 前台服务到了系统的 6 小时上限，自己撤掉了：只记下不在跑，别再去停它。 */

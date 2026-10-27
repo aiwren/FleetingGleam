@@ -91,6 +91,10 @@ object Session {
     @Volatile private var runningFolders: List<String> = emptyList()
     /** 因为太热 / 电量低停下的那个项目（条件好转后接着分析，不管现在开着哪个项目）。 */
     @Volatile private var pausedProject: Running? = null
+    /** 停下等着接着分析的那个项目（确认页上说一句"手机太热，先等等"）。 */
+    val pausedId: String? get() = pausedProject?.id
+    /** 暂停的那次是"重新分析全部"（还没发起就因为太热 / 电量低停下）：接着分析时照样全部重来。 */
+    @Volatile private var pausedForce = false
     /** 上一次进的项目（离开时只取消它自己的读取 / 分析）。 */
     @Volatile private var enteredId: String? = null
 
@@ -278,6 +282,19 @@ object Session {
         android.util.Log.i("FleetingGleam", "runScan ${project.name}：${if (quiet) "安静读取" else "分析"}${if (force) "（强制）" else ""}，来自 ${Throwable().stackTrace.getOrNull(1)?.let { "${it.methodName}:${it.lineNumber}" }}")
         if (quiet) phase.value = Phase.Loading
         else {
+            // 已经太热 / 电量太低：不发起分析，直接进暂停（审查第 40 条）。以前照常发起、再靠 `Scans.started` 里的取消停下，
+            // 可那个取消早于 scan_project 登记任务、被核心丢掉，分析照跑，通知却一直停在"已暂停"
+            val block = Scans.blocker()
+            if (block != Pause.None) {
+                val list = if (attach) files.value else runningFiles
+                progress.value = Progress(if (force) 0 else list.count { it.cached }, total)
+                pausedProject = Running(project.id, project.name)
+                pausedForce = force
+                paused.value = block
+                // 前台服务照样挂上（通知写"已暂停（n/N）"）：好转时应用多半在后台，那时系统不让再启前台服务
+                Scans.started(app, project.name)
+                return
+            }
             results.clear(); stages.clear(); live.clear(); lastStage = null
             startedAt = System.currentTimeMillis()
             progress.value = Progress(0, total)
@@ -333,7 +350,7 @@ object Session {
      * 要下的是大模型时询问框里可以"先用标准模型"。另一个项目还在分析时先问一句。
      * `sample`：示例照片——用不必下载或最小的那档，不记下档位，询问框里说明为什么要下载。
      */
-    fun startScan(sample: Boolean = false) {
+    fun startScan(sample: Boolean = false, force: Boolean = false) {
         val project = current() ?: return
         val run = running.value
         if (run != null && run.id != project.id) { conflict.value = run; return }
@@ -352,7 +369,7 @@ object Session {
             if (!demo) Strategy.settle(tier)
             if (tok != token) return@launch
             paused.value = Pause.None; pausedProject = null
-            runScan(project, files.value.size, quiet = false, tok = tok, tier = tier)
+            runScan(project, files.value.size, quiet = false, tok = tok, tier = tier, force = force)
         }
     }
 
@@ -379,6 +396,7 @@ object Session {
     fun pauseFor(why: Pause) {
         val run = running.value ?: return
         pausedProject = run
+        pausedForce = false
         paused.value = why
         stopScan()
     }
@@ -395,18 +413,19 @@ object Session {
         if (paused.value == Pause.None) return
         paused.value = Pause.None
         val p = pausedProject
-        pausedProject = null
+        val force = pausedForce
+        pausedProject = null; pausedForce = false
         // 留着的前台服务：接着分析时还用它；没接上（项目没了、下载被取消、页面换了）就撤掉，别一直挂着"已暂停"
         scope.launch { delay(30_000); if (running.value == null && paused.value == Pause.None) Scans.stopped() }
         if (p == null) return
         val project = Projects.store.value.projects.firstOrNull { it.id == p.id && it.trashed == null } ?: return
-        if (current()?.id == project.id) { if (phase.value == Phase.Ready) startScan(); return }
+        if (current()?.id == project.id) { if (phase.value == Phase.Ready || (force && phase.value == Phase.Done)) startScan(force = force); return }
         // 那个项目已经不在眼前：在后台接着分析（先把文件列表拿回来，回到它时照片墙要用）
         scope.launch {
             val probe = runCatching { Core.get<Probe>("probe_folder", args("dirs" to project.folders, "compute" to "auto", "quality" to Strategy.currentTier())) }.getOrNull() ?: return@launch
             if (running.value != null) return@launch
             runningFiles = probe.files
-            runScan(project, probe.files.size, quiet = false, tok = token, attach = false)
+            runScan(project, probe.files.size, quiet = false, tok = token, attach = false, force = force)
         }
     }
 
@@ -424,7 +443,7 @@ object Session {
         val run = running.value
         if (run != null && run.id != p.id) { conflict.value = run; return }
         val tok = token
-        scope.launch { runScan(p, files.value.size, quiet = false, tok = tok, force = true) }
+        scope.launch { paused.value = Pause.None; pausedProject = null; pausedForce = false; runScan(p, files.value.size, quiet = false, tok = tok, force = true) }
     }
 
     fun addFolder(dir: String) { val p = current() ?: return; if (dir !in p.folders) Projects.update(p.id) { it.copy(folders = it.folders + dir) } }

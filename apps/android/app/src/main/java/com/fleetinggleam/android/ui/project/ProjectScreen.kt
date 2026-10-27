@@ -156,7 +156,8 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
             val doneTop = phase == Phase.Done && (celebrate || paused != Pause.None)
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (phase) {
-                    Phase.Ready -> ReadyStage(project, uncached, bytes, eta, files.filter { !it.cached }, previews, onStart = start, onAddFolder = addFolder, onRemoveFolder = { Session.removeFolder(it) }, done = files.size - uncached)
+                    Phase.Ready -> ReadyStage(project, uncached, bytes, eta, files.filter { !it.cached }, previews, onStart = start, onAddFolder = addFolder, onRemoveFolder = { Session.removeFolder(it) }, done = files.size - uncached,
+                        pausedNote = if (paused != Pause.None && Session.pausedId == project.id) t(if (paused == Pause.Hot) "android.paused.hot" else "android.paused.battery") else null)
                     // 分析中就是选片界面：页签 + 照片墙，照片一出结果就落进对应的页签（Scanning.kt）
                     Phase.Scanning -> ScanningStage(cull, scanData, progress, { Session.stopScan() }, topPad = topPad, bottomPad = 92.dp)
                     Phase.Done -> CullingContent(project, cull, data, actions, topPad = topPad)
