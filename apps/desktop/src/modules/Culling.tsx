@@ -11,7 +11,7 @@ import Single from "./Single";
 import ViewMenu from "../components/ViewMenu";
 import Resizer, { usePanelWidth } from "../components/Resizer";
 import SceneGallery from "../components/SceneGallery";
-import FilterPanel, { PersonItem } from "../components/FilterPanel";
+import FilterPanel, { PersonItem, SceneItem } from "../components/FilterPanel";
 import SearchBox from "../components/SearchBox";
 import { usePrefsRevision } from "../styles";
 import { ensurePack, ensurePacks, refreshPacks, usePacks } from "../models";
@@ -42,6 +42,9 @@ type Phase = "idle" | "probing" | "ready" | "scanning" | "loading" | "done";
 type SortBy = "group" | "order" | "time" | "score";
 type Item = { path: string; ratio: number };
 const NONE: ReadonlySet<string> = new Set();
+/** 分析中筛选栏没有场景和人物：给同一个空数组，别让 FilterPanel 的 memo 每帧被新的 [] 打穿。 */
+const NO_SCENES: SceneItem[] = [];
+const NO_PEOPLE: PersonItem[] = [];
 
 function EditableTitle({ value, tip, onCommit }: { value: string; tip: string; onCommit: (v: string) => void }) {
   const [editing, setEditing] = useState(false);
@@ -450,13 +453,16 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     return m;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, tick, overrides]);
-  // 筛选栏上的保留 / 待复查 / 淘汰数
-  const liveCounts = useMemo(() => {
-    if (liveDecisions.size === 0) return null;
-    const c = { keep: 0, review: 0, reject: 0 };
+  // 筛选栏上的保留 / 待复查 / 淘汰数。liveDecisions 每帧都是新表，数没变时沿用上一份对象，FilterPanel 的 memo 才挡得住（第二批：字面量打穿 memo）
+  const liveCountsRaw = useMemo(() => {
+    const c = { all: files.length, keep: 0, review: 0, reject: 0 };
     liveDecisions.forEach((d) => { c[d.state]++; });
     return c;
-  }, [liveDecisions]);
+  }, [liveDecisions, files.length]);
+  const liveCountsRef = useRef(liveCountsRaw);
+  const lc = liveCountsRef.current;
+  if (lc.all !== liveCountsRaw.all || lc.keep !== liveCountsRaw.keep || lc.review !== liveCountsRaw.review || lc.reject !== liveCountsRaw.reject) liveCountsRef.current = liveCountsRaw;
+  const liveCounts = liveCountsRef.current;
 
   // Scenes are the same loose, look-alike clusters the backend already groups for scene-diverse picks (see decide.rs);
   // this just surfaces them as a filter, in the order they first appear, each with its highest-scoring photo as the cover.
@@ -1019,9 +1025,9 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
         </Modal>
         <div className="body-split">
         {panelShown && (
-          <FilterPanel counts={scanning ? { all: files.length, keep: liveCounts?.keep ?? 0, review: liveCounts?.review ?? 0, reject: liveCounts?.reject ?? 0 } : facets.status}
-            mode={mode} onMode={setMode} scenes={scanning ? [] : sceneItems} sceneFilter={sceneFilter} onScene={setSceneFilter} onBrowseScenes={openSceneView} width={filterW.width}
-            people={scanning ? [] : peopleItems} personFilter={personFilter} onPerson={setPersonFilter} />
+          <FilterPanel counts={scanning ? liveCounts : facets.status}
+            mode={mode} onMode={setMode} scenes={scanning ? NO_SCENES : sceneItems} sceneFilter={sceneFilter} onScene={setSceneFilter} onBrowseScenes={openSceneView} width={filterW.width}
+            people={scanning ? NO_PEOPLE : peopleItems} personFilter={personFilter} onPerson={setPersonFilter} />
         )}
         {panelShown && <Resizer panel={filterW} edge="right" label={t("cull.filters")} />}
         <div className="scroll" ref={scrollRef}>
