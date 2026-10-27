@@ -1,6 +1,7 @@
 import ModelGate from "./components/ModelGate";
 import DownloadNav from "./components/DownloadNav";
 import FolderPicker from "./components/FolderPicker";
+import ErrorBoundary from "./components/ErrorBoundary";
 import { ReactNode, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { MotionConfig, motion } from "motion/react";
@@ -124,6 +125,7 @@ export default function App() {
           </nav>
         </div>
         <main className="content">
+          <ErrorBoundary>
           <Culling active={moduleId === "culling"} inspectorHidden={inspectorHidden} onToggleInspector={toggleInspector} onOpenStyles={() => openStyles("culling")} onOpenSettings={openSettingsAt} />
           <Styles active={moduleId === "styles"} from={stylesFrom} onBack={() => setModuleId(stylesFrom)} />
           <Settings active={moduleId === "settings"} onOpenStyles={() => openStyles("settings")} />
@@ -135,6 +137,7 @@ export default function App() {
               </div>
             </div>
           )}
+          </ErrorBoundary>
         </main>
       </div>
     </MotionConfig>

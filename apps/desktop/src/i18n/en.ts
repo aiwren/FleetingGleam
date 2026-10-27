@@ -88,6 +88,7 @@ const en = {
     have: "Downloaded", none: "Not downloaded", bundled: "Comes with the app", get: "Download", remove: "Remove", title: "Downloaded models",
     titleDesc: "Models are only downloaded when needed and then work offline. Remove the ones you do not use; you will be asked again when they are needed.",
   },
+  crash: { title: "Something went wrong in this part of the window", body: "Your projects and marks are saved and nothing is lost. Try again; if it keeps happening, reload the window.", retry: "Try again", reload: "Reload" },
   errors: {
     space: "Not enough disk space: {{need}} is needed and only {{free}} is free. Make some room and try again.",
     spaceUnknown: "Not enough disk space. Make some room and try again.",

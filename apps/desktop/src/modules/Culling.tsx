@@ -77,6 +77,8 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const { t, i18n } = useTranslation();
   const store = useProjects();
   const { saveError, loadError } = useProjectsStatus();
+  /** 关掉的保存错误（同一句不再出现；下次换了一个错误照常出来）。 */
+  const [hiddenSave, setHiddenSave] = useState<string | null>(null);
   const project: Project | null = store.projects.find((p) => p.id === store.activeId && !p.trashed) ?? null;
   const settings = useSettings();
 
@@ -1031,7 +1033,9 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
         )}
         {panelShown && <Resizer panel={filterW} edge="right" label={t("cull.filters")} />}
         <div className="scroll" ref={scrollRef}>
-          {error && error !== "cull.nasOffline" && error !== "cull.nasDisabled" && <p className="error">{t(error, { defaultValue: error })}</p>}
+          {error && error !== "cull.nasOffline" && error !== "cull.nasDisabled" && (
+            <p className="error closable">{t(error, { defaultValue: error })}<button className="error-x" onClick={() => setError(null)} aria-label={t("viewer.close")} title={t("viewer.close")}>×</button></p>
+          )}
           {error === "cull.nasDisabled" && <p className="error">{t(error, { name: nasOff })} <button className="btn sm" onClick={() => setReloadKey((k) => k + 1)}>{t("cull.nasRetry")}</button></p>}
           {(error === "cull.nasOffline" || offline) && (() => {
             // 密码不对 / 没权限 → 去设置；连不上（或说不清）→ 重试
@@ -1049,7 +1053,9 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
               </p>
             );
           })()}
-          {saveError && <p className="error">{t("cull.saveFailed", { error: saveError })}</p>}
+          {saveError && saveError !== hiddenSave && (
+            <p className="error closable">{t("cull.saveFailed", { error: saveError })}<button className="error-x" onClick={() => setHiddenSave(saveError)} aria-label={t("viewer.close")} title={t("viewer.close")}>×</button></p>
+          )}
           {loadError === "corrupt" && <p className="error">{t("cull.loadCorrupt")}</p>}
 
           {(phase === "probing" || phase === "loading") && nasProg && <p className="ash pad loading">{t("cull.fetchingNas", { share: nasProg.share, done: nasProg.done, total: nasProg.total, size: fmtBytes(nasProg.bytes_total) })}</p>}

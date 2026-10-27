@@ -90,6 +90,10 @@ kbd { font-family: "Geist Mono Variable", monospace; font-size: 11px; opacity: .
 .scroll { flex: 1; overflow: auto; padding: 16px; }
 .pad { padding: 24px 0; }
 .error { color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+.error.closable { position: relative; padding-right: 36px; }
+.error-x { position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; border-radius: 6px; color: var(--ash); font-size: 16px; line-height: 1; transition: background .16s, color .16s; }
+.error-x:hover { background: var(--surface-2); color: var(--ink); }
+.empty.crash .crash-detail { margin-top: 18px; max-width: 520px; word-break: break-word; }
 
 .btn { border: 1px solid var(--line); background: var(--surface); padding: 5px 12px; border-radius: 7px; transition: background .15s, transform .1s; white-space: nowrap; }
 .btn:hover:not(:disabled) { background: var(--surface-2); }
