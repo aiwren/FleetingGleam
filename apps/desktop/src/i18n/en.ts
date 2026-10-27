@@ -61,7 +61,7 @@ const en = {
     readyBody: "Analysis decodes each photo, checks sharpness and exposure, scores it with on-device models, then groups similar shots. Everything runs on this computer and your originals stay untouched.",
     readyUnit: "photos to analyze", readySize: "{{size}} in total", readyEta: "about {{time}}",
     etaSeconds: "{{n}} seconds", etaMinutes: "{{n}} minutes", etaHours: "{{n}} hours",
-    start: "Start analysis", reselect: "Choose another",
+    start: "Start analysis", waitModel: "Waiting for the model…", reselect: "Choose another",
     pickMode: "Selection style", pickModeBest: "Best photos first", pickModeDiverse: "Cover every scene",
     pickModeBestDesc: "Go by score alone and keep the best.", pickModeDiverseDesc: "Keep a bit of every scene, for a fuller record.",
     filters: "Filters", status: "Status", scenes: "Scenes", people: "People", clearFilter: "Clear", sceneCount: "{{count}}", personCount: "{{count}} photos", allScenes: "See all {{count}} scenes", describe: "Describe the rest", describing: "Describing scenes {{done}}/{{total}}", resizeHint: "Drag to resize, double-click to reset", backToPhotos: "Back to photos", morePeople: "Show all {{count}}", fewer: "Show fewer", noPeopleHere: "No recognised people in this selection",

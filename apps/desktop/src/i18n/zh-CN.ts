@@ -59,7 +59,7 @@ const zh = {
     readyBody: "点击开始后，程序会逐张解码、检测清晰度和曝光、用本地模型评分，最后把相似照片分组。全过程只在这台电脑上运行，原图不会被改动。",
     readyUnit: "张照片待分析", readySize: "共 {{size}}", readyEta: "{{time}}",
     etaSeconds: "约 {{n}} 秒", etaMinutes: "约 {{n}} 分钟", etaHours: "约 {{n}} 小时",
-    start: "开始分析", reselect: "重新选择",
+    start: "开始分析", waitModel: "等待模型…", reselect: "重新选择",
     pickMode: "选片方式", pickModeBest: "优先好照片", pickModeDiverse: "兼顾不同场景",
     pickModeBestDesc: "只看分数,把最好的留下。", pickModeDiverseDesc: "不同场景都留一点,记录更完整。",
     filters: "筛选", status: "状态", scenes: "场景", people: "人物", clearFilter: "清除", sceneCount: "{{count}} 张", personCount: "{{count}} 张照片", allScenes: "查看全部 {{count}} 个场景", describe: "为其余场景生成描述", describing: "正在描述场景 {{done}}/{{total}}", resizeHint: "拖动调整宽度，双击恢复", backToPhotos: "返回照片", morePeople: "展开全部 {{count}} 人", fewer: "收起", noPeopleHere: "这个筛选下没有识别到的人物",

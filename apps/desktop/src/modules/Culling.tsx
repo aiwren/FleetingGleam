@@ -26,7 +26,7 @@ import Ticker from "../components/Ticker";
 import Tile, { StageInfo } from "../components/Tile";
 import { DUR, EASE_OUT, SPRING } from "../motion";
 import { newProjectFromDialog, openSamples, pickFolder, takeAutoStart } from "../projectActions";
-import { Project, setActive, trashProject, updateProject, useProjects, useProjectsStatus } from "../projects";
+import { Project, getStore, setActive, trashProject, updateProject, useProjects, useProjectsStatus } from "../projects";
 import { getSettings, ScanInfo, setScanInfo, useSettings, useCacheRev } from "../settings";
 import { Decision, Photo, Probe, ProbeFile, Reason, State, pct, thumbSrc } from "../types";
 import { NasProgress } from "../nas";
@@ -78,6 +78,8 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const settings = useSettings();
 
   const [phase, setPhase] = useState<Phase>("idle");
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
   const [files, setFiles] = useState<ProbeFile[]>([]);
   const [bytes, setBytes] = useState(0);
   const [uncached, setUncached] = useState(0);
@@ -347,14 +349,25 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
       .catch(() => { /* fall back to the originals */ });
   }, [phase, files]);
 
+  /** 正在等模型（询问 / 下载，可能转到了后台）的那个项目：这期间"开始分析"置灰、写"等待模型"，不能再点。 */
+  const [waitingModel, setWaitingModel] = useState<string | null>(null);
+  const waitingRef = useRef<string | null>(null);
   const startScan = async () => {
-    if (!project) return;
+    if (!project || waitingRef.current) return;
+    const id = project.id;
     // 同一时间只分析一个项目：另一个还在分析时先问一句
     const run = running.current;
-    if (run && run.id !== project.id) { setConflict({ id: run.id, name: run.name }); return; }
+    if (run && run.id !== id) { setConflict({ id: run.id, name: run.name }); return; }
     // The app picks the model (strategy.ts); what it needs, the eye model and people recognition included, is fetched under one question the first time.
-    if ((await settleTier()) === null) return;
-    runScan(project, files.length, false, token.current);
+    waitingRef.current = id; setWaitingModel(id);
+    let tier;
+    try { tier = await settleTier(); } finally { waitingRef.current = null; setWaitingModel(null); }
+    if (tier === null) return;
+    // 等模型可能等了很久（下载转到后台）：这期间换了项目、另一次分析开始了、或这一屏已经不在"准备"上，都放弃（审查第 42 条）。
+    // 项目和文件都取眼下的（闭包里的是点按钮那一刻的）
+    if (activeId.current !== id || running.current || phaseRef.current !== "ready") return;
+    const proj = getStore().projects.find((p) => p.id === id && !p.trashed);
+    if (proj) runScan(proj, filesRef.current.length, false, token.current);
   };
   useEffect(() => {
     if (phase === "ready" && autoStart.current) { autoStart.current = false; void startScan(); }
@@ -1034,7 +1047,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
           <AnimatePresence>
             {phase === "ready" && project && (
               <ReadyStage key="ready" project={project} count={uncached} sizeText={fmtBytes(bytes)} etaSeconds={etaSeconds} files={pendingFiles} thumbs={previews}
-                onStart={startScan} onAddFolder={addFolder} onRemoveFolder={removeFolder} />
+                onStart={startScan} waiting={waitingModel !== null} onAddFolder={addFolder} onRemoveFolder={removeFolder} />
             )}
           </AnimatePresence>
 
