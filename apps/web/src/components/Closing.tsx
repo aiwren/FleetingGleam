@@ -1,49 +1,59 @@
-import { motion, useReducedMotion } from "motion/react";
+import { useEffect, useRef, type CSSProperties } from "react";
 import { copy, release, type Lang } from "../content";
 import Footer from "./Footer";
+import { addScene, reduced, reveal, smooth, viewProg } from "./scroll";
 
-const EASE = [0.16, 1, 0.3, 1] as const;
+// 五列照片，错开速度上下漂；竖幅和方幅按原尺寸给宽高，免得加载时跳动
+const COLS = [["01", "06", "10"], ["04", "12", "02", "15"], ["07", "13", "16"], ["03", "09", "14", "05"], ["11", "08", "06"]];
+const SIZE: Record<string, [number, number]> = { "04": [500, 500], "06": [420, 630], "13": [420, 630], "15": [420, 630] };
+const SPEED = [-0.9, 0.55, -0.4, 0.75, -0.65];
 
+/** 一句要求里用反引号括起来的命令画成等宽字。 */
+const withCode = (s: string) => s.split("`").map((part, i) => (i % 2 ? <code key={i}>{part}</code> : part));
+
+/** 收尾：背后几列照片错层漂动，中间一句邀请；发布之后换成下载按钮和安装说明。 */
 export default function Closing({ lang }: { lang: Lang }) {
-  const c = copy[lang];
-  const reduce = useReducedMotion();
-  // the same rise as everywhere else; none at all for a reader who asked for less motion
-  const rise = reduce ? {} : ({ initial: { opacity: 0, y: 24 }, whileInView: { opacity: 1, y: 0 }, viewport: { once: true, amount: 0.4 }, transition: { duration: 0.8, ease: EASE } } as const);
+  const c = copy[lang].final;
+  const sec = useRef<HTMLElement>(null), body = useRef<HTMLDivElement>(null), title = useRef<HTMLHeadingElement>(null), cols = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const off = reveal(body.current!);
+    if (reduced()) return off;
+    const colEls = Array.from(cols.current!.children) as HTMLElement[], t = title.current!;
+    const stop = addScene(sec.current!, viewProg, (p) => {
+      colEls.forEach((col, i) => { col.style.transform = `translateY(${(p - 0.5) * SPEED[i] * 900}px)`; });
+      t.style.transform = `scale(${0.72 + 0.28 * smooth(0.15, 0.5, p)})`;
+    });
+    return () => { off(); stop(); };
+  }, []);
+  const d = (ms: number) => ({ "--d": `${ms}ms` }) as CSSProperties;
   return (
     <>
-      {/* A pause before the close: one statement, set large, with a hairline to mark it off rather than an empty column. */}
-      <section className="mx-auto max-w-6xl px-5 pt-40 md:pt-56">
-        <div className="border-t border-line pt-12 md:pt-16">
-          <motion.h2 {...rise} className="max-w-[26ch] text-[clamp(2rem,4.8vw,3.5rem)] font-semibold leading-[1.06] tracking-[-0.038em] text-balance">{c.honest.title}</motion.h2>
-          <motion.p {...rise} className="mt-7 max-w-[52ch] text-lg text-ash">{c.honest.body}</motion.p>
+      <section ref={sec} className="cl" id="download" aria-labelledby="dl-title">
+        <div className="cl-cols" ref={cols} aria-hidden>
+          {COLS.map((col, i) => (
+            <div key={i} className="cl-col">
+              {col.map((n, j) => { const [w, h] = SIZE[n] ?? [600, 400]; return <img key={j} src={`/wall/${n}.webp`} width={w} height={h} alt="" loading="lazy" draggable={false} />; })}
+            </div>
+          ))}
+        </div>
+        <div className="wrap cl-body" ref={body}>
+          <h2 id="dl-title" ref={title}><span className="ln"><span>{release.available ? c.readyTitle : c.title}</span></span></h2>
+          <p className="lead rise" style={d(160)}>{release.available ? c.readyBody : c.body}</p>
+          {release.available ? (
+            <div className="cl-btns rise" style={d(240)}>
+              <a className="btn btn-primary" href={release.download}>{c.download}</a>
+              {/* 安卓直接下载 APK（Release 里固定的文件名），不用再到 Release 页里找 */}
+              <a className="btn btn-primary" href={release.android}>{c.downloadAndroid}</a>
+              <a className="btn btn-secondary" href={release.repo}>{c.source}</a>
+            </div>
+          ) : (
+            <p className="status rise" style={d(240)}><span className="dot" aria-hidden />{c.label}</p>
+          )}
+          <div className="reqs rise" style={d(300)}>
+            {(release.available ? c.readyReqs : c.reqs).map((r) => <p key={r}>{withCode(r)}</p>)}
+          </div>
         </div>
       </section>
-
-      <section id="download" className="mx-auto max-w-6xl px-5 pb-8 pt-20 md:pt-28">
-        <motion.div {...rise} className="relative isolate overflow-hidden rounded-3xl border border-line">
-          <img src="/photos/sunset-1600.webp" srcSet="/photos/sunset-800.webp 800w, /photos/sunset-1600.webp 1600w" sizes="(min-width: 1200px) 1152px, 100vw" alt="" width={1600} height={900} loading="lazy" draggable={false} className="absolute inset-0 -z-20 h-full w-full object-cover" />
-          {/* A scrim keeps the words readable on any part of the photograph. */}
-          <div aria-hidden className="absolute inset-0 -z-10 bg-gradient-to-r from-black/75 via-black/45 to-black/10" />
-          <div className="px-7 py-20 text-white md:px-16 md:py-32">
-            <h2 className="max-w-xl text-[clamp(1.9rem,4.4vw,3.25rem)] font-semibold leading-[1.1] tracking-[-0.035em] text-balance">{release.available ? c.final.readyTitle : c.final.title}</h2>
-            <p className="mt-5 max-w-lg text-lg text-white/80">{release.available ? c.final.readyBody : c.final.body}</p>
-            {release.available ? (
-              <>
-                <div className="mt-9 flex flex-wrap items-center gap-3">
-                  <a href={release.download} className="inline-flex min-h-12 items-center whitespace-nowrap rounded-full bg-white px-6 py-3 font-medium text-black transition-transform duration-150 active:translate-y-px">{c.final.download}</a>
-                  {/* 安卓直接下载 APK（Release 里固定的文件名），不用再到 Release 页里找 */}
-                  <a href={release.android} className="inline-flex min-h-12 items-center whitespace-nowrap rounded-full bg-white px-6 py-3 font-medium text-black transition-transform duration-150 active:translate-y-px">{c.final.downloadAndroid}</a>
-                  <a href={release.repo} className="inline-flex min-h-12 items-center whitespace-nowrap rounded-full border border-white/30 bg-black/35 px-6 py-3 font-medium backdrop-blur-md">{c.final.source}</a>
-                </div>
-                <p className="mt-5 max-w-lg text-sm text-white/70">{c.final.req}</p>
-              </>
-            ) : (
-              <span className="mt-9 inline-flex min-h-12 items-center whitespace-nowrap py-3 rounded-full border border-white/30 bg-black/35 px-6 font-medium backdrop-blur-md">{c.final.label}</span>
-            )}
-          </div>
-        </motion.div>
-      </section>
-
       <Footer lang={lang} />
     </>
   );

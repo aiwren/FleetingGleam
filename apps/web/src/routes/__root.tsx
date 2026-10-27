@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Outlet, createRootRoute, HeadContent, Scripts, useRouterState } from "@tanstack/react-router";
 import "@fontsource-variable/geist";
+import "@fontsource-variable/geist-mono";
 import "../styles.css";
 import { SITE } from "../content";
 
