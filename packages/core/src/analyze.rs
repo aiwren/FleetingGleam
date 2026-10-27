@@ -301,7 +301,8 @@ pub fn analyze(
 pub fn quick_thumb(src: &Path, out: &Path) -> Result<(), String> {
     let (full, _, _) = load_with_size(src, ANALYZE_SIZE)?;
     let work = fast_resize(&full, ANALYZE_SIZE);
-    work.thumbnail(THUMB_SIZE, THUMB_SIZE).to_rgb8().save(out).map_err(|e| e.to_string())
+    // 缩略图也走 SIMD 缩小（`image::thumbnail` 是标量的）
+    fast_resize(&work, THUMB_SIZE).into_rgb8().save(out).map_err(|e| e.to_string())
 }
 
 /// A photo decoded upright and reduced to the working size: what the CLIP model is fed.
@@ -395,6 +396,7 @@ pub fn load_oriented(path: &Path) -> Result<DynamicImage, String> {
 }
 
 /// SIMD box/bilinear downscale; several times faster than `DynamicImage::resize` on large photos.
+/// 解出来的照片几乎都已经是 RGB8：直接借它的像素，不再 `to_rgb8()` 整张拷一份（48 MP 是 144 MB）；别的像素格式才先转。
 pub fn fast_resize(img: &DynamicImage, max: u32) -> DynamicImage {
     use fast_image_resize as fir;
     let (w, h) = (img.width(), img.height());
@@ -403,15 +405,39 @@ pub fn fast_resize(img: &DynamicImage, max: u32) -> DynamicImage {
     }
     let scale = max as f32 / w.max(h) as f32;
     let (nw, nh) = (((w as f32 * scale).round() as u32).max(1), ((h as f32 * scale).round() as u32).max(1));
-    let rgb = img.to_rgb8();
+    let converted;
+    let rgb: &image::RgbImage = match img.as_rgb8() {
+        Some(r) => r,
+        None => {
+            converted = img.to_rgb8();
+            &converted
+        }
+    };
     let done = (|| {
-        let src = fir::images::Image::from_vec_u8(w, h, rgb.into_raw(), fir::PixelType::U8x3).ok()?;
+        let src = fir::images::ImageRef::new(w, h, rgb.as_raw(), fir::PixelType::U8x3).ok()?;
         let mut dst = fir::images::Image::new(nw, nh, fir::PixelType::U8x3);
         let opts = fir::ResizeOptions::new().resize_alg(fir::ResizeAlg::Convolution(fir::FilterType::Bilinear));
         fir::Resizer::new().resize(&src, &mut dst, &opts).ok()?;
         image::RgbImage::from_raw(nw, nh, dst.into_vec()).map(DynamicImage::ImageRgb8)
     })();
     done.unwrap_or_else(|| img.resize(max, max, FilterType::Triangle))
+}
+
+#[cfg(test)]
+mod resize_tests {
+    use super::*;
+
+    /// RGB8 借像素、别的格式先转，结果一样；长边缩到 `max`、比例不变；本来就小的不动。
+    #[test]
+    fn fast_resize_borrows_rgb_and_converts_the_rest() {
+        let rgb = image::RgbImage::from_fn(1200, 800, |x, y| image::Rgb([(x % 251) as u8, (y % 241) as u8, ((x + y) % 239) as u8]));
+        let a = fast_resize(&DynamicImage::ImageRgb8(rgb.clone()), 640);
+        let b = fast_resize(&DynamicImage::ImageRgba8(DynamicImage::ImageRgb8(rgb.clone()).to_rgba8()), 640);
+        assert_eq!((a.width(), a.height()), (640, 427));
+        assert_eq!(a.as_rgb8().unwrap().as_raw(), b.as_rgb8().unwrap().as_raw());
+        let small = fast_resize(&DynamicImage::ImageRgb8(image::RgbImage::new(300, 200)), 640);
+        assert_eq!((small.width(), small.height()), (300, 200));
+    }
 }
 
 pub fn cache_name(src: &Path, suffix: &str, cache_dir: &Path) -> PathBuf {
@@ -431,7 +457,7 @@ pub fn save_analysis_copy(img: &DynamicImage, src: &Path, cache_dir: &Path) -> O
 
 pub fn save_thumb(img: &DynamicImage, src: &Path, cache_dir: &Path) -> Result<PathBuf, String> {
     let out = cache_name(src, ".jpg", cache_dir);
-    img.thumbnail(THUMB_SIZE, THUMB_SIZE).to_rgb8().save(&out).map_err(|e| e.to_string())?;
+    fast_resize(img, THUMB_SIZE).into_rgb8().save(&out).map_err(|e| e.to_string())?;
     Ok(out)
 }
 
