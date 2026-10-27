@@ -63,7 +63,9 @@
    "diagnosticsDesc": "版本、系统、设置（不含密码和令牌）、最近的日志与崩溃记录，存成一个文本文件。只存在你选的位置，发不发给开发者由你决定。",
    "diagnosticsBtn": "导出",
    "diagnosticsDone": "已存好",
-   "diagnosticsFailed": "没能导出：{{error}}"
+   "diagnosticsFailed": "没能导出：{{error}}",
+   "mirrorClearTitle": "清掉「{{name}}」的本机副本？",
+   "mirrorClearBody": "项目「{{project}}」正开着、用着这份副本。清掉后它的照片要从原处重新拉一遍，拉回来之前大图看不了；分析结果都留着。"
   },
   "cull": {
    "hint": "点一张照片选中，底栏可以保留、淘汰或放大查看；单张模式里上推留下、下拉淘汰。",
@@ -172,6 +174,9 @@
    "authOffline": "NAS「{{name}}」的用户名或密码不对，显示上次同步的照片",
    "authError": "这个项目在 NAS「{{name}}」上，用户名或密码不对，去设置里重新输入。",
    "deniedError": "这个项目在 NAS「{{name}}」上，这个账号没有访问权限。"
+  },
+  "a11y": {
+   "photo": "{{name}}，{{state}}"
   }
  },
  "models": {
@@ -198,7 +203,8 @@
   },
   "safExpired": "这个项目的文件夹「{{name}}」读不到了：访问权限已失效（可能被系统收回，或在系统设置里清除了应用数据）。镜像里已有的照片都还在，重新授权后接着同步。",
   "safReauth": "重新授权",
-  "safWrongFolder": "选的不是原来那个文件夹，请重新选「{{name}}」。"
+  "safWrongFolder": "选的不是原来那个文件夹，请重新选「{{name}}」。",
+  "safNotGranted": "选对了文件夹，但没拿到「{{name}}」的读取权限。请再试一次；网盘类的文件夹先确认它在线、已登录。"
  },
  "picker": {
   "local": "手机里的文件夹…",

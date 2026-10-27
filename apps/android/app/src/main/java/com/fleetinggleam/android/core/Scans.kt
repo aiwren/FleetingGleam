@@ -19,6 +19,8 @@ import com.fleetinggleam.android.service.AnalysisService
 object Scans {
     private lateinit var app: Context
     @Volatile private var running = false
+    /** 通知上显示的项目名：前台服务跟着它刷新。 */
+    val label = kotlinx.coroutines.flow.MutableStateFlow("")
     private var thermal = PowerManager.THERMAL_STATUS_NONE
     private var batteryLow = false
     private var charging = true
@@ -64,13 +66,17 @@ object Scans {
         else -> Pause.None
     }
 
-    /** 一次有进度的分析开始了：挂上前台服务（暂停期间留着的那个就接着用，不从后台再启一次）。 */
+    /**
+     * 一次有进度的分析开始了，或者还没开始就因为太热 / 电量低进了暂停：挂上前台服务（暂停期间留着的那个就接着用，不从后台再启一次）。
+     * 适不适合分析由调用方（`Session.runScan`）在发起之前查 `blocker()`，这里不再补一个取消：那时核心还没登记任务，取消会被丢掉（审查第 40 条）。
+     */
     fun started(ctx: Context, projectName: String) {
-        if (running) { blocker().takeIf { it != Pause.None }?.let { Session.pauseFor(it) }; return }
+        // 暂停期间留着的服务接着用：换了项目分析时把通知上的名字换过来（审查第 58 条）
+        label.value = projectName
+        if (running) return
         running = true
         val i = Intent(ctx, AnalysisService::class.java).putExtra(AnalysisService.EXTRA_NAME, projectName)
         runCatching { ContextCompat.startForegroundService(ctx, i) }
-        blocker().takeIf { it != Pause.None }?.let { Session.pauseFor(it) }
     }
 
     /** 前台服务到了系统的 6 小时上限，自己撤掉了：只记下不在跑，别再去停它。 */

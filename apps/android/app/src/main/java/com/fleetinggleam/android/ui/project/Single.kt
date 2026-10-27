@@ -1,5 +1,8 @@
 package com.fleetinggleam.android.ui.project
 
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -34,7 +37,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
@@ -96,10 +98,9 @@ fun SinglePager(shown: List<Photo>, decisions: Map<String, Decision>, cull: Cull
         Box(Modifier.weight(1f).fillMaxWidth()) {
             // 照片的颜色在它身后晕开
             // 和大图的"房间"同一套参数：模糊 56、透明 0.4、放大 1.4（设计审查 A7.3）
-            AsyncImage(File(photo.thumb), null, Modifier.align(Alignment.Center).fillMaxSize(0.6f).blur(56.dp).graphicsLayer { alpha = 0.4f; scaleX = 1.4f; scaleY = 1.4f }, contentScale = ContentScale.Crop)
+            com.fleetinggleam.android.ui.components.AmbientImage(photo.thumb, 56.dp, Modifier.align(Alignment.Center).fillMaxSize(0.6f).graphicsLayer { alpha = 0.4f }, zoom = 1.4f)
             HorizontalPager(pager, Modifier.fillMaxSize(), key = { shown[it].path }, beyondViewportPageCount = 1) { page ->
                 val p = shown[page]
-                val f = ((pager.currentPage - page) + pager.currentPageOffsetFraction).coerceIn(-1f, 1f)
                 SwipeDecide(p, decisions[p.path], onDecide = { st ->
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     val d = decisions[p.path]
@@ -108,6 +109,8 @@ fun SinglePager(shown: List<Photo>, decisions: Map<String, Decision>, cull: Cull
                     if (page < shown.size - 1) scope.launch { pager.animateScrollToPage(page + 1) }
                 }, onOpen = { onOpen(p.path) }, cull = cull,
                     modifier = Modifier.graphicsLayer {
+                        // 翻页偏移只在这里（绘制阶段）读：以前在组合里读，翻页的每一帧整页重组（审查第二批）
+                        val f = ((pager.currentPage - page) + pager.currentPageOffsetFraction).coerceIn(-1f, 1f)
                         // 翻页：转一点点角度、缩一点、不太淡（效果小于内容——设计审查 A7.1）
                         cameraDistance = 14f * density
                         rotationY = 10f * f
@@ -165,6 +168,7 @@ private fun SwipeDecide(p: Photo, d: Decision?, onDecide: (String) -> Unit, onOp
                 .shadow(10.dp, RoundedCornerShape(10.dp), ambientColor = Color.Black, spotColor = Color.Black)
                 .clip(RoundedCornerShape(10.dp))
                 .border(if (kept) 1.dp else 0.dp, if (kept) c.gleam.copy(alpha = 0.6f) else Color.Transparent, RoundedCornerShape(10.dp))
+                .semantics { contentDescription = photoLabel(p.name, d?.state) }
                 .clickable { onOpen() }
                 .pointerInput(p.path) {
                     detectVerticalDragGestures(
@@ -183,7 +187,7 @@ private fun SwipeDecide(p: Photo, d: Decision?, onDecide: (String) -> Unit, onOp
             AsyncImage(File(p.thumb), null, Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
             large?.let { src ->
                 val req = remember(src) { ImageRequest.Builder(ctx).data(File(src)).size(2560, 2560).build() }
-                AsyncImage(req, p.name, Modifier.fillMaxSize().graphicsLayer { alpha = if (sharp) 1f else 0f }, contentScale = ContentScale.FillBounds, onSuccess = { sharp = true })
+                AsyncImage(req, null, Modifier.fillMaxSize().graphicsLayer { alpha = if (sharp) 1f else 0f }, contentScale = ContentScale.FillBounds, onSuccess = { sharp = true })
             }
             PhotoTags(p, Modifier.align(Alignment.TopStart).padding(8.dp))
             if (kept) Box(Modifier.align(Alignment.TopEnd).padding(9.dp)) { Star(true, 20.dp) }
@@ -212,6 +216,7 @@ fun Filmstrip(shown: List<Photo>, decisions: Map<String, Decision>, index: Int, 
             Box(
                 Modifier.size(56.dp).graphicsLayer { alpha = if (cur) 1f else if (st == "reject") 0.4f else 0.6f }
                     .clip(RoundedCornerShape(6.dp)).border(if (cur) 2.dp else 0.dp, if (cur) (ring ?: c.ink) else Color.Transparent, RoundedCornerShape(6.dp))
+                    .semantics { contentDescription = photoLabel(p.name, st); selected = cur }
                     .clickable { onPick(p.path) },
             ) {
                 AsyncImage(File(p.thumb), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)

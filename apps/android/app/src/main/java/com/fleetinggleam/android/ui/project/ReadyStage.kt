@@ -65,7 +65,7 @@ import java.io.File
  * 和首页大卡同一套语言——封面拼图上压着张数、大小和预计时间；下面是 iOS 分组列表：名称、文件夹、偏好、备注；底部只留"开始分析"和一句话。
  */
 @Composable
-fun ReadyStage(project: Project, count: Int, bytes: Long, etaSeconds: Int?, files: List<ProbeFile>, thumbs: Map<String, String>, onStart: () -> Unit, onAddFolder: () -> Unit, onRemoveFolder: (String) -> Unit, done: Int = 0) {
+fun ReadyStage(project: Project, count: Int, bytes: Long, etaSeconds: Int?, files: List<ProbeFile>, thumbs: Map<String, String>, onStart: () -> Unit, onAddFolder: () -> Unit, onRemoveFolder: (String) -> Unit, done: Int = 0, pausedNote: String? = null) {
     val c = LocalFg.current
     var name by remember(project.id) { mutableStateOf(project.name) }
     var note by remember(project.id) { mutableStateOf(project.note ?: "") }
@@ -79,6 +79,8 @@ fun ReadyStage(project: Project, count: Int, bytes: Long, etaSeconds: Int?, file
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(top = 12.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
             CoverCollage(files.take(3), thumbs, n, listOfNotNull(fmtBytes(bytes), etaSeconds?.let { t("cull.readyEta", "time" to duration(it)) }).joinToString(" · "))
             Column(Modifier.riseIn(1, rise = 0f, scaleFrom = 1f), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                // 点了"开始分析"时手机已经太热 / 电量太低：没开始，等好转自己接着（审查第 40 条）
+                if (pausedNote != null) Text(pausedNote, style = Type.body.copy(color = c.ink), modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.panel).padding(16.dp))
                 // 上次分析到一半（离开了、停下了）：分析过的都留着，这次只分析剩下的
                 if (done > 0) Text(t("android.ready.resume", "done" to done), style = Type.rowDesc.copy(color = c.ash), modifier = Modifier.padding(horizontal = 4.dp))
                 SettingGroup("") { NameRow(name) { name = it } }

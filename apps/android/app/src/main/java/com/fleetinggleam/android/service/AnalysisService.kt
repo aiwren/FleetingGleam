@@ -27,7 +27,10 @@ import kotlinx.coroutines.launch
  */
 class AnalysisService : Service() {
     private var off: (() -> Unit)? = null
-    /** 分析期间不让 CPU 睡下去：熄屏后前台服务还在，可 CPU 一睡分析就停了。最多拿 6 小时，分析结束就放。 */
+    /**
+     * 分析期间不让 CPU 睡下去：熄屏后前台服务还在，可 CPU 一睡分析就停了。最多拿 6 小时，分析结束就放；
+     * 太热 / 电量低暂停期间也放掉（没东西要算，低电时攥着反而更耗电），接着分析时再拿（审查第 49 条）。
+     */
     private var wake: android.os.PowerManager.WakeLock? = null
     private var name = ""
     private var lastShown = 0L
@@ -43,16 +46,13 @@ class AnalysisService : Service() {
             Session.dropPause()
             return START_NOT_STICKY
         }
-        name = intent?.getStringExtra(EXTRA_NAME) ?: name
+        name = intent?.getStringExtra(EXTRA_NAME) ?: Scans.label.value.ifEmpty { name }
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel(CHANNEL, t("cull.analyzing"), NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) })
         val type = if (Build.VERSION.SDK_INT >= 35) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING else ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
         // 直接调系统的 startForeground：androidx 的 ServiceCompat 不认识 API 35 新加的 mediaProcessing，会把它屏蔽成"无类型"，系统随即拒绝
         startForeground(ID, build(Progress()), type)
-        if (wake == null) wake = getSystemService(android.os.PowerManager::class.java).newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "fleetinggleam:analysis").apply {
-            setReferenceCounted(false)
-            acquire(6 * 60 * 60 * 1000L)
-        }
+        holdWake(Session.paused.value == Pause.None)
         off?.invoke()
         off = Core.listen("scan-progress") { raw ->
             val p = runCatching { Fg.json.decodeFromString<Progress>(raw) }.getOrNull() ?: return@listen
@@ -64,8 +64,20 @@ class AnalysisService : Service() {
         }
         // 太热 / 电量低停下时服务留着：通知改成"已暂停（n/N）"，接着分析时换回进度
         pauseJob?.cancel()
-        pauseJob = scope.launch { Session.paused.collect { nm.notify(ID, build(Session.progress.value)) } }
+        pauseJob = scope.launch {
+            launch { Session.paused.collect { holdWake(it == Pause.None); nm.notify(ID, build(Session.progress.value)) } }
+            // 暂停期间换了个项目分析，服务没重启：名字跟着 Scans.label 换（审查第 58 条）
+            launch { Scans.label.collect { if (it.isNotEmpty() && it != name) { name = it; nm.notify(ID, build(Session.progress.value)) } } }
+        }
         return START_NOT_STICKY
+    }
+
+    /** 拿着或放掉 wake lock（重复拿、重复放都没事）。 */
+    private fun holdWake(on: Boolean) {
+        if (on) {
+            val w = wake ?: getSystemService(android.os.PowerManager::class.java).newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "fleetinggleam:analysis").apply { setReferenceCounted(false) }.also { wake = it }
+            if (!w.isHeld) w.acquire(6 * 60 * 60 * 1000L)
+        } else wake?.let { if (it.isHeld) it.release() }
     }
 
     private fun build(p: Progress): Notification {
@@ -102,10 +114,15 @@ class AnalysisService : Service() {
      */
     override fun onTimeout(startId: Int, fgsType: Int) {
         val p = Session.progress.value
+        // 先停掉收集与监听，再改状态（审查第 48 条）：dropPause 会改 `paused`，收集还在的话会照着它把常驻的"分析中"通知重新贴出来，
+        // 这时前台服务已经撤了，那条通知就再也划不掉
+        pauseJob?.cancel(); pauseJob = null
+        off?.invoke(); off = null
         Session.stopScan()
         Session.dropPause()
         Scans.timedOut()
         stopForeground(STOP_FOREGROUND_REMOVE)
+        getSystemService(NotificationManager::class.java).cancel(ID)
         stopSelf()
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_IMMUTABLE)
         val body = t("android.scan.timeoutBody", "done" to p.done, "total" to p.total)
@@ -124,6 +141,8 @@ class AnalysisService : Service() {
         pauseJob = null
         off?.invoke()
         off = null
+        // 撤掉时进度通知一定不留：收集或监听在撤之前刚 notify 过的那一条，会变成一条划不掉的"分析中"
+        getSystemService(NotificationManager::class.java).cancel(ID)
         wake?.let { if (it.isHeld) it.release() }
         wake = null
         super.onDestroy()
