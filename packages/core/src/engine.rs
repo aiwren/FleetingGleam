@@ -2088,7 +2088,8 @@ impl Engine {
             let Ok(rd) = std::fs::read_dir(&dir) else { continue };
             for e in rd.flatten() {
                 let name = e.file_name().to_string_lossy().into_owned();
-                if name.len() >= 16 && prefixes.contains(&name[..16]) {
+                // 按字节取前 16 个：缩略图目录里别的文件（非 ASCII 名字）在第 16 字节处可能切在一个字的中间，`&name[..16]` 会 panic
+                if name.get(..16).map_or(false, |h| prefixes.contains(h)) {
                     let _ = std::fs::remove_file(e.path());
                 }
             }
@@ -3075,10 +3076,14 @@ mod tests {
         scan(&db);
         let thumb = PathBuf::from(&a[0].thumb);
         assert!(thumb.exists());
+        // 缩略图目录里一个第 16 字节落在字中间的名字（每个汉字 3 字节）：不 panic、不删
+        let odd = e.paths.thumbs.join("照片照片照片照片.jpg");
+        std::fs::write(&odd, b"x").unwrap();
         let (sa, sb) = (da.to_string_lossy().into_owned(), db.to_string_lossy().into_owned());
         // b 还被别的项目用着：a 和 b 都要删，但只忘掉 a
         assert_eq!(e.forget_folders(&[sa.clone(), sb.clone()], &[sb.clone()]), 2);
         assert!(!thumb.exists(), "the thumbnail went with it");
+        assert!(odd.exists());
         let probe = |d: &str| e.probe_folder(&[d.to_string()], None, None).unwrap().uncached;
         assert_eq!(probe(&sa), 2, "a has to be analysed again");
         assert_eq!(probe(&sb), 0, "b, still in use, is untouched");
