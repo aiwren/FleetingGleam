@@ -202,6 +202,9 @@ impl Drop for JudgeGuard {
     }
 }
 
+/// 分析中 "scan-progress" 最多多久发一次（毫秒）。
+const PROGRESS_EVERY_MS: u64 = 100;
+
 /// 分析用的线程数：核数（`FG_SCAN_THREADS` 可改，调性能用）。每条线程分析一张照片时有一大半时间在等别人——Mac 等 Vision 边车和
 /// Metal 上的 CLIP，手机等 NNAPI 和模型会话池——按说多开线程能把解码填进等待里，可量过（M1 Max，60 张 12 MP 与 400 张 1536px）：
 /// 一倍半的线程一点不快，两倍反而慢一成（内核态时间涨，像是大块内存的缺页在排队），所以还是核数。
@@ -838,6 +841,8 @@ impl Engine {
             let pending: Mutex<(Vec<Photo>, std::time::Instant)> = Mutex::new((Vec::new(), std::time::Instant::now()));
             let timing: Mutex<HashMap<&'static str, (f64, usize)>> = Mutex::new(HashMap::new());
             let wall = std::time::Instant::now();
+            // 上一条 "scan-progress" 是分析开始后第几毫秒发的（节流用；开始时那条在上面已经发过）
+            let last_progress = AtomicU64::new(0);
             let save_batch = |batch: &[Photo]| {
                 self.with_cache(|c| {
                     for p in batch {
@@ -872,10 +877,10 @@ impl Engine {
                     };
                     let on_stage = |stage: &str, pct: u8, thumb: Option<(&str, u32, u32)>| {
                         lap(match stage { "decode" => "decode", "quality" => "quality", "ai" => "ai", "system" => "faces", "thumb" => "tail", _ => "other" });
-                        if quiet {
-                            return;
-                        }
-                        self.emit("scan-stage", &Stage { path: &key, stage, pct, thumb: thumb.map(|t| t.0), width: thumb.map(|t| t.1), height: thumb.map(|t| t.2) });
+                        // 每张照片只在缩略图做好的那一刻发一次 "scan-stage"（界面拿它先把缩略图摆上墙）；别的阶段不发——
+                        // 以前每张五次，Android 上每次一遍 JSON + JNI，Mac 上每次一遍序列化 + eval。载荷不变
+                        let Some(thumb) = thumb.filter(|_| !quiet) else { return };
+                        self.emit("scan-stage", &Stage { path: &key, stage, pct, thumb: Some(thumb.0), width: Some(thumb.1), height: Some(thumb.2) });
                     };
                     let r = analyze::analyze(p, &cache_dir, scorer.as_deref().map(|s| s as &dyn AiScorer), vision, eye_method, mp.as_deref(), fe.as_deref(), &on_stage);
                     lap("start");
@@ -887,7 +892,12 @@ impl Engine {
                                 j.0.push(photo);
                             }
                         }
-                        self.emit("scan-progress", &Progress { done: d, total });
+                        // 进度节流：每 100 ms 最多一条（最后一条在分析完后补发，见下面）
+                        let now = wall.elapsed().as_millis() as u64;
+                        let prev = last_progress.load(Ordering::Relaxed);
+                        if now >= prev + PROGRESS_EVERY_MS && last_progress.compare_exchange(prev, now, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
+                            self.emit("scan-progress", &Progress { done: d, total });
+                        }
                     }
                     if let Ok(photo) = &r {
                         // 攒够 25 张或过了 10 秒就落一批：落盘现在只是往日志末尾追加这几条（见 cache.rs），不再随项目变大而变慢，
@@ -920,6 +930,10 @@ impl Engine {
                 Some(pool) => pool.install(work),
                 None => work(),
             };
+            // 节流掉的最后一条补发：所有分析线程都结束了，这一条一定是最后到界面的
+            if !quiet {
+                self.emit("scan-progress", &Progress { done: done.load(Ordering::Relaxed), total });
+            }
             let rest = std::mem::take(&mut pending.lock().unwrap_or_else(|e| e.into_inner()).0);
             save_batch(&rest);
             // 一行性能小结（Android 进系统日志）：每张墙钟耗时，和每条线程上各阶段的平均耗时
@@ -2742,6 +2756,27 @@ mod tests {
         assert_eq!(skips.len(), 1, "{skips:?}");
         assert_eq!(skips[0]["path"], broken.as_str());
         assert!(!skips[0]["error"].as_str().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 分析中的事件：每张照片一条 "scan-stage"（带缩略图）、一条 "scan-photo"；"scan-progress" 节流，但最后一条一定是做完的数。
+    #[test]
+    fn scan_events_are_few_and_the_last_progress_is_complete() {
+        let (e, root, events) = engine("events");
+        let dir = root.join("photos");
+        photos(&dir, 6);
+        let out = e.scan_project(ScanArgs { key: "k".into(), dirs: vec![dir.to_string_lossy().into_owned()], ..Default::default() }).unwrap();
+        assert_eq!(out.len(), 6);
+        let ev = events.0.lock().unwrap().clone();
+        let named = |n: &str| ev.iter().filter(|(x, _)| x == n).map(|(_, v)| v.clone()).collect::<Vec<_>>();
+        let stages = named("scan-stage");
+        assert_eq!(stages.len(), 6, "每张一条");
+        assert!(stages.iter().all(|s| s["thumb"].is_string() && s["width"].as_u64().unwrap() > 0 && s["stage"] == "quality"), "{stages:?}");
+        assert_eq!(named("scan-photo").len(), 6);
+        let progress = named("scan-progress");
+        assert!(progress.len() <= 6 + 2, "{progress:?}");
+        assert_eq!(progress.last().unwrap()["done"], 6);
+        assert_eq!(progress.last().unwrap()["total"], 6);
         let _ = std::fs::remove_dir_all(&root);
     }
 
