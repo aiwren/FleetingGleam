@@ -4,16 +4,18 @@ import FolderPicker from "./components/FolderPicker";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ReactNode, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { MotionConfig, motion } from "motion/react";
+import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 import Culling from "./modules/Culling";
 import Styles from "./modules/Styles";
 import Settings from "./modules/Settings";
-import { newProjectFromDialog } from "./projectActions";
+import { newProjectFromDialog, projectFromFolders } from "./projectActions";
 import { purgeExpired, setActive, useProjectsStatus } from "./projects";
 import { refreshShares } from "./nas";
 import { watchForBackup } from "./backup";
-import { SPRING } from "./motion";
+import { DUR, SPRING } from "./motion";
 import logo from "./assets/logo.png";
 import "./App.css";
 
@@ -56,6 +58,25 @@ export default function App() {
     return () => { un.then((f) => f()); window.removeEventListener("focus", purgeExpired); };
   }, []);
 
+  // 把文件夹（或照片）拖进窗口：松手就用它们建项目并打开（已经是某个项目的那个文件夹就直接打开它）
+  const [dragging, setDragging] = useState(false);
+  useEffect(() => {
+    let un: (() => void) | null = null;
+    let live = true;
+    getCurrentWebview().onDragDropEvent((e) => {
+      const p = e.payload;
+      if (p.type === "enter") setDragging(true);
+      else if (p.type === "leave") setDragging(false);
+      else if (p.type === "drop") {
+        setDragging(false);
+        invoke<string[]>("dropped_folders", { paths: p.paths })
+          .then((dirs) => { if (projectFromFolders(dirs)) setModuleId("culling"); })
+          .catch(() => { /* not in Tauri */ });
+      }
+    }).then((f) => { if (live) un = f; else f(); }).catch(() => { /* not in Tauri */ });
+    return () => { live = false; un?.(); };
+  }, []);
+
   useEffect(() => {
     const un = listen<string>("menu", (e) => {
       if (e.payload === "toggle-sidebar") setSidebar((v) => !v);
@@ -86,6 +107,13 @@ export default function App() {
       </svg>
       <ModelGate />
       <FolderPicker />
+      <AnimatePresence>
+        {dragging && (
+          <motion.div className="dropzone" aria-hidden initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: DUR.fast }}>
+            <div className="dropzone-text"><b>{t("drop.title")}</b><span className="ash">{t("drop.body")}</span></div>
+          </motion.div>
+        )}
+      </AnimatePresence>
       <div className={`shell ${sidebar ? "" : "collapsed"}`}>
         <button className="sidebar-toggle" onClick={() => setSidebar((v) => !v)}
           aria-label={sidebar ? t("nav.collapse") : t("nav.expand")} title={`${sidebar ? t("nav.collapse") : t("nav.expand")} (⌘⌥S)`}>

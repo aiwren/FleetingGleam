@@ -295,6 +295,28 @@ async fn trash_photos(app: AppHandle, paths: Vec<String>) -> Result<TrashResult,
     blocking(move || e.trash_photos(paths)).await
 }
 
+/// 拖进窗口的东西里能当项目文件夹的：文件夹本身；拖的是照片文件就取它所在的文件夹。去重，保持拖入的顺序。
+#[tauri::command]
+fn dropped_folders(paths: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for p in paths {
+        let path = std::path::Path::new(&p);
+        let dir = if path.is_dir() {
+            Some(path.to_path_buf())
+        } else if path.is_file() && fg_core::analyze::is_image(path) {
+            path.parent().map(|d| d.to_path_buf())
+        } else {
+            None
+        };
+        if let Some(d) = dir.map(|d| d.to_string_lossy().trim_end_matches('/').to_string()).filter(|d| !d.is_empty()) {
+            if !out.contains(&d) {
+                out.push(d);
+            }
+        }
+    }
+    out
+}
+
 /// Shows a file (or folder) in Finder / Explorer.
 #[tauri::command]
 fn reveal(path: String) -> Result<(), String> {
@@ -607,6 +629,12 @@ pub fn run() {
                 let _ = w.set_focus();
             }
         }))
+        // 窗口的大小、位置、最大化与全屏（不管可见性和标题栏样式，那两样由 tauri.conf.json 定）
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(tauri_plugin_window_state::StateFlags::SIZE | tauri_plugin_window_state::StateFlags::POSITION | tauri_plugin_window_state::StateFlags::MAXIMIZED | tauri_plugin_window_state::StateFlags::FULLSCREEN)
+                .build(),
+        )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -640,7 +668,7 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![forget_folders, probe_folder, scan_project, scan_cancel, decide_photos, projects_load, projects_save, projects_quarantine, taste_export, taste_import, nas_list, nas_add, nas_remove, nas_connect, nas_disconnect, nas_ensure, nas_browse, nas_probe, nas_update, nas_set_enabled, nas_mirror_usage, nas_mirror_clear, backup_status, backup_save_target, backup_remove_target, backup_set_options, backup_now, backup_restore, backup_peek, set_rotation, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, export_cancel, trash_photos, reveal, preview_thumbs, photo_info, large_preview, motion_clip, hdrview::hdr_overlay_supported, hdrview::hdr_overlay_show, hdrview::hdr_overlay_move, hdrview::hdr_overlay_hide, hdrview::hdr_overlay_detail, hdrview::hdr_overlay_detail_hide, photo_detail, machine_info, search_status, search_index, search_photos, scene_text, packs_status, pack_size, pack_download, pack_cancel, pack_remove, diagnostics_export, diagnostics_dir, proxy::proxy_info, proxy::proxy_set, samples::samples_folder, quit_ready])
+        .invoke_handler(tauri::generate_handler![forget_folders, probe_folder, scan_project, scan_cancel, decide_photos, projects_load, projects_save, projects_quarantine, taste_export, taste_import, nas_list, nas_add, nas_remove, nas_connect, nas_disconnect, nas_ensure, nas_browse, nas_probe, nas_update, nas_set_enabled, nas_mirror_usage, nas_mirror_clear, backup_status, backup_save_target, backup_remove_target, backup_set_options, backup_now, backup_restore, backup_peek, set_rotation, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, export_cancel, trash_photos, reveal, preview_thumbs, photo_info, large_preview, motion_clip, hdrview::hdr_overlay_supported, hdrview::hdr_overlay_show, hdrview::hdr_overlay_move, hdrview::hdr_overlay_hide, hdrview::hdr_overlay_detail, hdrview::hdr_overlay_detail_hide, photo_detail, machine_info, search_status, search_index, search_photos, scene_text, packs_status, pack_size, pack_download, pack_cancel, pack_remove, diagnostics_export, diagnostics_dir, proxy::proxy_info, proxy::proxy_set, samples::samples_folder, quit_ready, dropped_folders])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {

@@ -413,6 +413,8 @@ w.__TAURI_INTERNALS__ = {
         return { system: "http://127.0.0.1:7890", manual: localStorage.getItem("fg.mock.proxy"), active: localStorage.getItem("fg.mock.proxy") ?? "http://127.0.0.1:7890" };
       }
       case "samples_folder": return "/mock/Samples";
+      // 拖进窗口（lib.rs 的 dropped_folders）：模拟的文件夹本身，或模拟照片所在的文件夹
+      case "dropped_folders": return [...new Set((args.paths as string[]).map((p) => (p in FOLDERS ? p : p.slice(0, p.lastIndexOf("/")))).filter((d) => d in FOLDERS))];
       case "plugin:dialog|save": return "/Users/me/Desktop/fleetinggleam-diagnostics.txt";
       case "diagnostics_export": await sleep(500); return String(args.out);
       case "diagnostics_dir": return "/Users/me/Library/Application Support/com.fleetinggleam.app/logs";
