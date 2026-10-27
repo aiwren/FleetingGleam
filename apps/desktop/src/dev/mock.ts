@@ -60,6 +60,8 @@ const FOLDERS: Record<string, { count: number; seedOffset: number }> = {
 };
 type Src = { path: string; seed: number; shift: number; w: number; h: number };
 const SRC: Src[] = [];
+/** 移到废纸篓的模拟照片，撤销时放回 SRC。 */
+const trashed = new Map<string, (typeof SRC)[number]>();
 for (const [dir, { count, seedOffset }] of Object.entries(FOLDERS)) {
   for (let i = 0; i < count; i++) {
     const seed = (Math.floor(i / 2.6) + seedOffset) % 11;
@@ -347,9 +349,22 @@ w.__TAURI_INTERNALS__ = {
       case "export_cancel": exportCancel = true; return null;
       case "trash_photos": {
         const paths = args.paths as string[];
-        for (const p of paths) { const i = SRC.findIndex((s) => s.path === p); if (i >= 0) SRC.splice(i, 1); cached.delete(p); }
+        const undo: { path: string; at: string }[] = [];
+        for (const p of paths) {
+          const i = SRC.findIndex((s) => s.path === p);
+          if (i >= 0) { trashed.set(p, SRC[i]); SRC.splice(i, 1); undo.push({ path: p, at: `/Users/me/.Trash/${p.split("/").pop()}` }); }
+          cached.delete(p);
+        }
         await sleep(300);
-        return { moved: paths.length, failed: [] };
+        return { moved: paths.length, failed: [], undo };
+      }
+      // 撤销移到废纸篓：放回原来的位置（模拟的照片表里加回去）
+      case "untrash_photos": {
+        const items = args.items as { path: string }[];
+        const restored: string[] = [], failed: string[] = [];
+        for (const it of items) { const s = trashed.get(it.path); if (s) { SRC.push(s); trashed.delete(it.path); restored.push(it.path); } else failed.push(it.path); }
+        await sleep(300);
+        return { restored, failed };
       }
       case "reveal": return null;
       case "large_preview": return (args.path as string);

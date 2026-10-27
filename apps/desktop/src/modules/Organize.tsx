@@ -8,6 +8,9 @@ import { EASE_OUT } from "../motion";
 import { baseName, pickLocalFolder } from "../projectActions";
 import { Project, updateProject } from "../projects";
 import { Decision, Photo } from "../types";
+
+/** 一张移走的照片去了哪里（核心的 `Trashed`），原样交回 `untrash_photos` 就能放回原处。 */
+type Trashed = { path: string; at: string; nas?: string | null; from?: string | null };
 import { getEnabledShares, nasLabel, openPicker } from "../nas";
 import { errText } from "../errors";
 
@@ -34,6 +37,11 @@ export default function Organize({ project, photos, decisions, offline = false, 
   const [scope, setScope] = useState<"manual" | "all">("manual");
   /** `skipped`：目标里已经有了（同名、同大小、同时间）；`failed`：没导出的那些和原因（约定的错误前缀）；`cancelled`：中途停下了。 */
   const [result, setResult] = useState<{ ok: number; bad: number; skipped?: number; failed?: { path: string; error: string }[]; cancelled?: boolean; dest?: string; bins?: string[]; remote?: boolean; error?: string } | null>(null);
+  /** 移到废纸篓后能放回原处的那些（核心交回的 `undo`），和移走前这些照片的手动判定，放回时一并还原。 */
+  const [undo, setUndo] = useState<{ items: Trashed[]; overrides: Record<string, Decision["state"]> } | null>(null);
+  /** 放回原处的结果：放回了几张、几张没放回。 */
+  const [putBack, setPutBack] = useState<{ ok: number; bad: number } | null>(null);
+  const [putting, setPutting] = useState(false);
   const [stopping, setStopping] = useState(false);
 
   const keep = photos.filter((p) => decisions.get(p.path)?.state === "keep");
@@ -48,7 +56,7 @@ export default function Organize({ project, photos, decisions, offline = false, 
     return () => window.removeEventListener("mousedown", close);
   }, [menu]);
 
-  const open = (d: Dlg) => { setResult(null); setStopping(false); setPhase("confirm"); setProgress({ done: 0, total: 0 }); setDlg(d); setMenu(false); };
+  const open = (d: Dlg) => { setResult(null); setUndo(null); setPutBack(null); setStopping(false); setPhase("confirm"); setProgress({ done: 0, total: 0 }); setDlg(d); setMenu(false); };
   const close = () => { setDlg(null); if (phase === "done") onChanged(); };
 
   const startExport = async () => {
@@ -70,16 +78,33 @@ export default function Organize({ project, photos, decisions, offline = false, 
   const startTrash = async () => {
     setPhase("running");
     try {
-      const r = await invoke<{ moved: number; failed: string[]; network_bins?: string[] }>("trash_photos", { paths: trashList.map((p) => p.path) });
+      const r = await invoke<{ moved: number; failed: string[]; network_bins?: string[]; undo?: Trashed[] }>("trash_photos", { paths: trashList.map((p) => p.path) });
       const failed = new Set(r.failed);
       const gone = trashList.filter((p) => !failed.has(p.path)).map((p) => p.path);
-      // Forget decisions about files that no longer exist.
+      // Forget decisions about files that no longer exist（先记下来，放回原处时还原）.
       const next = { ...project.overrides };
-      gone.forEach((g) => delete next[g]);
+      const kept: Record<string, Decision["state"]> = {};
+      gone.forEach((g) => { if (g in next) kept[g] = next[g]; delete next[g]; });
+      setUndo(r.undo?.length ? { items: r.undo, overrides: kept } : null);
       updateProject(project.id, { overrides: next });
       setResult({ ok: r.moved, bad: r.failed.length, bins: r.network_bins ?? [] });
     } catch { setResult({ ok: 0, bad: trashList.length }); }
     setPhase("done");
+  };
+
+  /** 撤销移到废纸篓：按记下的位置放回原处，手动判定一并还原；关掉对话框时项目重新读取，照片回到墙上。 */
+  const startPutBack = async () => {
+    if (!undo || putting) return;
+    setPutting(true);
+    try {
+      const r = await invoke<{ restored: string[]; failed: string[] }>("untrash_photos", { items: undo.items });
+      const next = { ...project.overrides };
+      r.restored.forEach((p) => { if (p in undo.overrides) next[p] = undo.overrides[p]; });
+      updateProject(project.id, { overrides: next });
+      setPutBack({ ok: r.restored.length, bad: r.failed.length });
+    } catch { setPutBack({ ok: 0, bad: undo.items.length }); }
+    setUndo(null);
+    setPutting(false);
   };
 
   const chooseDest = async () => {
@@ -160,9 +185,12 @@ export default function Organize({ project, photos, decisions, offline = false, 
         )}
       </Modal>
 
-      <Modal open={dlg?.kind === "trash"} onClose={close} locked={phase === "running"} title={t("organize.trashTitle")}
+      <Modal open={dlg?.kind === "trash"} onClose={close} locked={phase === "running" || putting} title={t("organize.trashTitle")}
         footer={phase === "done" ? (
-          <button className="btn primary sm" onClick={close}>{t("organize.done")}</button>
+          <>
+            {undo && <button className="btn" onClick={startPutBack} disabled={putting}>{putting ? t("organize.puttingBack") : t("organize.putBack", { count: undo.items.length })}</button>}
+            <button className="btn primary sm" onClick={close} disabled={putting}>{t("organize.done")}</button>
+          </>
         ) : (
           <>
             <button className="btn" onClick={close} disabled={phase === "running"}>{t("organize.cancel")}</button>
@@ -171,7 +199,12 @@ export default function Organize({ project, photos, decisions, offline = false, 
             </button>
           </>
         )}>
-        {phase === "done" ? (
+        {phase === "done" && putBack ? (
+          <>
+            <p>{t("organize.putBackDone", { count: putBack.ok })}</p>
+            {putBack.bad > 0 && <p className="ash small">{t("organize.putBackFailed", { n: putBack.bad })}</p>}
+          </>
+        ) : phase === "done" ? (
           <>
             <p>{t("organize.trashed", { count: result?.ok ?? 0 })}</p>
             {result && result.bad > 0 && <p className="ash small">{t("organize.trashFailed", { n: result.bad })}</p>}

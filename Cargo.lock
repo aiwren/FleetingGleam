@@ -1482,6 +1482,7 @@ dependencies = [
  "image",
  "kamadak-exif",
  "libc",
+ "objc2-foundation",
  "ort",
  "rayon",
  "serde",

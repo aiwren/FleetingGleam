@@ -304,7 +304,7 @@ const en = {
     warnAll: "{{n}} of these are only the system's suggestion; you haven't confirmed them yourself.",
     trashedToShare: "These photos are on a NAS and were moved to the recycle folder inside the share: {{where}}. Put them back by hand if needed.",
     trashGo: "Move to Trash ({{count}})", trashing: "Moving…", trashed_one: "Moved {{count}} photo to the Trash", trashed_other: "Moved {{count}} photos to the Trash",
-    trashFailed: "{{n}} could not be moved (already gone, or no permission).", trashRecover: "To get them back, open the Trash, right-click a photo and choose Put Back.",
+    trashFailed: "{{n}} could not be moved (already gone, or no permission).", trashRecover: "To get them back, open the Trash, right-click a photo and choose Put Back.", putBack: "Put back ({{count}})", puttingBack: "Putting back…", putBackDone: "Put back {{count}} photos", putBackFailed: "{{n}} could not be put back (a file with that name is already there, or the Trash was emptied).",
   },
   pset: {
     note: "Notes", notePh: "What this shoot was, what you want to keep (for you only; not used for scoring)",

@@ -211,6 +211,7 @@ enum Op {
     Browse { id: String, rel: String, reply: mpsc::Sender<Result<Vec<Entry>, String>> },
     Sync { id: String, rel: String, local_root: PathBuf, progress: Box<dyn Fn(SyncProgress) + Send>, cancel: Box<dyn Fn() -> bool + Send>, reply: mpsc::Sender<Result<(), String>> },
     Recycle { id: String, rels: Vec<String>, reply: mpsc::Sender<Vec<Result<String, String>>> },
+    Restore { id: String, pairs: Vec<(String, String)>, reply: mpsc::Sender<Vec<Result<(), String>>> },
     Upload { id: String, dir: String, files: Vec<PathBuf>, progress: Box<dyn Fn(usize) + Send>, cancel: Box<dyn Fn() -> bool + Send>, reply: mpsc::Sender<Vec<Result<Sent, String>>> },
 }
 
@@ -287,6 +288,12 @@ impl Pool {
         self.ask(|reply| Op::Recycle { id: id.to_string(), rels, reply }).unwrap_or_else(|e| vec![Err(e); n])
     }
 
+    /// 撤销回收：每对是（回收文件夹里的位置，原来的位置），都是 `共享/路径`；原来的位置已经有文件就不放（不覆盖）。
+    pub fn restore(&self, id: &str, pairs: Vec<(String, String)>) -> Vec<Result<(), String>> {
+        let n = pairs.len();
+        self.ask(|reply| Op::Restore { id: id.to_string(), pairs, reply }).unwrap_or_else(|e| vec![Err(e); n])
+    }
+
     /// 把本机的这些文件上传到 NAS 上的文件夹 `dir`（`共享/路径`，没有就建）；重名的加序号，从不覆盖；同名同大小同修改时间的不再传。
     /// 每张返回它在 NAS 上的位置；`progress(n)` 是已经处理完几张。`cancel()` 为真就在当前这张之后停：返回的比 `files` 少。
     pub fn upload(&self, id: &str, dir: &str, files: Vec<PathBuf>, progress: impl Fn(usize) + Send + 'static, cancel: impl Fn() -> bool + Send + 'static) -> Vec<Result<Sent, String>> {
@@ -358,6 +365,15 @@ async fn handle(conns: &mut HashMap<String, Conn>, connected: &Mutex<HashSet<Str
             let n = rels.len();
             let r = match conns.remove(&id) {
                 Some(mut c) => { let r = recycle(&mut c, &rels).await; settle(conns, connected, &id, c, r) }
+                None => Err("not connected".to_string()),
+            }
+            .unwrap_or_else(|e| vec![Err(e); n]);
+            let _ = reply.send(r);
+        }
+        Op::Restore { id, pairs, reply } => {
+            let n = pairs.len();
+            let r = match conns.remove(&id) {
+                Some(mut c) => { let r = restore(&mut c, &pairs).await; settle(conns, connected, &id, c, r) }
                 None => Err("not connected".to_string()),
             }
             .unwrap_or_else(|e| vec![Err(e); n]);
@@ -638,6 +654,35 @@ async fn recycle(c: &mut Conn, rels: &[String]) -> Result<Vec<Result<String, Str
         }
         out.push(match client.rename(tree, rel, &target).await {
             Ok(()) => Ok(format!("{share}/{target}")),
+            Err(e) if lost(&e) => return Err(e),
+            Err(e) => Err(explain(&e)),
+        });
+    }
+    Ok(out)
+}
+
+/// 撤销回收：把回收文件夹里的照片挪回原来的位置（同一个共享里；原来的文件夹没了就一级一级建回来）。原处已经有文件就不放。
+async fn restore(c: &mut Conn, pairs: &[(String, String)]) -> Result<Vec<Result<(), String>>, smb2::Error> {
+    let mut out = Vec::with_capacity(pairs.len());
+    for (at, to) in pairs {
+        let ((share, from), (share_to, rel)) = (split_share(at), split_share(to));
+        if share != share_to || from.is_empty() || rel.is_empty() {
+            out.push(Err("denied:not the same share".to_string()));
+            continue;
+        }
+        let Conn { client, trees } = c;
+        let tree = tree_in(client, trees, share).await?;
+        if client.stat(tree, rel).await.is_ok() {
+            out.push(Err("exists".to_string()));
+            continue;
+        }
+        let mut acc = String::new();
+        for part in rel.split('/').filter(|p| !p.is_empty()).collect::<Vec<_>>().split_last().map_or(&[][..], |(_, dirs)| dirs) {
+            acc = if acc.is_empty() { part.to_string() } else { format!("{acc}/{part}") };
+            mkdir_ok(client, tree, &acc).await?;
+        }
+        out.push(match client.rename(tree, from, rel).await {
+            Ok(()) => Ok(()),
             Err(e) if lost(&e) => return Err(e),
             Err(e) => Err(explain(&e)),
         });

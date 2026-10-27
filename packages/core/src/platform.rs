@@ -100,6 +100,10 @@ pub trait VisionFactory: Send + Sync {
 /// 所以 Android 不注册它，由界面自己处理（见 `engine::TrashResult::deferred`）。
 pub trait LocalTrash: Send + Sync {
     fn trash(&self, path: &Path) -> Result<Option<String>, String>;
+    /// 和 `trash` 一样，另外交回照片现在的确切位置（废纸篓或回收文件夹里），撤销时按它放回原处；拿不到就 None（不能撤销）。
+    fn trash_at(&self, path: &Path) -> Result<(Option<String>, Option<std::path::PathBuf>), String> {
+        self.trash(path).map(|bin| (bin, None))
+    }
 }
 
 static VISION: OnceLock<Box<dyn VisionFactory>> = OnceLock::new();

@@ -41,3 +41,5 @@ ort.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 # 访达挂载的网络卷（statfs）
 libc.workspace = true
+# 放进废纸篓时拿回它在废纸篓里的确切位置（撤销"移到废纸篓"时按它放回原处）；`trash` 用的就是同一版
+objc2-foundation = "0.3"

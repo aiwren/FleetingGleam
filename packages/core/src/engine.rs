@@ -299,6 +299,29 @@ pub struct TrashResult {
     /// 本机的照片，但宿主没有注册 `LocalTrash`（Android）：由界面自己放进系统回收站（要用户在系统确认框里同意）。
     #[serde(default)]
     pub deferred: Vec<String>,
+    /// 能放回原处的那些：每张去了哪里。原样交回 `untrash_photos` 就能撤销。
+    #[serde(default)]
+    pub undo: Vec<Trashed>,
+}
+
+/// 一张移走的照片：`path` 是它原来（项目里）的路径，`at` 是它现在的位置——本机是废纸篓或回收文件夹里的文件，
+/// NAS 上是 `共享/路径`（这时 `nas` 是那台 NAS 的 id，`from` 是它原来在共享里的 `共享/路径`）。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Trashed {
+    pub path: String,
+    pub at: String,
+    #[serde(default)]
+    pub nas: Option<String>,
+    #[serde(default)]
+    pub from: Option<String>,
+}
+
+/// 放回原处的结果：`restored` 是放回去了的原路径（NAS 上的照片下次打开项目时重新拉回本机），`failed` 是没放回的（原处已经有同名文件、
+/// 废纸篓已清空、NAS 连不上……）。
+#[derive(Serialize, Default, Debug)]
+pub struct UntrashResult {
+    pub restored: Vec<String>,
+    pub failed: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
@@ -1777,11 +1800,12 @@ impl Engine {
             let Some(s) = shares.iter().find(|s| s.id == id) else { continue };
             let _ = self.nas_connect_saved(s);
             let results = self.nas.recycle(&id, items.iter().map(|(_, rel)| rel.clone()).collect());
-            for ((p, _), res) in items.into_iter().zip(results) {
+            for ((p, rel), res) in items.into_iter().zip(results) {
                 match res {
                     Ok(target) => {
                         let _ = std::fs::remove_file(&p);
                         r.moved += 1;
+                        r.undo.push(Trashed { path: p.clone(), at: target.clone(), nas: Some(id.clone()), from: Some(rel.clone()) });
                         let at = nas::recycle_url(s, nas::split_share(&target).0);
                         if !r.network_bins.contains(&at) {
                             r.network_bins.push(at);
@@ -1796,9 +1820,12 @@ impl Engine {
         }
         for path in local {
             match crate::platform::local_trash() {
-                Some(t) => match t.trash(&path) {
-                    Ok(bin) => {
+                Some(t) => match t.trash_at(&path) {
+                    Ok((bin, at)) => {
                         r.moved += 1;
+                        if let Some(at) = at {
+                            r.undo.push(Trashed { path: path.to_string_lossy().into_owned(), at: at.to_string_lossy().into_owned(), nas: None, from: None });
+                        }
                         if let Some(b) = bin {
                             if !r.network_bins.contains(&b) {
                                 r.network_bins.push(b);
@@ -1808,6 +1835,48 @@ impl Engine {
                     Err(_) => r.failed.push(path.to_string_lossy().into_owned()),
                 },
                 None => r.deferred.push(path.to_string_lossy().into_owned()),
+            }
+        }
+        r
+    }
+
+    /// 撤销移到废纸篓：把 `trash_photos` 交回的那些放回原处。只认照片文件；原处已经有同名文件就不放（不覆盖）。
+    /// 本机的从废纸篓 / 回收文件夹挪回去；NAS 上的在共享里从回收文件夹挪回原来的位置，本机副本下次打开项目时同步回来。
+    pub fn untrash_photos(&self, items: Vec<Trashed>) -> UntrashResult {
+        let mut r = UntrashResult::default();
+        let mut on_nas: HashMap<String, Vec<Trashed>> = HashMap::new();
+        for it in items {
+            if !(analyze::is_image(Path::new(&it.path)) && analyze::is_image(Path::new(&it.at))) {
+                r.failed.push(it.path);
+                continue;
+            }
+            match &it.nas {
+                Some(id) => on_nas.entry(id.clone()).or_default().push(it),
+                None => {
+                    let (to, from) = (Path::new(&it.path), Path::new(&it.at));
+                    let ok = !to.exists() && from.is_file() && to.parent().map_or(false, |d| std::fs::create_dir_all(d).is_ok()) && std::fs::rename(from, to).is_ok();
+                    if ok { r.restored.push(it.path) } else { r.failed.push(it.path) }
+                }
+            }
+        }
+        let shares = nas::load(&self.paths.data);
+        for (id, items) in on_nas {
+            let Some(s) = shares.iter().find(|s| s.id == id) else {
+                r.failed.extend(items.into_iter().map(|it| it.path));
+                continue;
+            };
+            let _ = self.nas_connect_saved(s);
+            let (ok, bad): (Vec<_>, Vec<_>) = items.into_iter().partition(|it| it.from.is_some());
+            r.failed.extend(bad.into_iter().map(|it| it.path));
+            let results = self.nas.restore(&id, ok.iter().map(|it| (it.at.clone(), it.from.clone().unwrap_or_default())).collect());
+            for (it, res) in ok.into_iter().zip(results) {
+                match res {
+                    Ok(()) => r.restored.push(it.path),
+                    Err(e) => {
+                        crate::platform::log(&format!("put back on {}: {e}", s.name));
+                        r.failed.push(it.path);
+                    }
+                }
             }
         }
         r
@@ -3343,6 +3412,27 @@ mod tests {
             assert!(photo.exists(), "nothing is touched when the host does it");
         }
         assert!(other.exists(), "a non-photo must never be touched");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 撤销移到废纸篓：按记下的位置放回原处；原处已有同名文件不覆盖；不是照片的一律不动。
+    #[test]
+    fn untrash_puts_photos_back_and_never_overwrites() {
+        let (e, root, _) = engine("untrash");
+        let (orig, bin) = (root.join("album"), root.join("bin"));
+        std::fs::create_dir_all(&bin).unwrap();
+        let back = |name: &str| Trashed { path: orig.join(name).to_string_lossy().into(), at: bin.join(name).to_string_lossy().into(), nas: None, from: None };
+        std::fs::write(bin.join("a.jpg"), b"a").unwrap();
+        std::fs::write(bin.join("b.jpg"), b"b").unwrap();
+        std::fs::create_dir_all(&orig).unwrap();
+        std::fs::write(orig.join("b.jpg"), b"someone else").unwrap();
+        std::fs::write(bin.join("c.txt"), b"c").unwrap();
+        let r = e.untrash_photos(vec![back("a.jpg"), back("b.jpg"), back("c.txt"), back("gone.jpg")]);
+        assert_eq!(r.restored, vec![orig.join("a.jpg").to_string_lossy().into_owned()]);
+        assert_eq!(r.failed.len(), 3);
+        assert_eq!(std::fs::read(orig.join("a.jpg")).unwrap(), b"a");
+        assert_eq!(std::fs::read(orig.join("b.jpg")).unwrap(), b"someone else", "never overwrite what is there now");
+        assert!(bin.join("b.jpg").exists() && bin.join("c.txt").exists());
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -48,6 +48,12 @@ pub struct DesktopTrash;
 
 impl fg_core::platform::LocalTrash for DesktopTrash {
     fn trash(&self, path: &Path) -> Result<Option<String>, String> {
+        self.trash_at(path).map(|(bin, _)| bin)
+    }
+
+    /// 网络卷：挪进卷上的回收文件夹，交回那个文件的位置。本机：系统废纸篓，用 NSFileManager 的 `trashItemAtURL`
+    /// 拿回它在废纸篓里的确切位置（访达"放回原处"认的也是它）；不需要完全磁盘访问，也不弹访达的自动化授权。
+    fn trash_at(&self, path: &Path) -> Result<(Option<String>, Option<PathBuf>), String> {
         if let Some((root, _)) = volume_of(path).filter(|(_, fstype)| is_network_fs(fstype)) {
             let target = network_bin_target(&root, path);
             let bin = target.parent().and_then(|d| d.parent()).map(|d| d.to_string_lossy().into_owned()).unwrap_or_default();
@@ -55,17 +61,23 @@ impl fg_core::platform::LocalTrash for DesktopTrash {
                 std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
             }
             std::fs::rename(path, &target).map_err(|e| e.to_string())?;
-            return Ok(Some(bin));
+            return Ok((Some(bin), Some(target)));
         }
-        #[allow(unused_mut)]
-        let mut ctx = trash::TrashContext::default();
         #[cfg(target_os = "macos")]
         {
-            use trash::macos::{DeleteMethod, TrashContextExtMacos};
-            // NSFileManager needs no Finder automation permission prompt.
-            ctx.set_delete_method(DeleteMethod::NsFileManager);
+            use objc2_foundation::{NSFileManager, NSString, NSURL};
+            let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
+            let mut out = None;
+            NSFileManager::defaultManager()
+                .trashItemAtURL_resultingItemURL_error(&url, Some(&mut out))
+                .map_err(|e| e.localizedDescription().to_string())?;
+            let at = out.and_then(|u| u.path()).map(|p| PathBuf::from(p.to_string()));
+            Ok((None, at))
         }
-        ctx.delete(path).map(|_| None).map_err(|e| e.to_string())
+        #[cfg(not(target_os = "macos"))]
+        {
+            trash::TrashContext::default().delete(path).map(|_| (None, None)).map_err(|e| e.to_string())
+        }
     }
 }
 
@@ -81,15 +93,21 @@ mod tests {
         assert!(!is_network_fs(&fstype), "{fstype}");
     }
 
+    /// 进废纸篓、拿回确切位置、按它放回原处（撤销用的就是这条路）；放回之后废纸篓里不留东西。
     #[test]
-    fn a_photo_goes_to_the_trash() {
+    fn a_photo_goes_to_the_trash_and_comes_back() {
         use fg_core::platform::LocalTrash;
         let dir = std::env::temp_dir().join(format!("fg_trash_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let photo = dir.join("fg-test-photo.jpg");
         std::fs::write(&photo, b"not really a jpeg").unwrap();
-        assert_eq!(DesktopTrash.trash(&photo).unwrap(), None);
+        let (bin, at) = DesktopTrash.trash_at(&photo).unwrap();
+        assert_eq!(bin, None);
         assert!(!photo.exists(), "the photo should be in the trash now");
+        let at = at.expect("the trash tells where the photo went");
+        assert!(at.is_file(), "{at:?}");
+        std::fs::rename(&at, &photo).unwrap();
+        assert_eq!(std::fs::read(&photo).unwrap(), b"not really a jpeg");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

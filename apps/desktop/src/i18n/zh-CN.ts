@@ -302,7 +302,7 @@ const zh = {
     warnAll: "其中 {{n}} 张只是系统的建议，你还没有亲自确认过。",
     trashedToShare: "这些照片在 NAS 上，已移到共享里的回收站文件夹：{{where}}。需要时可以手动放回。",
     trashGo: "移到废纸篓（{{count}} 张）", trashing: "正在移动…", trashed: "已移到废纸篓 {{count}} 张",
-    trashFailed: "有 {{n}} 张没能移动（可能已被移走，或没有权限）。", trashRecover: "想找回的话，打开访达的废纸篓，右键照片选择“放回原处”。",
+    trashFailed: "有 {{n}} 张没能移动（可能已被移走，或没有权限）。", trashRecover: "想找回的话，打开访达的废纸篓，右键照片选择“放回原处”。", putBack: "放回原处（{{count}} 张）", puttingBack: "正在放回…", putBackDone: "已放回原处 {{count}} 张", putBackFailed: "有 {{n}} 张没能放回（原处已有同名文件，或废纸篓已清空）。",
   },
   pset: {
     note: "备注", notePh: "这次拍了什么、想留下什么(仅自己看,不参与评分)",
