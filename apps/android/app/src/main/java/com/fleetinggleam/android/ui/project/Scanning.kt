@@ -65,30 +65,45 @@ import coil3.compose.AsyncImage
  * 暗色进度卡放在墙的最上面随墙滚走；滚走之后页签下面浮出一条窄胶囊（已分析 / 总数、还要多久，底边一线琥珀进度），点它回到顶上。
  * （作者 2026-10-23：之前页签下常驻一条细进度，和卡片里的重复，而且是按深色卡配的色，放在白底上很脏——去掉了。）
  */
-/** 分析中的页签数据：全部 = 文件数，其余按眼下的判定数；"保留 / 待复查 / 淘汰"页是眼下判成那样的照片。每个分析事件后重算。 */
+/**
+ * 分析中的页签数据：全部 = 文件数，其余按眼下的判定数；"保留 / 待复查 / 淘汰"页是眼下判成那样的照片。每个分析事件（tick）后重算。
+ * 给的是一个 State：只有读它的组件（照片墙、页签条）跟着 tick 重组，项目页整页不跟（审查第二批）；没人读就不算。
+ * 只在分析阶段调。
+ */
 @Composable
-fun rememberScanData(cull: CullState): CullData {
-    val files by Session.files.collectAsState()
-    Session.tick.collectAsState().value
-    val status = HashMap<String, Int>().apply {
-        put("all", files.size); put("keep", 0); put("review", 0); put("reject", 0)
-        for (f in files) Session.live[f.path]?.state?.let { put(it, (get(it) ?: 0) + 1) }
+fun rememberScanData(cull: CullState): androidx.compose.runtime.State<CullData> {
+    val files = Session.files.collectAsState()
+    val tick = Session.tick.collectAsState()
+    return remember(cull) {
+        androidx.compose.runtime.derivedStateOf {
+            tick.value
+            val list = files.value
+            val status = HashMap<String, Int>().apply {
+                put("all", list.size); put("keep", 0); put("review", 0); put("reject", 0)
+                for (f in list) Session.live[f.path]?.state?.let { put(it, (get(it) ?: 0) + 1) }
+            }
+            val mode = cull.mode
+            val shown = if (mode == "all") emptyList() else list.mapNotNull { Session.results[it.path] }.filter { Session.live[it.path]?.state == mode }
+            CullData(shown, status, emptyList(), emptyList(), Session.results, null)
+        }
     }
-    val mode = cull.mode
-    val shown = if (mode == "all") emptyList() else files.mapNotNull { Session.results[it.path] }.filter { Session.live[it.path]?.state == mode }
-    return CullData(shown, status, emptyList(), emptyList(), Session.results, null)
 }
+
+/** 分析中的页签条：自己读分析数据，tick 来了只重组这一条。 */
+@Composable
+fun ScanStatusStrip(cull: CullState, data: androidx.compose.runtime.State<CullData>) { StatusStrip(cull, data.value) }
 
 /**
  * 分析中这一屏的内容层：暗色进度卡放在墙的最上面随墙滚走；"全部"里每张照片在自己的格子里显影，一出结果就盖上判定。
  * 页签和（卡滚走后的）窄胶囊在项目页的玻璃顶栏里，飘向页签的光点在 `JudgeFlights`。
  */
 @Composable
-fun ScanningStage(cull: CullState, data: CullData, progress: Progress, onStop: () -> Unit, topPad: Dp, bottomPad: Dp) {
+fun ScanningStage(cull: CullState, data: androidx.compose.runtime.State<CullData>, onStop: () -> Unit, topPad: Dp, bottomPad: Dp) {
     val c = LocalFg.current
     val files by Session.files.collectAsState()
+    // 分析事件攒成的 tick：只在"全部"里每个格子自己读（下面），屏幕上的格子各自重组，这一层和整页不跟
+    val tick = Session.tick.collectAsState()
     val mode = cull.mode
-    val shown = data.shown
     val open: (String) -> Unit = remember(cull) { { path -> cull.select(path, byTap = true); cull.viewer = true } }
     var cardHeight by remember { mutableStateOf(0) }
     AnimatedContent(targetState = mode, label = "scanmode", transitionSpec = modeTransition, modifier = Modifier.fillMaxSize().swipeModes(cull)) { m ->
@@ -99,10 +114,11 @@ fun ScanningStage(cull: CullState, data: CullData, progress: Progress, onStop: (
         }
         // 页边 16dp，和页签对齐（设计审查 R14 / A5.10）
         val pad = PaddingValues(start = 16.dp, end = 16.dp, top = topPad + 4.dp, bottom = bottomPad)
-        val card: @Composable () -> Unit = { Box(Modifier.padding(top = 4.dp, bottom = 10.dp).onGloballyPositioned { cardHeight = it.size.height }) { ScanningCard(progress, onStop) } }
+        val card: @Composable () -> Unit = { Box(Modifier.padding(top = 4.dp, bottom = 10.dp).onGloballyPositioned { cardHeight = it.size.height }) { ScanningCard(onStop) } }
         if (m == "all") {
             val items = remember(files) { files.map { WallItem(it.path, it.width.toFloat() / it.height.coerceAtLeast(1)) } }
             Wall(items, "grid", state, pad, header = card, thumbOf = { i -> items.getOrNull(i)?.key?.let { k -> Session.results[k]?.thumb } }) { i, w, h ->
+                tick.value
                 val path = items[i].key
                 val done = Session.results[path]
                 Box(Modifier.trackRect(cull.coords, path)) {
@@ -111,6 +127,8 @@ fun ScanningStage(cull: CullState, data: CullData, progress: Progress, onStop: (
                 }
             }
         } else {
+            // 页签里的照片：tick 来了才读（只重组这一页）
+            val shown = data.value.shown
             val items = shown.map { WallItem(it.path, it.ratio) }
             Wall(items, "grid", state, pad, header = {
                 card()
@@ -140,8 +158,9 @@ fun ScanPeek(cull: CullState) {
 
 /** 暗色卡滚走后页签下的窄胶囊：已分析 / 总数、还要多久，底边一线进度；点它回到顶上。画在项目页的玻璃顶栏里。 */
 @Composable
-fun ScanPill(progress: Progress, onTap: () -> Unit) {
+fun ScanPill(onTap: () -> Unit) {
     val c = LocalFg.current
+    val progress by Session.progress.collectAsState()
     val elapsed = (System.currentTimeMillis() - Session.startedAt) / 1000f
     val left = if (progress.done >= 4) maxOf(1, Math.round(elapsed / progress.done * (progress.total - progress.done))) else null
     val f by androidx.compose.animation.core.animateFloatAsState(if (progress.total > 0) progress.done.toFloat() / progress.total else 0f, tween(500, easing = Motion.easeOut), label = "pill")
@@ -237,7 +256,9 @@ private fun MoteSprite(m: Mote, origin: Offset) {
  * 只有这张卡跟着分析事件刷新，整页不用。
  */
 @Composable
-private fun ScanningCard(progress: com.fleetinggleam.android.core.Progress, onStop: () -> Unit) {
+private fun ScanningCard(onStop: () -> Unit) {
+    // 进度只在这张卡里读：每个进度事件只重组它（审查第二批）
+    val progress by Session.progress.collectAsState()
     var bg by remember { mutableStateOf<String?>(null) }
     var stage by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) {

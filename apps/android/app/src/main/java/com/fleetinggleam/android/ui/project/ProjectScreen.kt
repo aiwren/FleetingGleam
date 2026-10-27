@@ -67,24 +67,16 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
     val ctx = LocalContext.current
     val store by Projects.store.collectAsState()
     val project = store.projects.firstOrNull { it.id == store.activeId && it.trashed == null } ?: return
+    // 这里只收变得少的；分析 / 读取中一秒几十次的（进度、tick、各种读取进度）下沉到用它们的组件里收，
+    // 不然每个事件整页重组（审查第二批）。确认页那几样（文件、大小、预计时间、预览）也只在确认页收
     val phase by Session.phase.collectAsState()
-    val files by Session.files.collectAsState()
-    val bytes by Session.bytes.collectAsState()
-    val uncached by Session.uncached.collectAsState()
     val photos by Session.photos.collectAsState()
-    val progress by Session.progress.collectAsState()
     val error by Session.error.collectAsState()
     val nasOff by Session.nasOff.collectAsState()
     val offline by Session.offline.collectAsState()
     val nasFailure by Session.nasFailure.collectAsState()
-    val eta by Session.etaSeconds.collectAsState()
-    val previews by Session.previews.collectAsState()
     val celebrate by Session.celebrate.collectAsState()
     val dirty by Session.dirty.collectAsState()
-    val nasProg by Session.nasProg.collectAsState()
-    val peopleProg by Session.peopleProg.collectAsState()
-    val mediaProg by Session.mediaProg.collectAsState()
-    val probeProg by Session.probeProg.collectAsState()
     val paused by Session.paused.collectAsState()
     val settings by Settings.state.collectAsState()
     val decisions by Session.decisions.collectAsState()
@@ -104,7 +96,8 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
     val scanning = phase == Phase.Scanning
 
     val actions = rememberCullActions(cull, data)
-    val scanData = rememberScanData(cull)
+    // 分析中的页签数据只在分析阶段算；是个 State，只有照片墙和页签条读它
+    val scanData = if (scanning) rememberScanData(cull) else null
     val density = androidx.compose.ui.platform.LocalDensity.current
     val topPad = with(density) { cull.chromeHeight.toDp() }
     val glassOn = com.fleetinggleam.android.ui.components.LocalGlassOn.current
@@ -146,24 +139,14 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
                 }, small = true)
             }
             // 读取中：居中一行灰字（设计审查 A5 附注）
-            if (phase == Phase.Probing || phase == Phase.Loading) {
-                val text = when {
-                    nasProg != null -> nasProg!!.let { p -> if (p.bytesTotal > 0) t("cull.fetchingNas", "share" to p.share, "done" to p.done, "total" to p.total, "size" to fmtBytes(p.bytesTotal)) else t("android.mirrorSync", "share" to p.share, "done" to p.done, "total" to p.total) }
-                    phase == Phase.Loading && mediaProg != null && mediaProg!!.done < mediaProg!!.total -> t("cull.preparingMedia", "done" to mediaProg!!.done, "total" to mediaProg!!.total)
-                    phase == Phase.Loading && peopleProg != null && peopleProg!!.done < peopleProg!!.total -> t("cull.recognising", "done" to peopleProg!!.done, "total" to peopleProg!!.total)
-                    phase == Phase.Probing && probeProg != null && probeProg!!.total > 0 -> t("cull.probing") + "  ${probeProg!!.done} / ${probeProg!!.total}"
-                    else -> t(if (phase == Phase.Probing) "cull.probing" else "cull.loading")
-                }
-                Text(text, style = Type.small.copy(color = c.ash), modifier = Modifier.fillMaxWidth().padding(24.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-            }
+            if (phase == Phase.Probing || phase == Phase.Loading) LoadingLine(phase)
             // 分析完 / 暂停的一句总结：页边距里的白卡（分析完的那张 3 秒后自己收起）
             val doneTop = phase == Phase.Done && (celebrate || paused != Pause.None)
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (phase) {
-                    Phase.Ready -> ReadyStage(project, uncached, bytes, eta, files.filter { !it.cached }, previews, onStart = start, onAddFolder = addFolder, onRemoveFolder = { Session.removeFolder(it) }, done = files.size - uncached,
-                        pausedNote = if (paused != Pause.None && Session.pausedId == project.id) t(if (paused == Pause.Hot) "android.paused.hot" else "android.paused.battery") else null)
+                    Phase.Ready -> ReadyHost(project, paused, onStart = start, onAddFolder = addFolder)
                     // 分析中就是选片界面：页签 + 照片墙，照片一出结果就落进对应的页签（Scanning.kt）
-                    Phase.Scanning -> ScanningStage(cull, scanData, progress, { Session.stopScan() }, topPad = topPad, bottomPad = 92.dp)
+                    Phase.Scanning -> if (scanData != null) ScanningStage(cull, scanData, { Session.stopScan() }, topPad = topPad, bottomPad = 92.dp)
                     Phase.Done -> CullingContent(project, cull, data, actions, topPad = topPad)
                     else -> {}
                 }
@@ -207,7 +190,7 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
                     }, dot = canReeval && dirty > 0)
                 }
                 if (phase == Phase.Done && cull.searchOpen && !scene) Box(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp)) { SearchField(cull) }
-                if (phase == Phase.Scanning) StatusStrip(cull, scanData)
+                if (phase == Phase.Scanning && scanData != null) ScanStatusStrip(cull, scanData)
                 if (phase == Phase.Done && !scene) StatusStrip(cull, data)
                 // NAS 没连上、照片是上次同步的：顶栏里一行灰字加"重试"（审查第 30 条）
                 if (offline && error == null && phase != Phase.Scanning && !scene) Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -216,7 +199,7 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
                     else FgButton(t("cull.nasRetry"), { Session.reload() }, small = true)
                 }
                 AnimatedVisibility(phase == Phase.Scanning && cull.scanCardGone, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
-                    ScanPill(progress) { scope.launch { cull.scanBackToTop?.invoke() } }
+                    ScanPill { scope.launch { cull.scanBackToTop?.invoke() } }
                 }
             }
         }
@@ -249,4 +232,35 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
             FgButton(t("organize.done"), { name.trim().takeIf { it.isNotEmpty() }?.let { v -> Projects.update(project.id) { it.copy(name = v) } }; renaming = false }, primary = true)
         }) { FgField(name, { name = it }) }
     }
+}
+
+/** 开始分析前的确认页：文件、大小、预计时间、预览只在这里收（进项目读取时它们一直在变，别让整页跟着重组）。 */
+@Composable
+private fun ReadyHost(project: com.fleetinggleam.android.core.Project, paused: Pause, onStart: () -> Unit, onAddFolder: () -> Unit) {
+    val files by Session.files.collectAsState()
+    val bytes by Session.bytes.collectAsState()
+    val uncached by Session.uncached.collectAsState()
+    val eta by Session.etaSeconds.collectAsState()
+    val previews by Session.previews.collectAsState()
+    val todo = remember(files) { files.filter { !it.cached } }
+    ReadyStage(project, uncached, bytes, eta, todo, previews, onStart = onStart, onAddFolder = onAddFolder, onRemoveFolder = { Session.removeFolder(it) }, done = files.size - uncached,
+        pausedNote = if (paused != Pause.None && Session.pausedId == project.id) t(if (paused == Pause.Hot) "android.paused.hot" else "android.paused.battery") else null)
+}
+
+/** 读取中那一行灰字：NAS / 网盘复制、读文件夹、准备实况、认人物的进度只在这里收。 */
+@Composable
+private fun LoadingLine(phase: Phase) {
+    val c = LocalFg.current
+    val nasProg by Session.nasProg.collectAsState()
+    val peopleProg by Session.peopleProg.collectAsState()
+    val mediaProg by Session.mediaProg.collectAsState()
+    val probeProg by Session.probeProg.collectAsState()
+    val text = when {
+        nasProg != null -> nasProg!!.let { p -> if (p.bytesTotal > 0) t("cull.fetchingNas", "share" to p.share, "done" to p.done, "total" to p.total, "size" to fmtBytes(p.bytesTotal)) else t("android.mirrorSync", "share" to p.share, "done" to p.done, "total" to p.total) }
+        phase == Phase.Loading && mediaProg != null && mediaProg!!.done < mediaProg!!.total -> t("cull.preparingMedia", "done" to mediaProg!!.done, "total" to mediaProg!!.total)
+        phase == Phase.Loading && peopleProg != null && peopleProg!!.done < peopleProg!!.total -> t("cull.recognising", "done" to peopleProg!!.done, "total" to peopleProg!!.total)
+        phase == Phase.Probing && probeProg != null && probeProg!!.total > 0 -> t("cull.probing") + "  ${probeProg!!.done} / ${probeProg!!.total}"
+        else -> t(if (phase == Phase.Probing) "cull.probing" else "cull.loading")
+    }
+    Text(text, style = Type.small.copy(color = c.ash), modifier = Modifier.fillMaxWidth().padding(24.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
 }
