@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { useInView } from "motion/react";
-import type { Lang } from "../content";
+import { release, type Lang } from "../content";
 import { CONTACT_EMAIL, legal, type Doc } from "../legal";
 import Header from "./Header";
 import Footer from "./Footer";
@@ -77,7 +77,11 @@ export default function Legal({ lang, kind }: { lang: Lang; kind: "privacy" | "t
               ))}
               <Tracked id={ids[ids.length - 1]} onEnter={setActive}>
                 <h2 className="text-xl font-semibold tracking-tight">{l.contact}</h2>
-                <p className="mt-3 text-ash">{CONTACT_EMAIL ? <a href={`mailto:${CONTACT_EMAIL}`} className="text-ink underline underline-offset-4">{CONTACT_EMAIL}</a> : l.contactMissing}</p>
+                {CONTACT_EMAIL
+                  ? <p className="mt-3 text-ash"><a href={`mailto:${CONTACT_EMAIL}`} className="text-ink underline underline-offset-4">{CONTACT_EMAIL}</a></p>
+                  : release.available
+                    ? <p className="mt-3 max-w-[65ch] text-ash">{l.contactMissing} <a href={`${release.repo}/issues`} className="text-ink underline underline-offset-4">{l.issues}</a></p>
+                    : <p className="mt-3 max-w-[65ch] text-ash">{l.contactPending}</p>}
               </Tracked>
             </div>
           </div>

@@ -3,15 +3,15 @@ import type { Lang } from "./content";
 export type Section = { h: string; p?: readonly string[]; ul?: readonly string[] };
 export type Doc = { title: string; updated: string; intro: string; sections: readonly Section[] };
 
-/** Where readers reach the operator. Fill this in before publishing: the legal pages show a notice until it is set. */
+/** 联系运营方的邮箱。留空时，联系方式一节改为指向项目的 GitHub Issues（仓库公开后才显示链接）。 */
 export const CONTACT_EMAIL = "";
 
-export const legal: Record<Lang, { privacy: Doc; terms: Doc; labels: { updated: string; contact: string; contactMissing: string; back: string; privacy: string; terms: string } }> = {
+export const legal: Record<Lang, { privacy: Doc; terms: Doc; labels: { updated: string; contact: string; contactMissing: string; contactPending: string; issues: string; back: string; privacy: string; terms: string } }> = {
   en: {
-    labels: { updated: "Last updated", contact: "Contact", contactMissing: "A contact address will be published here before release.", back: "Back to home", privacy: "Privacy Policy", terms: "Terms of Use" },
+    labels: { updated: "Last updated", contact: "Contact", contactMissing: "Questions about this policy or these terms, and requests about your data, can be raised in the Issues of the project's GitHub repository. Because the app collects nothing about you, there is no personal data held by us to access or delete.", contactPending: "The project's GitHub repository will open with the first public release; until then, this section will be updated with a contact route.", issues: "GitHub Issues", back: "Back to home", privacy: "Privacy Policy", terms: "Terms of Use" },
     privacy: {
       title: "Privacy Policy",
-      updated: "October 27, 2026",
+      updated: "October 28, 2026",
       intro: "FleetingGleam is built so that your photos never leave your own devices. This policy explains what the app and this website do and do not do with information.",
       sections: [
         { h: "The short version", ul: ["Your photos are analysed on your own Mac or Android phone and are never uploaded to us.", "There is no account, and the app does not collect analytics or usage data.", "The app goes online only to download model files the first time a feature needs them, and to reach a NAS or a backup bucket that you set up yourself.", "This website uses no cookies and no analytics."] },
@@ -29,11 +29,11 @@ export const legal: Record<Lang, { privacy: Doc; terms: Doc; labels: { updated: 
     },
     terms: {
       title: "Terms of Use",
-      updated: "October 27, 2026",
+      updated: "October 28, 2026",
       intro: "These terms apply to your use of the FleetingGleam application and this website. By installing or using them you agree to these terms.",
       sections: [
         { h: "The software", p: ["FleetingGleam is an application for Mac and Android that helps you group, compare and select photographs on your own devices. It is free software: the source code is published on GitHub under the GNU Affero General Public License, version 3 or later (AGPL-3.0-or-later). You may use, study, modify and share it under that licence, and nothing in these terms takes those rights away."] },
-        { h: "What these terms cover", ul: ["The website. The model files the application downloads come from Hugging Face and GitHub, under their own terms; we do not host them.", "Using the application in a way that breaks the law or the rights of others is not something we can permit.", "Model files are third-party works. Check each model's own licence before you redistribute them."] },
+        { h: "What these terms cover", ul: ["The FleetingGleam application for Mac and Android, and this website.", "They do not cover the model files the application downloads. Those come from Hugging Face and GitHub under their own terms and licences; we do not host them. Check each model's licence before you redistribute it.", "You may not use the application or the website in a way that breaks the law or infringes the rights of others."] },
         { h: "Your photos", p: ["Your photos remain yours. We claim no rights in them, and they are never uploaded to us. You are responsible for having the right to process the photos you open. Because organising can move files and send them to the Trash, keep backups of photos you care about."] },
         { h: "Scores are suggestions", p: ["Scores, groupings, search results and recommendations are automatic estimates. They can be wrong. Decisions about which photos to keep or delete are yours, and we are not responsible for photos you choose to discard."] },
         { h: "Models and third-party components", p: ["The application uses models and open-source components that are provided under their own licences. Those licences apply to those parts alongside these terms. Models are downloaded on demand and may be updated or withdrawn."] },
@@ -47,15 +47,15 @@ export const legal: Record<Lang, { privacy: Doc; terms: Doc; labels: { updated: 
     },
   },
   zh: {
-    labels: { updated: "最后更新", contact: "联系方式", contactMissing: "发布前会在此处公布联系邮箱。", back: "返回首页", privacy: "隐私政策", terms: "用户协议" },
+    labels: { updated: "最后更新", contact: "联系方式", contactMissing: "关于本政策或本协议的疑问，以及与你数据有关的请求，可以在项目 GitHub 仓库的 Issues 中提出。由于应用不收集任何关于你的信息，我们手中没有可供查阅或删除的个人数据。", contactPending: "项目的 GitHub 仓库会随首个公开版本开放；在此之前，本节会补上联系途径。", issues: "GitHub Issues", back: "返回首页", privacy: "隐私政策", terms: "用户协议" },
     privacy: {
       title: "隐私政策",
-      updated: "2026 年 10 月 27 日",
+      updated: "2026 年 10 月 28 日",
       intro: "惊鸿（FleetingGleam）的设计原则是：你的照片不会离开你自己的设备。本政策说明应用和本网站会怎样处理、以及不会处理哪些信息。",
       sections: [
         { h: "简短版本", ul: ["照片在你自己的 Mac 或安卓手机上分析，不会上传给我们。", "没有账号，应用不收集统计或使用数据。", "应用只在两种情况下联网：第一次用到某项功能时下载所需的模型文件；连接你自己设置的 NAS 或备份存储桶。", "本网站不使用 Cookie，也不使用统计工具。"] },
         { h: "应用如何处理你的照片", p: ["打开文件夹后，惊鸿会读取其中的照片并在本机分析：清晰度、曝光、人脸、相似度和视觉评分。原始文件不会被修改。只有在你要求整理时，应用才会移动或复制文件。", "如果你在设置里添加了 NAS，应用会用你提供的地址和账号连接它，把你打开的照片复制到本机的缓存里再分析。在 NAS 上整理时，照片会移进那台 NAS 上的回收文件夹；导出到 NAS 时，会把副本写到那里。"] },
-        { h: "保存在你设备上的内容", p: ["为避免重复计算，应用会把以下内容保存在自己位于你 Mac 或手机上的数据文件夹里："], ul: ["照片的缩略图和较大的预览图，以及从 NAS 打开的照片的副本。", "分析结果，例如评分和每张照片的数值描述。", "你的保留、待定、淘汰决定，你的项目，以及应用据此学到的偏好。", "设置，以及你已下载的模型文件。", "你填写的 NAS 密码和备份密钥。它们用一把在你设备上生成、从不离开设备的密钥加密保存。", "日志和崩溃记录。它们只留在你的设备上；只有你自己导出诊断文件并发出去时才会被分享，而且导出的文件里会去掉密码、密钥和账号名。"] },
+        { h: "保存在你设备上的内容", p: ["为避免重复计算，应用会把以下内容保存在自己位于你 Mac 或手机上的数据文件夹里："], ul: ["照片的缩略图和较大的预览图，以及从 NAS 打开的照片的副本。", "分析结果，例如评分和每张照片的数值描述。", "你的保留、待复查、淘汰决定，你的项目，以及应用据此学到的偏好。", "设置，以及你已下载的模型文件。", "你填写的 NAS 密码和备份密钥。它们用一把在你设备上生成、从不离开设备的密钥加密保存。", "日志和崩溃记录。它们只留在你的设备上；只有你自己导出诊断文件并发出去时才会被分享，而且导出的文件里会去掉密码、密钥和账号名。"] },
         { h: "我们收集什么", p: ["我们不收集你的照片、文件名、分析结果、决定或任何个人信息。上述数据不会发送给我们或任何第三方。"] },
         { h: "你的 NAS 和备份", p: ["你添加的 NAS 通过你的网络用 SMB 协议直接连接，和它有关的任何信息都不会发给我们。", "云备份默认关闭，只有你自己设置后才会启用。启用后，应用会把你的设置和学到的喜好上传到你自己的 Cloudflare R2 存储桶，不含任何照片、项目名或文件路径，用的是你在自己的 Cloudflare 账户里创建的密钥。我们无法访问这个存储桶，它适用 Cloudflare 的条款。"] },
         { h: "模型下载", p: ["几个很小的模型随应用一起安装。支持搜索、评分和场景识别的较大模型不随安装包提供。当你第一次使用需要它的功能时，应用会先询问你，再直接从发布它的公开站点下载：大部分模型来自 Hugging Face（huggingface.co），少数转换过的文件来自本项目的 GitHub Releases；我们没有自己的模型服务器。与任何下载一样，这个请求会让该站点（Hugging Face 或 GitHub）及其托管服务商看到你的 IP 地址、请求时间和文件名。应用不会随请求发送任何照片、标识符或使用信息。"] },
@@ -68,11 +68,11 @@ export const legal: Record<Lang, { privacy: Doc; terms: Doc; labels: { updated: 
     },
     terms: {
       title: "用户协议",
-      updated: "2026 年 10 月 27 日",
+      updated: "2026 年 10 月 28 日",
       intro: "本协议适用于你对惊鸿应用和本网站的使用。安装或使用即表示你同意本协议。",
       sections: [
         { h: "软件", p: ["惊鸿是一款用于 Mac 和安卓的应用，帮助你在自己的设备上分组、对比和挑选照片。它是自由软件：源代码在 GitHub 上公开，采用 GNU Affero 通用公共许可证第 3 版或更高版本（AGPL-3.0-or-later）。你可以按该许可证使用、研究、修改和分享它，本协议不会剥夺这些权利。"] },
-        { h: "本协议涵盖什么", ul: ["本网站。应用下载的模型文件来自 Hugging Face 与 GitHub，适用它们各自的条款；我们不托管这些文件。", "以违反法律或侵犯他人权利的方式使用本应用，是我们无法允许的。", "模型文件属于第三方作品，再分发前请先核对各模型自身的许可。"] },
+        { h: "本协议涵盖什么", ul: ["惊鸿的 Mac 版、安卓版应用，以及本网站。", "不包括应用下载的模型文件。它们来自 Hugging Face 与 GitHub，适用各自的条款和许可，我们不托管这些文件；再分发前请先核对各模型的许可。", "你不得以违反法律或侵犯他人权利的方式使用本应用或本网站。"] },
         { h: "你的照片", p: ["照片始终归你所有。我们对其不主张任何权利，也不会收到它们。你应确保有权处理你打开的照片。由于整理功能可能移动文件并将其放入废纸篓，请为重要的照片保留备份。"] },
         { h: "评分只是建议", p: ["评分、分组、搜索结果和推荐都是自动估计，可能出错。保留还是删除哪些照片由你决定，对于你选择丢弃的照片，我们不承担责任。"] },
         { h: "模型与第三方组件", p: ["本应用使用的模型和开源组件适用其各自的许可，这些许可与本协议一并适用于相应部分。模型按需下载，可能被更新或撤回。"] },
