@@ -15,7 +15,7 @@
 - 下一步：试探通过后，做 `Source` 接口（本地文件夹 / SMB 共享：列目录、读文件、重命名、建目录、删除），NAS 项目的原图通过客户端流式拉到本地缓存再分析，整理操作经客户端在共享上执行；凭据 Mac 存钥匙串、Android 存 Keystore；然后**删掉** `vision/fg-mount.swift`、`nas.rs` 里的挂载 / 卸载部分与设置页对系统挂载的依赖，只留一条路径。
 - 账号与网页端的区别：这台 NAS 钥匙串里只有 5005 端口 http 的密码，SMB 的要单独存（若仍走钥匙串）。
 
-**等作者在 GitHub 上操作：** 发布草稿 Release v0.1.0；上传 `models-v1`（RELEASING.md）；填 `apps/web/src/legal.ts` 的 `CONTACT_EMAIL`；仓库设为公开；之后把 `apps/web/src/content.ts` 的 `release.available` 改为 true 并 `wrangler deploy`（落地页这次的改动尚未部署，作者未确认）。
+**等作者在 GitHub 上操作：** 发布草稿 Release v0.1.0；上传 `models-v1`（RELEASING.md）；填 `apps/web/src/legal.ts` 的 `CONTACT_EMAIL`；仓库设为公开；之后把 `apps/web/src/content.ts` 的 `release.available` 改为 true 并 `wrangler deploy`（新版落地页已于 2026-10-28 部署；`CONTACT_EMAIL` 留空时联系方式指向 GitHub Issues）。
 
 **待作者拍板：** A4（Apple 美学分蒸馏 + 人脸统一 MediaPipe）会改变 Mac 端分数，开始前要明确同意。Dependabot 的 glib 告警只能在 GitHub 上标"不适用"（Tauri 2.12 仍用 gtk 0.18）。
 
