@@ -1521,6 +1521,7 @@ dependencies = [
  "image",
  "kamadak-exif",
  "libc",
+ "memchr",
  "ort",
  "rayon",
  "serde",

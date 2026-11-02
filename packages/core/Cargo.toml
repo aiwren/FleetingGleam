@@ -25,6 +25,8 @@ kamadak-exif.workspace = true
 # ONNX Runtime：macOS 上加 CoreML 提供者，Android 上加 NNAPI（见下面的 target 表）
 ort.workspace = true
 fast_image_resize = "6.1.0"
+# 在 RAW 文件里找内嵌 JPEG 预览（rawpreview.rs）
+memchr = "2"
 tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"] }
 ureq = { version = "2", features = ["tls"] }
 sha2 = "0.10"

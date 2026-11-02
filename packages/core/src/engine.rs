@@ -2044,7 +2044,14 @@ impl Engine {
         }
         if !out.exists() {
             let tmp = out.with_extension("tmp");
-            analyze::large_preview(src, &tmp)?;
+            // 大 RAW 秒开（A7）：先取文件里内嵌的 JPEG 预览（长边 1600 以上才用），不等完整解码；没有再照旧渲染。
+            // 放大看细节走 `photo_detail`，解的仍是真正的 RAW
+            let (_, dw, dh) = self.rotation_of(path);
+            let limit = crate::platform::images().map_or(u32::MAX, |s| s.preview_max());
+            let quick = imageio::is_raw(src) && crate::rawpreview::write_preview(src, &tmp, (dw > 0 && dh > 0).then_some((dw, dh)), limit).is_ok();
+            if !quick {
+                analyze::large_preview(src, &tmp)?;
+            }
             std::fs::rename(&tmp, &out).map_err(|e| e.to_string())?;
         }
         if rot == 0 {

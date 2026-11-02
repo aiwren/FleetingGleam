@@ -28,6 +28,7 @@ pub mod onnx;
 pub mod platform;
 pub mod prefs;
 pub mod r2;
+pub mod rawpreview;
 pub mod scene;
 pub mod scene_vocab;
 pub mod scorer;
