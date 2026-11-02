@@ -59,13 +59,16 @@ export default function Organize({ project, photos, decisions, offline = false, 
   const open = (d: Dlg) => { setResult(null); setUndo(null); setPutBack(null); setStopping(false); setPhase("confirm"); setProgress({ done: 0, total: 0 }); setDlg(d); setMenu(false); };
   const close = () => { setDlg(null); if (phase === "done") onChanged(); };
 
+  // 保留的照片里有带同名 RAW 的：导出时可以把 RAW 一起带上
+  const rawCount = keep.filter((p) => p.companions?.length).length;
+  const [withRaw, setWithRaw] = useState(true);
   const startExport = async () => {
     if (dlg?.kind !== "export") return;
     setPhase("running");
     setProgress({ done: 0, total: keep.length });
     const un = await listen<{ done: number; total: number }>("export-progress", (e) => setProgress(e.payload));
     try {
-      const r = await invoke<{ copied: number; skipped: number; dest: string; remote?: boolean; failed?: { path: string; error: string }[]; cancelled?: boolean }>("export_photos", { paths: keep.map((p) => p.path), dest: dlg.dest });
+      const r = await invoke<{ copied: number; skipped: number; dest: string; remote?: boolean; failed?: { path: string; error: string }[]; cancelled?: boolean }>("export_photos", { paths: keep.map((p) => p.path), dest: dlg.dest, withRaw: rawCount > 0 && withRaw });
       setResult({ ok: r.copied, bad: r.failed?.length ?? 0, skipped: r.skipped, failed: r.failed ?? [], cancelled: !!r.cancelled, dest: r.dest, remote: r.remote });
     } catch (e) { setResult({ ok: 0, bad: keep.length, error: String(e) }); }
     un();
@@ -179,6 +182,7 @@ export default function Organize({ project, photos, decisions, offline = false, 
           <>
             <p>{t("organize.exportBody", { count: keep.length })}</p>
             <p className="mono dest">{dlg?.kind === "export" ? nasLabel(dlg.dest) : ""}</p>
+            {rawCount > 0 && <label className="nas-remember export-raw"><input type="checkbox" checked={withRaw} onChange={(e) => setWithRaw(e.target.checked)} /><span>{t("organize.withRaw", { count: rawCount })}</span></label>}
             <p className="ash small">{t("organize.exportSafe")}</p>
             {phase === "running" && <div className="bar"><motion.i animate={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%` }} /></div>}
           </>

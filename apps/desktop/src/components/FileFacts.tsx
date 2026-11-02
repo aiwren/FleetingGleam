@@ -53,6 +53,8 @@ export default function FileFacts({ photo }: { photo: Photo }) {
     [t("file.camera"), info?.camera ? <>{info.camera}{info.lens && <small>{info.lens}</small>}</> : info?.lens],
     [t("file.exposure"), tags.length ? <span className="tags">{tags.map((x) => <i key={x} className="mono">{x}</i>)}</span> : null],
     [t("file.taken"), info?.taken ? niceTime(info.taken) : null],
+    // RAW + JPG 配对：这张实际由哪几个文件组成
+    [t("file.files"), photo.companions?.length ? <span className="files">{[photo.path, ...photo.companions].map((f) => <i key={f} className="mono">{f.split("/").pop()}</i>)}</span> : null],
   ];
   return (
     <dl className="kv">

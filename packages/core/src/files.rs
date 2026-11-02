@@ -1,5 +1,6 @@
 //! 文件夹里的照片：哪些名字不是照片、怎么列出一组文件夹里的全部照片、不解码像素读显示尺寸；以及几个写文件的小工具。
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use rayon::prelude::*;
@@ -237,6 +238,116 @@ mod jpeg_tests {
         let png = dir.join("x.png");
         image::RgbImage::from_pixel(10, 20, image::Rgb([0, 0, 0])).save(&png).unwrap();
         assert_eq!(jpeg_dims(&png), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// 文件名（不含扩展名）的小写形式，配对按它认。
+fn stem_lower(p: &Path) -> String {
+    p.file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default()
+}
+
+/// RAW + JPG 配对：同一文件夹里同名（不分大小写）的 RAW 和非 RAW 算一张照片。代表文件是非 RAW 那张（JPG 优先于 HEIC，再是其它），
+/// RAW 作为"伴随文件"跟着它：分析只做一次，保留 / 淘汰、导出、回收一起动。只有 RAW（或只有非 RAW）时各算各的。
+/// 返回（代表文件列表，代表 → 伴随文件）。
+pub fn pair(files: Vec<PathBuf>) -> (Vec<PathBuf>, HashMap<PathBuf, Vec<PathBuf>>) {
+    fn rank(p: &Path) -> u8 {
+        let e = p.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+        match e.as_str() {
+            "jpg" | "jpeg" | "jpe" => 0,
+            "heic" | "heif" => 1,
+            _ => 2,
+        }
+    }
+    let mut groups: HashMap<(PathBuf, String), Vec<PathBuf>> = HashMap::new();
+    for f in files {
+        let key = (f.parent().map(Path::to_path_buf).unwrap_or_default(), stem_lower(&f));
+        groups.entry(key).or_default().push(f);
+    }
+    let mut reps = Vec::new();
+    let mut map = HashMap::new();
+    for (_, g) in groups {
+        let (mut raws, mut others): (Vec<PathBuf>, Vec<PathBuf>) = g.into_iter().partition(|p| crate::imageio::is_raw(p));
+        if raws.is_empty() || others.is_empty() {
+            reps.extend(raws);
+            reps.extend(others);
+            continue;
+        }
+        others.sort_by_key(|p| (rank(p), p.clone()));
+        raws.sort();
+        let rep = others.remove(0);
+        reps.extend(others);
+        map.insert(rep.clone(), raws);
+        reps.push(rep);
+    }
+    reps.sort();
+    (reps, map)
+}
+
+/// 一张照片此刻在磁盘上的伴随文件（同文件夹、同名的 RAW），整理时用：保留 / 淘汰 / 导出一起动。RAW 自己没有伴随文件。
+pub fn companions_of(p: &Path) -> Vec<PathBuf> {
+    if crate::imageio::is_raw(p) {
+        return Vec::new();
+    }
+    let Some(dir) = p.parent() else { return Vec::new() };
+    let stem = stem_lower(p);
+    let mut out: Vec<PathBuf> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|q| q != p && q.is_file() && crate::imageio::is_raw(q) && stem_lower(q) == stem)
+        .collect();
+    out.sort();
+    out
+}
+
+/// 把一批路径扩成"自己 + 伴随文件"，去重、保持顺序。
+pub fn with_companions(paths: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(paths.len());
+    for p in paths {
+        for q in std::iter::once(PathBuf::from(&p)).chain(companions_of(Path::new(&p))) {
+            let q = q.to_string_lossy().into_owned();
+            if !out.contains(&q) {
+                out.push(q);
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod pair_tests {
+    use super::*;
+
+    fn p(s: &str) -> PathBuf {
+        PathBuf::from(s)
+    }
+
+    #[test]
+    fn raw_pairs_with_its_jpg_and_lone_files_stand_alone() {
+        let files = vec![p("/a/IMG_1.CR3"), p("/a/IMG_1.JPG"), p("/a/IMG_2.NEF"), p("/a/IMG_3.jpg"), p("/a/img_4.jpg"), p("/a/IMG_4.dng"), p("/a/IMG_4.heic"), p("/b/IMG_1.jpg")];
+        let (reps, map) = pair(files);
+        assert_eq!(reps, vec![p("/a/IMG_1.JPG"), p("/a/IMG_2.NEF"), p("/a/IMG_3.jpg"), p("/a/IMG_4.heic"), p("/a/img_4.jpg"), p("/b/IMG_1.jpg")]);
+        assert_eq!(map[&p("/a/IMG_1.JPG")], vec![p("/a/IMG_1.CR3")]);
+        assert_eq!(map[&p("/a/img_4.jpg")], vec![p("/a/IMG_4.dng")], "the JPG, not the HEIC, carries the RAW");
+        assert!(!map.contains_key(&p("/a/IMG_2.NEF")), "a RAW without a JPG is its own photo");
+        assert!(!map.contains_key(&p("/b/IMG_1.jpg")), "the same name in another folder is another photo");
+    }
+
+    #[test]
+    fn companions_are_read_from_disk_when_organizing() {
+        let dir = std::env::temp_dir().join(format!("fg_pair_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for n in ["a.jpg", "a.ARW", "a.txt", "b.jpg"] {
+            std::fs::write(dir.join(n), b"x").unwrap();
+        }
+        assert_eq!(companions_of(&dir.join("a.jpg")), vec![dir.join("a.ARW")]);
+        assert!(companions_of(&dir.join("b.jpg")).is_empty());
+        assert!(companions_of(&dir.join("a.ARW")).is_empty());
+        let all = with_companions(vec![dir.join("a.jpg").to_string_lossy().into_owned(), dir.join("b.jpg").to_string_lossy().into_owned()]);
+        assert_eq!(all.len(), 3);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

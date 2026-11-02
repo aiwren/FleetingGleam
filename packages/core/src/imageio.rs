@@ -10,6 +10,14 @@ const NATIVE: [&str; 5] = ["jpg", "jpeg", "jpe", "png", "webp"];
 /// Web 视图能直接显示原文件（HDR 与广色域保留）的格式。
 const WEB: [&str; 14] = ["jpg", "jpeg", "jpe", "png", "webp", "gif", "bmp", "tif", "tiff", "heic", "heif", "avif", "jxl", "svg"];
 
+/// 相机 RAW 的扩展名（和前端 `types.ts` 的 RAW_EXT 一致）。
+pub const RAW_EXT: [&str; 28] = ["dng", "cr2", "cr3", "crw", "nef", "nrw", "arw", "srf", "sr2", "raf", "orf", "rw2", "pef", "srw", "x3f", "3fr", "erf", "kdc", "mef", "mos", "mrw", "raw", "rwl", "iiq", "fff", "dcr", "k25", "rwz"];
+
+/// 是不是相机 RAW（只看扩展名）。
+pub fn is_raw(p: &Path) -> bool {
+    RAW_EXT.contains(&ext(p).as_str())
+}
+
 fn ext(p: &Path) -> String {
     p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).unwrap_or_default()
 }

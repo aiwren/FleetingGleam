@@ -106,6 +106,9 @@ pub struct Photo {
     #[serde(default)]
     pub faces_done: bool,
     /// The photo carries an HDR gain map (or is HDR in some other way): shown in HDR in the full-size viewer (thumbnails are always standard range).
+    /// 跟着这张一起走的伴随文件（同名的 RAW 原片）：分析只做一次，保留 / 淘汰、导出、回收一起动。不进缓存，每次列文件时重新算。
+    #[serde(default)]
+    pub companions: Vec<String>,
     #[serde(default)]
     pub hdr: bool,
     /// A motion photo: a short video follows the picture in the same file.
@@ -287,6 +290,7 @@ pub fn analyze(
         face_boxes,
         people: Vec::new(),
         faces_done,
+        companions: Vec::new(),
         hdr: media.hdr,
         motion: media.motion,
         media_done: true,

@@ -662,7 +662,7 @@ impl Engine {
         // 先按扩展名和大小列出文件（不读文件）；缓存里认识的（没变过）尺寸直接查表，是否"已分析"按当前模型的 tag 看。
         // 其余的文件头只读一次：读不出来的（损坏、扩展名不对）剔除，读出来的尺寸直接用——以前筛一遍、取尺寸又读一遍，
         // 手机上几千张 HEIC 要等很久，界面上一直是"正在读取文件夹…"。边读边发 "probe-progress"。
-        let (all, keys) = listed_with_keys(dirs);
+        let (all, keys, _) = listed_with_keys(dirs);
         // 锁里只查表：每个文件的 stat 在锁外、只做一次（以前在缓存锁里一张张 stat，要算大小时又 stat 一遍）
         let known: Vec<(Option<(u32, u32)>, bool)> = self.with_cache(|c| {
             all.iter()
@@ -737,7 +737,7 @@ impl Engine {
         let mut jobs: Vec<(PathBuf, u64, i64)> = Vec::new();
         // 每个文件只 stat 一次、在缓存锁外；锁里只查表。缓存不认识的文件读一次文件头（读不出来的——损坏、扩展名不对——不算），
         // 也在锁外：以前列文件、读文件头、stat 两遍都在锁里
-        let (all, keys) = listed_with_keys(&a.dirs);
+        let (all, keys, pairs) = listed_with_keys(&a.dirs);
         let looked: Vec<(bool, Option<Photo>)> = self.with_cache(|c| {
             all.iter()
                 .zip(&keys)
@@ -1085,6 +1085,10 @@ impl Engine {
         }
         let mut photos = hits;
         photos.extend(fresh);
+        // 伴随文件不进缓存，按这次列出来的配对补上
+        for p in &mut photos {
+            p.companions = pairs.get(Path::new(&p.path)).map(|v| v.iter().map(|q| q.to_string_lossy().into_owned()).collect()).unwrap_or_default();
+        }
         photos.sort_by(|a, b| a.path.cmp(&b.path));
         // 第一次分析（缓存里一张都没有）这时才知道当前模型的向量长度
         if let Some(d) = photos.iter().map(|p| p.embedding.len()).find(|&n| n > 0).filter(|&d| d != self.model_dim.load(Ordering::Relaxed)) {
@@ -1691,6 +1695,18 @@ impl Engine {
     /// 临时名保留图片扩展名，是因为 Android 11 起 `Pictures/` 这类公共目录只许建图片 / 视频类型的文件，`.part` 会被拒。
     /// 失败的和原因（带目标路径；磁盘满时是目标卷的可用空间）进 `failed`，中途磁盘满了后面的都不再试。`export_cancel` 让它做完当前这张就停（`cancelled`）。
     pub fn export_photos(self: &Arc<Self>, paths: &[String], dest: &str) -> Result<ExportResult, String> {
+        self.export_photos_with(paths, dest, false)
+    }
+
+    /// 同 `export_photos`；`with_raw` 为真时同名的 RAW 原片也一起复制。
+    pub fn export_photos_with(self: &Arc<Self>, paths: &[String], dest: &str, with_raw: bool) -> Result<ExportResult, String> {
+        let expanded;
+        let paths: &[String] = if with_raw {
+            expanded = crate::files::with_companions(paths.to_vec());
+            &expanded
+        } else {
+            paths
+        };
         self.export_stop.store(false, Ordering::Relaxed);
         let shares = nas::load(&self.paths.data);
         if let Some((s, rel)) = nas::share_of_path(&self.paths.data, &shares, Path::new(dest)) {
@@ -1779,6 +1795,8 @@ impl Engine {
     /// Moves photos to the trash (recoverable). Only image files are accepted, so this can never be used to trash anything else.
     /// 共享镜像里的照片在 NAS 上移进回收文件夹、本机副本随之删掉；本机的照片交给宿主注册的 `LocalTrash`，没注册就放进 `deferred`。
     pub fn trash_photos(&self, paths: Vec<String>) -> TrashResult {
+        // 淘汰一张照片，它同名的 RAW 原片一起走（撤销时按文件逐个放回，RAW 也在 `undo` 里）
+        let paths = crate::files::with_companions(paths);
         let data = &self.paths.data;
         let shares = nas::load(data);
         let mut r = TrashResult::default();
@@ -2633,12 +2651,14 @@ NAS：
 }
 
 /// 几个文件夹里的照片候选（只按扩展名和大小，去重、排序），连同各自的 (大小, 修改时间)：每个文件 stat 一次，并行做。
-fn listed_with_keys(dirs: &[String]) -> (Vec<PathBuf>, Vec<Option<(u64, i64)>>) {
+/// 文件夹里的照片（RAW + JPG 配对后只剩代表文件）、每个文件的缓存键，以及代表 → 伴随文件。
+fn listed_with_keys(dirs: &[String]) -> (Vec<PathBuf>, Vec<Option<(u64, i64)>>, HashMap<PathBuf, Vec<PathBuf>>) {
     let mut all: Vec<PathBuf> = dirs.iter().flat_map(|d| list_images(d)).collect();
     all.sort();
     all.dedup();
+    let (all, pairs) = crate::files::pair(all);
     let keys = all.par_iter().map(|p| cache::file_key(p)).collect();
-    (all, keys)
+    (all, keys, pairs)
 }
 
 /// `名字 (n).扩展名` → `名字.扩展名`（`unique_path` 重名时加的序号）；不是这个样子的给 None。

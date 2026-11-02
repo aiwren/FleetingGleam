@@ -420,9 +420,9 @@ async fn nas_mirror_clear(app: AppHandle, id: String) -> Result<u64, String> {
 // ---------------------------------------------------------------- 整理
 
 #[tauri::command]
-async fn export_photos(app: AppHandle, paths: Vec<String>, dest: String) -> Result<ExportResult, String> {
+async fn export_photos(app: AppHandle, paths: Vec<String>, dest: String, with_raw: Option<bool>) -> Result<ExportResult, String> {
     let e = engine(&app);
-    blocking(move || e.export_photos(&paths, &dest)).await?
+    blocking(move || e.export_photos_with(&paths, &dest, with_raw.unwrap_or(false))).await?
 }
 
 /// 让正在进行的导出做完当前这张就停。

@@ -1536,3 +1536,5 @@ img { -webkit-user-drag: none; }
 
 /* ---- 入场错开上限（R6）：写在组件里；这里只收紧悬停与颜色的过渡到 160 ms */
 .btn, .fp-row, .settings-nav button, .sidebar li button, .vmgrid button, .vmlist button, .orgitem, .picker-src, .tipbtn, .switch, .sthumb, .vcell { transition-duration: .16s; }
+.kv .files { display: flex; flex-wrap: wrap; gap: 4px 8px; }
+.export-raw { margin-top: 8px; }

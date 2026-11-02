@@ -64,7 +64,7 @@ const zh = {
     pickModeBestDesc: "只看分数,把最好的留下。", pickModeDiverseDesc: "不同场景都留一点,记录更完整。",
     filters: "筛选", status: "状态", scenes: "场景", people: "人物", clearFilter: "清除", sceneCount: "{{count}} 张", personCount: "{{count}} 张照片", allScenes: "查看全部 {{count}} 个场景", describe: "为其余场景生成描述", describing: "正在描述场景 {{done}}/{{total}}", resizeHint: "拖动调整宽度，双击恢复", backToPhotos: "返回照片", morePeople: "展开全部 {{count}} 人", fewer: "收起", noPeopleHere: "这个筛选下没有识别到的人物",
   },
-  file: { title: "文件信息", format: "格式", size: "文件大小", pixels: "像素", color: "色彩空间", depth: "位深", camera: "相机", lens: "镜头", exposure: "拍摄参数", taken: "拍摄时间" },
+  file: { title: "文件信息", format: "格式", size: "文件大小", pixels: "像素", color: "色彩空间", depth: "位深", camera: "相机", lens: "镜头", exposure: "拍摄参数", taken: "拍摄时间", files: "包含文件" },
   single: { pagePrev: "上一页", pageNext: "下一页", prev: "上一张", next: "下一张" },
   search: { label: "搜索照片", placeholder: "搜索照片：烟花、两个人、雨伞…", globalPlaceholder: "搜索所有项目里的照片", clear: "清除", indexing: "正在为搜索建立索引 {{pct}}%", none: "没有找到「{{q}}」", noneHint: "试试换个说法，比如描述画面里的东西或场景。", inProject: "在「{{name}}」", results: "{{count}} 张" },
   models: {
@@ -293,7 +293,7 @@ const zh = {
     exportItem: "导出保留的照片…", exportDesc: "复制 {{count}} 张到新文件夹，原图不动",
     exportNasItem: "导出到 NAS…", exportNasDesc: "把 {{count}} 张保留的照片传到 NAS 上的文件夹", exportNasPick: "导出到 NAS 上的哪个文件夹？", exportHere: "导出到这里", exportFailed: "没能导出：{{error}}",
     exportTitle: "导出保留的照片", exportBody: "将把 {{count}} 张保留的照片复制到：", exportSafe: "只是复制，原图不会被移动或修改；重名的文件会自动加序号，不会覆盖。",
-    exportGo: "开始导出", exporting: "正在导出 {{done}} / {{total}}", exported: "已导出 {{count}} 张", exportedSkipped: "另有 {{n}} 张没能复制",
+    withRaw: "同名的 RAW 原片一起导出（{{count}} 张有）", exportGo: "开始导出", exporting: "正在导出 {{done}} / {{total}}", exported: "已导出 {{count}} 张", exportedSkipped: "另有 {{n}} 张没能复制",
     exportedAlready: "{{n}} 张目标里已经有了，跳过", exportedFailed: "{{n}} 张没能导出", exportFailedMore: "还有 {{n}} 张…",
     exportStop: "停止导出", exportStopping: "正在停下…", exportStopped: "已停下：导出了 {{count}} 张，还有 {{left}} 张没导出",
     trashItem: "把淘汰的照片移到废纸篓…", trashDesc: "{{count}} 张 · 可在访达的废纸篓里找回",

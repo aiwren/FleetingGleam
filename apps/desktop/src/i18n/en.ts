@@ -66,7 +66,7 @@ const en = {
     pickModeBestDesc: "Go by score alone and keep the best.", pickModeDiverseDesc: "Keep a bit of every scene, for a fuller record.",
     filters: "Filters", status: "Status", scenes: "Scenes", people: "People", clearFilter: "Clear", sceneCount: "{{count}}", personCount: "{{count}} photos", allScenes: "See all {{count}} scenes", describe: "Describe the rest", describing: "Describing scenes {{done}}/{{total}}", resizeHint: "Drag to resize, double-click to reset", backToPhotos: "Back to photos", morePeople: "Show all {{count}}", fewer: "Show fewer", noPeopleHere: "No recognised people in this selection",
   },
-  file: { title: "File info", format: "Format", size: "File size", pixels: "Pixels", color: "Color space", depth: "Bit depth", camera: "Camera", lens: "Lens", exposure: "Exposure", taken: "Taken" },
+  file: { title: "File info", format: "Format", size: "File size", pixels: "Pixels", color: "Color space", depth: "Bit depth", camera: "Camera", lens: "Lens", exposure: "Exposure", taken: "Taken", files: "Files" },
   single: { pagePrev: "Previous page", pageNext: "Next page", prev: "Previous photo", next: "Next photo" },
   search: { label: "Search photos", placeholder: "Search photos: fireworks, two people, umbrella…", globalPlaceholder: "Search photos in every project", clear: "Clear", indexing: "Building the search index {{pct}}%", none: "Nothing found for \u201c{{q}}\u201d", noneHint: "Try describing what is in the picture in other words.", inProject: "In \u201c{{name}}\u201d", results: "{{count}}" },
   models: {
@@ -295,7 +295,7 @@ const en = {
     exportItem: "Export kept photos…", exportDesc: "Copy {{count}} to a new folder; originals stay put",
     exportNasItem: "Export to a NAS…", exportNasDesc: "Upload the {{count}} kept photos to a folder on a NAS", exportNasPick: "Export to which folder on the NAS?", exportHere: "Export here", exportFailed: "Could not export: {{error}}",
     exportTitle: "Export kept photos", exportBody_one: "{{count}} kept photo will be copied to:", exportBody_other: "{{count}} kept photos will be copied to:", exportSafe: "Copies only: originals are never moved or changed, and files with the same name get a number instead of being overwritten.",
-    exportGo: "Start export", exporting: "Exporting {{done}} / {{total}}", exported_one: "Exported {{count}} photo", exported_other: "Exported {{count}} photos", exportedSkipped: "{{n}} could not be copied",
+    withRaw_one: "Also export the matching RAW ({{count}} photo has one)", withRaw_other: "Also export the matching RAW ({{count}} photos have one)", exportGo: "Start export", exporting: "Exporting {{done}} / {{total}}", exported_one: "Exported {{count}} photo", exported_other: "Exported {{count}} photos", exportedSkipped: "{{n}} could not be copied",
     exportedAlready: "{{n}} already there, skipped", exportedFailed: "{{n}} not exported", exportFailedMore: "{{n}} more…",
     exportStop: "Stop export", exportStopping: "Stopping…", exportStopped: "Stopped: {{count}} exported, {{left}} not yet",
     trashItem: "Move rejected photos to the Trash…", trashDesc: "{{count}} · can be put back from the Trash",

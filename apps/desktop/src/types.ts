@@ -25,6 +25,8 @@ export type Photo = {
   kind: string;
   utility: boolean;
   flags: string[];
+  /** 跟着这张一起走的 RAW 原片（同名配对）；旧数据里可能没有。 */
+  companions?: string[];
   taken_at: number | null;
   score: number;
   group: number;
@@ -54,7 +56,9 @@ export type PhotoTag = { id: "raw" | "format" | "hdr" | "motion" | "long"; text?
 export function photoTags(p: Photo): PhotoTag[] {
   const out: PhotoTag[] = [];
   const e = extOf(p);
-  if (RAW_EXT.has(e)) out.push({ id: "raw", text: e === "dng" ? "RAW · DNG" : `RAW · ${e.toUpperCase()}` });
+  const raws = (p.companions ?? []).map((c) => extOf({ path: c } as Photo));
+  if (raws.length) out.push({ id: "raw", text: `${e.toUpperCase()} + ${raws[0] === "dng" ? "DNG" : "RAW"}` });
+  else if (RAW_EXT.has(e)) out.push({ id: "raw", text: e === "dng" ? "RAW · DNG" : `RAW · ${e.toUpperCase()}` });
   else if (FORMAT_TAG.has(e)) out.push({ id: "format", text: e === "tif" ? "TIFF" : e.toUpperCase() });
   // Live and HDR are never both shown: a Live photo says "Live" (the more useful thing to know), otherwise HDR.
   if (p.motion) out.push({ id: "motion" });
