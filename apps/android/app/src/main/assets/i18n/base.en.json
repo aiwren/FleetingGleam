@@ -778,6 +778,8 @@
   "aboutVersion": "Version",
   "updateCheck": "Check for updates",
   "updateChecking": "Checking…",
+  "updateJustChecked": "Just checked",
+  "updateCooldown": "Checked a moment ago; you can check again in a minute.",
   "updateIdle": "New versions are published on GitHub Releases; you can also ask right now.",
   "updateLatest": "You have the latest version.",
   "updateFailed": "Could not check just now (offline, or GitHub is unreachable). Try again later.",

@@ -508,6 +508,14 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                     val upd by Updates.state.collectAsState()
                     val updInfo = when (val u = upd) { is Updates.State.Found -> u.info; is Updates.State.Downloading -> u.info; is Updates.State.Ready -> u.info; is Updates.State.Error -> u.info; else -> null }
                     var canInstall by remember { mutableStateOf(true) }
+                    // 刚手动查过：60 秒内按钮置灰，防止连点把 GitHub 的匿名额度（每小时 60 次）用光；到点自己恢复
+                    val checkedAt by Updates.checkedAt.collectAsState()
+                    var cooling by remember { mutableStateOf(false) }
+                    LaunchedEffect(checkedAt) {
+                        val left = Updates.cooldownLeft()
+                        cooling = left > 0
+                        if (left > 0) { kotlinx.coroutines.delay(left + 50); cooling = false }
+                    }
                     // 从系统设置允许了"安装未知应用"回来，按钮要跟着变
                     androidx.lifecycle.compose.LifecycleResumeEffect(Unit) { canInstall = Updates.canInstall(); onPauseOrDispose { } }
                     val updDesc = when (val u = upd) {
@@ -542,7 +550,7 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                                 else FgButton(t("android.settings.updateAllow"), { Updates.openInstallPermission(ctx) }, small = true, on = true)
                             is Updates.State.Found -> FgButton(t("settings.updateInstall"), { Updates.download() }, small = true, on = true)
                             is Updates.State.Error -> FgButton(t("android.settings.updateRetry"), { Updates.download() }, small = true, on = true)
-                            else -> FgButton(t("settings.updateCheck"), { scope.launch { Updates.check(silent = false) } }, small = true)
+                            else -> FgButton(if (cooling) t("settings.updateJustChecked") else t("settings.updateCheck"), { scope.launch { Updates.check(silent = false) } }, small = true, enabled = !cooling)
                         }
                     }
                     SettingRow(t("settings.autoUpdate"), t("settings.autoUpdateDesc")) { FgSwitch(s.autoUpdate, { v -> Settings.set { it.copy(autoUpdate = v) } }, t("settings.autoUpdate")) }

@@ -25,7 +25,7 @@ import Select from "../components/Select";
 import { LANGS, Pref, setPref, storedPref } from "../i18n";
 import { type Settings as AppSettings, Effects, Theme, bumpCacheRev, setSettings, useScanInfo, useSettings } from "../settings";
 import { ACTIONS, Action, PRESETS, Preset, checkBinding, conflicts, isBindable, keyFor, keyVars, resetKeymap, setBinding, setPreset, useKeymap } from "../keymap";
-import { checkForUpdate, installUpdate, restartToUpdate, useUpdate } from "../updater";
+import { checkForUpdate, installUpdate, restartToUpdate, useCoolingDown, useUpdate } from "../updater";
 
 /** 更新说明（Release 正文的 Markdown）压成几行平实的文字：去掉标题的井号、加粗的星号，列表项换成圆点。 */
 function plainNotes(md: string): string {
@@ -85,6 +85,8 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
   ];
   const [current, setCurrent] = useState(sections[0].id);
   const upd = useUpdate();
+  /** 刚手动查过：60 秒内按钮置灰，防止连点把 GitHub 的匿名额度（每小时 60 次）用光。 */
+  const cooling = useCoolingDown();
   const updInfo = "info" in upd ? upd.info : null;
   const updDesc = upd.status === "latest" ? t("settings.updateLatest")
     : upd.status === "failed" ? t("settings.updateFailed")
@@ -689,7 +691,7 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
                 <span className="sctl-pair">
                   <span className="mono ash">{version ? `v${version} (${__BUILD__})` : ""}</span>
                   {upd.status === "ready" ? <button className="btn on" onClick={() => void restartToUpdate()}>{t("settings.updateRestart")}</button>
-                    : <button className="btn" disabled={upd.status === "checking" || upd.status === "downloading" || upd.status === "installing"} onClick={() => void checkForUpdate(false)}>{upd.status === "checking" ? t("settings.updateChecking") : t("settings.updateCheck")}</button>}
+                    : <button className="btn" disabled={cooling || upd.status === "checking" || upd.status === "downloading" || upd.status === "installing"} title={cooling ? t("settings.updateCooldown") : undefined} onClick={() => void checkForUpdate(false)}>{upd.status === "checking" ? t("settings.updateChecking") : cooling ? t("settings.updateJustChecked") : t("settings.updateCheck")}</button>}
                 </span>
               </Row>
               <Row label={t("settings.autoUpdate")} desc={t("settings.autoUpdateDesc")}>

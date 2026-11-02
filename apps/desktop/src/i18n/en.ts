@@ -295,7 +295,7 @@ const en = {
     aboutIssues: "Report a problem", aboutIssuesDesc: "File a bug or suggestion on GitHub",
     aboutVersion: "Version",
     // In-app updates (shared by updater.ts and Android's Updates.kt)
-    updateCheck: "Check for updates", updateChecking: "Checking…",
+    updateCheck: "Check for updates", updateChecking: "Checking…", updateJustChecked: "Just checked", updateCooldown: "Checked a moment ago; you can check again in a minute.",
     updateIdle: "New versions are published on GitHub Releases; you can also ask right now.", updateLatest: "You have the latest version.", updateFailed: "Could not check just now (offline, or GitHub is unreachable). Try again later.",
     updateFound: "Version {{version}} is available (you have {{current}})", updateNotes: "What's new",
     updateInstall: "Download and install", updateDownloading: "Downloading…", updateInstalling: "Installing…",

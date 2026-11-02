@@ -293,7 +293,7 @@ const zh = {
     aboutIssues: "反馈问题", aboutIssuesDesc: "在 GitHub 上提交 bug 或建议",
     aboutVersion: "版本",
     // 应用内更新（updater.ts / Android 的 Updates.kt 共用这组文案）
-    updateCheck: "检查更新", updateChecking: "正在检查…",
+    updateCheck: "检查更新", updateChecking: "正在检查…", updateJustChecked: "刚检查过", updateCooldown: "刚刚查过，一分钟后可以再查。",
     updateIdle: "新版本发布在 GitHub Releases 上，也可以现在就问一次。", updateLatest: "已是最新版本。", updateFailed: "刚才没查到（离线，或 GitHub 暂时不通），稍后再试。",
     updateFound: "有新版本 {{version}}（当前 {{current}}）", updateNotes: "更新说明",
     updateInstall: "下载并安装", updateDownloading: "正在下载…", updateInstalling: "正在安装…",

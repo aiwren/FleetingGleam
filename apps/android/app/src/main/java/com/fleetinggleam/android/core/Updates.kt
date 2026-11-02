@@ -25,6 +25,8 @@ import java.net.URL
  * 下到应用私有缓存里，再经 FileProvider 交给系统安装器（要用户先允许"安装未知应用"）。
  *   idle → checking → latest / failed / found → downloading → ready（APK 已在本机，等用户点"安装"）/ error
  * 启动后几秒静默查一次（设置里可关）：离线、GitHub 不通都安静地回到 idle；只有手动点"检查更新"才会说"没查到"。
+ * 限流：GitHub 对匿名请求每小时只给 60 次，所以手动检查之后 60 秒内按钮置灰、不再联网；启动时的自动检查 10 分钟内查过就跳过。
+ * 上次检查的时间存在 SharedPreferences，重开应用也绕不过去（和桌面端 updater.ts 同样的两个数）。
  */
 object Updates {
     private const val REPO = "aiwren/FleetingGleam"
@@ -53,9 +55,27 @@ object Updates {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var scheduled = false
 
+    /** 手动检查之间至少隔这么久。 */
+    const val MANUAL_COOLDOWN_MS = 60_000L
+    /** 启动时的自动检查：这么久之内查过就不查。 */
+    private const val AUTO_MIN_INTERVAL_MS = 10 * 60_000L
+    private val _checkedAt = MutableStateFlow(0L)
+    /** 上次检查（结束）的时间；设置页据此算冷却。 */
+    val checkedAt: StateFlow<Long> = _checkedAt
+    private fun markChecked() {
+        _checkedAt.value = System.currentTimeMillis()
+        app.getSharedPreferences("fg", Context.MODE_PRIVATE).edit().putLong("updateCheckedAt", _checkedAt.value).apply()
+    }
+    /** 手动检查还要等多少毫秒（0 = 现在就能查）。时钟被往回拨过就当可以查。 */
+    fun cooldownLeft(now: Long = System.currentTimeMillis()): Long {
+        val left = _checkedAt.value + MANUAL_COOLDOWN_MS - now
+        return if (left in 1..MANUAL_COOLDOWN_MS) left else 0
+    }
+
     fun init(ctx: Context) {
         app = ctx.applicationContext
         current = runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "0.0.0"
+        _checkedAt.value = ctx.getSharedPreferences("fg", Context.MODE_PRIVATE).getLong("updateCheckedAt", 0L)
         // 上个版本装好之后，缓存里那份 APK 就没用了（比当前版本新的留着：下过没装，下次不用再下）
         scope.launch {
             dir().listFiles()?.forEach { f -> if (compare(versionOf(f.name) ?: "0", current) <= 0) f.delete() }
@@ -74,8 +94,13 @@ object Updates {
         val s = _state.value
         if (s is State.Checking || s is State.Downloading) return
         if (s is State.Ready) return
+        // 冷却中：不联网，界面上照旧显示上一次的结果（按钮本来也是灰的，这里再挡一次）
+        val now = System.currentTimeMillis()
+        if (if (silent) now - _checkedAt.value in 0 until AUTO_MIN_INTERVAL_MS else cooldownLeft(now) > 0) return
         _state.value = State.Checking
+        markChecked()
         val found = withContext(Dispatchers.IO) { runCatching { fetchLatest() } }
+        markChecked() // 冷却从这次检查结束时算起
         _state.value = found.fold(
             onSuccess = { info ->
                 if (info == null) State.Latest

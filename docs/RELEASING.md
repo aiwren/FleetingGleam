@@ -50,7 +50,7 @@ git tag -d v0.1.0 && git push --delete origin v0.1.0   # 删除标签，同时�
 
 - **Mac**（Tauri 的 updater 插件）：读 `https://github.com/aiwren/FleetingGleam/releases/latest/download/latest.json`，里面写着新版本号、更新说明、`.app.tar.gz` 的地址和 minisign 签名。应用只接受用仓库里那把**公钥**（`tauri.conf.json` 的 `plugins.updater.pubkey`）验得过的更新包，然后下载、原地替换 `.app`、提示重启。
 - **Android**：读 GitHub 的公开接口 `releases/latest`，拿 `tag_name` 和已装的 `versionName` 比，新的就把 Release 里固定名字的 `FleetingGleam-android.apk` 下到应用私有目录，交给系统安装器（Android 会再确认一次，第一次要允许"安装未知应用"）。覆盖安装要求同一把签名密钥——所以 CI 必须用正式密钥签（见下面"Android 安装包"）。
-- 启动后几秒静默检查一次（设置里可关），离线或 GitHub 不通就当没有，不会弹错。更新说明来自 `CHANGELOG.md` 里这个版本的那一节（`.github/scripts/changelog-section.sh`），所以发版前务必把那一节写好。
+- 启动后几秒静默检查一次（设置里可关），离线或 GitHub 不通就当没有，不会弹错。**限流**：GitHub 对匿名请求每小时只给 60 次，所以手动"检查更新"之后 60 秒内按钮置灰（"刚检查过"）、不联网；启动时的自动检查 10 分钟内查过就跳过。上次检查时间存在本机，重开应用也绕不过去。更新说明来自 `CHANGELOG.md` 里这个版本的那一节（`.github/scripts/changelog-section.sh`），所以发版前务必把那一节写好。
 
 ### 一次性配置：更新包的签名密钥（必须）
 
