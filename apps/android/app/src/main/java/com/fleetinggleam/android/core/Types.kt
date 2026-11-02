@@ -139,7 +139,9 @@ data class Decision(val state: String, val manual: Boolean = false, val reasons:
 )
 @Serializable data class InfoFile(val path: String, val bytes: Long = 0)
 
-@Serializable data class TrashResult(val moved: Int = 0, val failed: List<String> = emptyList(), val networkBins: List<String> = emptyList(), val deferred: List<String> = emptyList())
+/** `undo`：核心能放回原处的那些（NAS 上的），原样交回 `untrash_photos`。 */
+@Serializable data class TrashResult(val moved: Int = 0, val failed: List<String> = emptyList(), val networkBins: List<String> = emptyList(), val deferred: List<String> = emptyList(), val undo: List<kotlinx.serialization.json.JsonElement> = emptyList())
+@Serializable data class UntrashResult(val restored: List<String> = emptyList(), val failed: List<String> = emptyList())
 /**
  * 导出的结果（第 35 条）：`skipped` 是目标里已有一模一样的（同名、同大小、同修改时间）；`failed` 列出没导出的与原因（约定的错误前缀串）；
  * `cancelled` = 用户中途停下了。

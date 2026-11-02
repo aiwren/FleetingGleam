@@ -106,7 +106,9 @@ fun ScanningStage(cull: CullState, data: androidx.compose.runtime.State<CullData
     val mode = cull.mode
     val open: (String) -> Unit = remember(cull) { { path -> cull.select(path, byTap = true); cull.viewer = true } }
     var cardHeight by remember { mutableStateOf(0) }
-    AnimatedContent(targetState = mode, label = "scanmode", transitionSpec = modeTransition, modifier = Modifier.fillMaxSize().swipeModes(cull)) { m ->
+    // 分析中没有"未处理"页签（判定还没出来）：上次停在那里就回到"全部"
+    LaunchedEffect(Unit) { if (cull.mode !in SCAN_MODES) cull.mode = "all" }
+    AnimatedContent(targetState = mode, label = "scanmode", transitionSpec = modeTransition, modifier = Modifier.fillMaxSize().swipeModes(cull, SCAN_MODES)) { m ->
         val state = rememberLazyListState()
         LaunchedEffect(state) {
             cull.scanBackToTop = { state.animateScrollToItem(0) }

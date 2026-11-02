@@ -105,8 +105,8 @@ fun SinglePager(shown: List<Photo>, decisions: Map<String, Decision>, cull: Cull
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     val d = decisions[p.path]
                     onDecide(p.path, if (d?.state == st && d.manual) null else st)
-                    // 手势挑片：定了就到下一张
-                    if (page < shown.size - 1) scope.launch { pager.animateScrollToPage(page + 1) }
+                    // 手势挑片：定了就到下一张（设置里"判定后自动前进"关了就不翻）
+                    if (com.fleetinggleam.android.core.Settings.value.autoAdvance && page < shown.size - 1) scope.launch { pager.animateScrollToPage(page + 1) }
                 }, onOpen = { onOpen(p.path) }, cull = cull,
                     modifier = Modifier.graphicsLayer {
                         // 翻页偏移只在这里（绘制阶段）读：以前在组合里读，翻页的每一帧整页重组（审查第二批）

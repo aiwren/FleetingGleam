@@ -60,8 +60,9 @@ fun SceneGallery(project: Project, data: CullData, cull: CullState, describing: 
     val decisions by Session.decisions.collectAsState()
     val texts by Scenes.texts.collectAsState()
     // 每个场景里符合状态与人物筛选的照片，分高的在前
-    val groups = remember(all, decisions, cull.mode, cull.personFilter, texts) {
-        all.filter { p -> (cull.mode == "all" || decisions[p.path]?.state == cull.mode) && (cull.personFilter == null || p.people.contains(cull.personFilter)) }
+    val done = remember(decisions, project.stars) { processedSet(decisions, project.stars) }
+    val groups = remember(all, decisions, done, cull.mode, cull.personFilter, cull.pairFilter, texts) {
+        all.filter { p -> inMode(cull.mode, p.path, decisions, done) && (cull.personFilter == null || p.people.contains(cull.personFilter)) && (!cull.pairFilter || isLonely(p)) }
             .groupBy { it.scene }.map { (id, ps) -> Triple(id, ps.sortedByDescending { it.score }, texts[id] ?: "") }.sortedByDescending { it.second.size }
     }
     LazyVerticalGrid(GridCells.Fixed(2), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = topPad + 8.dp, bottom = bottomPad), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.fillMaxSize()) {
@@ -76,7 +77,9 @@ fun SceneGallery(project: Project, data: CullData, cull: CullState, describing: 
                     AsyncImage(File(photos[0].thumb), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.5f to Color.Transparent, 1f to Color(0xB0000000))))
                     if (text.isNotEmpty()) Text(text, style = Type.rowDesc.copy(color = Color.White), maxLines = 2, overflow = Ellipsis, modifier = Modifier.align(Alignment.BottomStart).padding(start = 10.dp, end = 10.dp, bottom = 26.dp))
-                    Text(t("cull.sceneCount", "count" to photos.size), style = Type.monoSmall.copy(color = Color.White.copy(alpha = 0.85f)), modifier = Modifier.align(Alignment.BottomStart).padding(10.dp))
+                    Text(data.scenes.firstOrNull { it.scene == id }?.takeIf { it.done > 0 }?.let { t("cull.sceneHandled", "count" to photos.size, "handled" to it.done) } ?: t("cull.sceneCount", "count" to photos.size), style = Type.monoSmall.copy(color = Color.White.copy(alpha = 0.85f)), modifier = Modifier.align(Alignment.BottomStart).padding(10.dp))
+                    // 这个场景（不论筛选）已处理几张
+                    data.scenes.firstOrNull { it.scene == id }?.let { s -> DoneBadge(s.done, s.total, Modifier.align(Alignment.TopEnd).padding(8.dp)) }
                 }
                 if (photos.size > 1) Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     photos.drop(1).take(4).forEach { p ->

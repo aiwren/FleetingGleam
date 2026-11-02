@@ -220,6 +220,15 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                     Segmented(listOf("system" to t("nav.systemLang"), "light" to t("settings.light"), "dark" to t("settings.dark")), s.theme, { v -> Settings.set { it.copy(theme = v) } }, block = true)
                 })
                 SettingRow(t("android.settings.glass"), t("android.settings.glassDesc")) { FgSwitch(s.glass, { v -> Settings.set { it.copy(glass = v) } }, t("android.settings.glass")) }
+                SettingRow(t("settings.effects"), t("settings.effectsDesc"), below = {
+                    Segmented(listOf("full" to t("settings.effectsFull"), "calm" to t("settings.effectsCalm")), s.effects, { v -> Settings.set { it.copy(effects = v) } }, block = true)
+                })
+            }
+        }
+        // 选片：判定后自动前进
+        if (section == "general") item {
+            SettingGroup(t("android.settings.cullTitle")) {
+                SettingRow(t("settings.autoAdvance"), t("android.settings.autoAdvanceDesc"), first = true) { FgSwitch(s.autoAdvance, { v -> Settings.set { it.copy(autoAdvance = v) } }, t("settings.autoAdvance")) }
             }
         }
         if (section == "analysis") item {

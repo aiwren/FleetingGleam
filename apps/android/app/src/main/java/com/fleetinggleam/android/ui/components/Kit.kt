@@ -538,12 +538,14 @@ object Toasts {
 fun ToastHost(bottom: Dp) {
     val c = LocalFg.current
     val m by Toasts.msg.collectAsState()
+    // 动效"克制"时提示条更淡
+    val calm = com.fleetinggleam.android.ui.theme.LocalCalm.current
     LaunchedEffect(m?.id) { val id = m?.id ?: return@LaunchedEffect; delay(6000); Toasts.clear(id) }
     Box(Modifier.fillMaxSize().navigationBarsPadding().padding(bottom = bottom), contentAlignment = Alignment.BottomCenter) {
         AnimatedVisibility(m != null, enter = fadeIn() + slideInVertically { it / 2 }, exit = fadeOut() + slideOutVertically { it / 3 }) {
             val msg = m ?: return@AnimatedVisibility
             Row(
-                Modifier.padding(horizontal = 20.dp).clip(RoundedCornerShape(14.dp)).background(c.ink).padding(start = 16.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+                Modifier.padding(horizontal = 20.dp).graphicsLayer { alpha = if (calm) 0.8f else 1f }.clip(RoundedCornerShape(14.dp)).background(c.ink).padding(start = 16.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(msg.text, style = Type.body.copy(color = c.onInk), modifier = Modifier.padding(vertical = 8.dp).weight(1f, fill = false), maxLines = 2, overflow = Ellipsis)
@@ -633,7 +635,7 @@ fun NavRow(icon: String, title: String, value: String? = null, first: Boolean = 
  * `inset`：放在带页边距的列表里时，把顶栏向两侧撑出这么多（取代以前三处各写一遍的 `layout` 负边距）。
  */
 @Composable
-fun NavBar(title: String, back: String?, onBack: (() -> Unit)?, modifier: Modifier = Modifier, onTitle: (() -> Unit)? = null, inset: Dp = 0.dp, trailing: (@Composable RowScope.() -> Unit)? = null) {
+fun NavBar(title: String, back: String?, onBack: (() -> Unit)?, modifier: Modifier = Modifier, onTitle: (() -> Unit)? = null, inset: Dp = 0.dp, subtitle: String? = null, subtitleDone: Boolean = false, trailing: (@Composable RowScope.() -> Unit)? = null) {
     val c = LocalFg.current
     val outset = if (inset > 0.dp) Modifier.layout { m, cs ->
         val extra = inset.roundToPx() * 2
@@ -648,8 +650,13 @@ fun NavBar(title: String, back: String?, onBack: (() -> Unit)?, modifier: Modifi
             FgIcon(Icons.BACK, size = 18.dp, box = 12f, stroke = 1.5f)
             if (back != null) Text(back, style = Type.rowTitle.copy(color = c.ink), modifier = Modifier.padding(start = 2.dp), maxLines = 1)
         }
-        Text(title, style = Type.navTitle.copy(color = c.ink), maxLines = 1, overflow = Ellipsis,
-            modifier = Modifier.align(Alignment.Center).padding(horizontal = 96.dp).clip(RoundedCornerShape(8.dp)).then(if (onTitle != null) Modifier.clickable(onClick = onTitle) else Modifier).padding(horizontal = 6.dp, vertical = 4.dp))
+        // 有副标题（项目页的"已处理 x / N"）时标题下面一行小字，两行一起居中
+        Column(Modifier.align(Alignment.Center).padding(horizontal = 96.dp).clip(RoundedCornerShape(8.dp)).then(if (onTitle != null) Modifier.clickable(onClick = onTitle) else Modifier).padding(horizontal = 6.dp, vertical = if (subtitle == null) 4.dp else 0.dp),
+            horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(title, style = Type.navTitle.copy(color = c.ink), maxLines = 1, overflow = Ellipsis)
+            // 全部处理完：琥珀色（和桌面端标题栏一样）
+            if (subtitle != null) Text(subtitle, style = Type.monoSmall.copy(color = if (subtitleDone) c.gleam else c.ash, fontWeight = if (subtitleDone) FontWeight.SemiBold else FontWeight.Normal), maxLines = 1)
+        }
         if (trailing != null) Row(Modifier.align(Alignment.CenterEnd), verticalAlignment = Alignment.CenterVertically, content = trailing)
     }
 }

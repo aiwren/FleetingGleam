@@ -21,7 +21,17 @@ import java.util.Locale
 object Organize {
     const val RECYCLE = ".FleetingGleam Recycle Bin"
 
-    data class TrashOutcome(val moved: Int, val failed: Int, val bins: List<String>, val cancelled: Boolean = false)
+    data class TrashOutcome(val moved: Int, val failed: Int, val bins: List<String>, val cancelled: Boolean = false, val undo: TrashUndo = TrashUndo())
+
+    /**
+     * 一次"移走淘汰的"之后能整体放回的：核心交回的（NAS 上的）、镜像里移进回收文件夹的（记着它现在在哪、原来在哪个文件夹）、
+     * 相册里进了系统回收站的（MediaStore 的 Uri，放回时再请求一次系统确认）。
+     */
+    data class TrashUndo(val core: List<kotlinx.serialization.json.JsonElement> = emptyList(), val mirror: List<MirrorBack> = emptyList(), val album: List<Pair<String, Uri>> = emptyList()) {
+        val size: Int get() = core.size + mirror.size + album.size
+    }
+    /** 镜像里移走的一张：`doc` 是它在回收文件夹里的文档，`bin` 是回收文件夹，`parent` 是原来所在的文件夹。 */
+    data class MirrorBack(val path: String, val doc: Uri, val bin: Uri, val parent: Uri)
 
     /** 相册里导出用的文件夹：Pictures/惊鸿/项目名（Android 11 起应用可以直接按路径在公共媒体目录里建自己的文件）。 */
     fun albumDir(projectName: String): File {
@@ -92,24 +102,57 @@ object Organize {
         val gone = paths.filter { it !in r.failed && it !in r.deferred }.toMutableList()
         // 镜像里的：在原处移进回收文件夹
         val (mirrored, local) = r.deferred.partition { Media.isMirror(ctx, it) }
+        val mirrorBack = mutableListOf<MirrorBack>()
         for (p in mirrored) {
-            val where = recycleMirror(ctx, p)
-            if (where != null) { moved++; gone.add(p); if (where !in bins) bins.add(where) } else failed.add(p)
+            val got = recycleMirror(ctx, p)
+            if (got != null) { val (where, back) = got; moved++; gone.add(p); back?.let { mirrorBack.add(it) }; if (where !in bins) bins.add(where) } else failed.add(p)
         }
         // 相册里的：系统回收站（一个确认框处理全部）
         val uris = local.mapNotNull { p -> Media.uriOf(ctx, p)?.let { p to it } }
         failed.addAll(local.filter { p -> uris.none { it.first == p } })
         var cancelled = false
+        var album = emptyList<Pair<String, Uri>>()
         if (uris.isNotEmpty()) {
             val req = MediaStore.createTrashRequest(ctx.contentResolver, uris.map { it.second }, true)
-            if (confirm(req.intentSender)) { moved += uris.size; gone.addAll(uris.map { it.first }) }
+            if (confirm(req.intentSender)) { moved += uris.size; gone.addAll(uris.map { it.first }); album = uris }
             else cancelled = true
         }
-        return TrashOutcome(moved, failed.size, bins, cancelled) to gone
+        return TrashOutcome(moved, failed.size, bins, cancelled, TrashUndo(r.undo, mirrorBack, album)) to gone
     }
 
-    /** 镜像里的一张：在原处找到它，移进根目录的回收文件夹（按日期分开），然后删掉本机副本。返回回收文件夹的说法，失败是 null。 */
-    private fun recycleMirror(ctx: Context, path: String): String? {
+    /**
+     * 撤销整次"移走淘汰的"：NAS 上的交回核心放回原处；镜像里的从回收文件夹挪回原来的文件夹（本机副本下次读文件夹时同步回来）；
+     * 相册里的请求系统把它们从回收站恢复（系统会再弹一次确认框，拒绝就算没放回）。返回放回去的原路径和没放回的张数。
+     */
+    suspend fun untrash(ctx: Context, undo: TrashUndo, confirm: suspend (android.content.IntentSender) -> Boolean): Pair<List<String>, Int> {
+        val restored = mutableListOf<String>()
+        var failed = 0
+        if (undo.core.isNotEmpty()) {
+            val r = runCatching { Core.get<UntrashResult>("untrash_photos", args("items" to undo.core)) }.getOrElse { UntrashResult(failed = List(undo.core.size) { "" }) }
+            restored.addAll(r.restored); failed += r.failed.size
+        }
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            for (m in undo.mirror) if (putBackMirror(ctx, m)) restored.add(m.path) else failed++
+        }
+        if (undo.album.isNotEmpty()) {
+            val req = MediaStore.createTrashRequest(ctx.contentResolver, undo.album.map { it.second }, false)
+            if (confirm(req.intentSender)) restored.addAll(undo.album.map { it.first }) else failed += undo.album.size
+        }
+        return restored to failed
+    }
+
+    /** 镜像里的一张从回收文件夹挪回原处；原处已有同名的就不放（不覆盖）。 */
+    private fun putBackMirror(ctx: Context, m: MirrorBack): Boolean {
+        val parent = DocumentFile.fromTreeUri(ctx, m.parent) ?: return false
+        val doc = DocumentFile.fromTreeUri(ctx, m.doc) ?: return false
+        val name = doc.name ?: return false
+        if (parent.findFile(name) != null) return false
+        return runCatching { DocumentsContract.moveDocument(ctx.contentResolver, m.doc, m.bin, m.parent) != null }.getOrDefault(false)
+            || copyThenDelete(ctx, doc, parent, name) != null
+    }
+
+    /** 镜像里的一张：在原处找到它，移进根目录的回收文件夹（按日期分开），然后删掉本机副本。返回回收文件夹的说法和放回用的记录，失败是 null。 */
+    private fun recycleMirror(ctx: Context, path: String): Pair<String, MirrorBack?>? {
         val (m, rel) = Media.mirrorOf(ctx, path) ?: return null
         val treeUri = Uri.parse(m.uri)
         val root = DocumentFile.fromTreeUri(ctx, treeUri) ?: return null
@@ -119,31 +162,29 @@ object Organize {
         val doc = parent.findFile(parts.last()) ?: return null
         val day = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(Date())
         val bin = (root.findFile(RECYCLE) ?: root.createDirectory(RECYCLE))?.let { it.findFile(day) ?: it.createDirectory(day) } ?: return null
-        val ok = runCatching {
-            // 能直接移动的提供者（大多数本地与网盘）就移动；不支持的复制过去再删
-            DocumentsContract.moveDocument(ctx.contentResolver, doc.uri, parent.uri, bin.uri) != null
-        }.getOrDefault(false) || copyThenDelete(ctx, doc, bin, parts.last())
-        if (!ok) return null
+        // 能直接移动的提供者（大多数本地与网盘）就移动；不支持的复制过去再删
+        val now = runCatching { DocumentsContract.moveDocument(ctx.contentResolver, doc.uri, parent.uri, bin.uri) }.getOrNull()
+            ?: copyThenDelete(ctx, doc, bin, parts.last()) ?: return null
         File(path).delete()
-        return "${m.name}/$RECYCLE/$day"
+        return "${m.name}/$RECYCLE/$day" to MirrorBack(path, now, bin.uri, parent.uri)
     }
 
     /**
      * 不支持直接移动的提供者：复制进回收文件夹，**确认写进去的字节数等于原图大小**才删原图。输入 / 输出流打不开、
      * 复制到一半出错或字节数对不上，都删掉回收夹里那份残缺的、原图不动，算失败（以前流是 null 也照删原图，原图就没了）。
      */
-    private fun copyThenDelete(ctx: Context, doc: DocumentFile, bin: DocumentFile, fallbackName: String): Boolean {
-        val out = runCatching { bin.createFile(doc.type ?: "image/jpeg", doc.name ?: fallbackName) }.getOrNull() ?: return false
+    private fun copyThenDelete(ctx: Context, doc: DocumentFile, bin: DocumentFile, fallbackName: String): Uri? {
+        val out = runCatching { bin.createFile(doc.type ?: "image/jpeg", doc.name ?: fallbackName) }.getOrNull() ?: return null
         val expected = doc.length()
         val written = runCatching {
             ctx.contentResolver.openInputStream(doc.uri)?.use { i -> ctx.contentResolver.openOutputStream(out.uri)?.use { o -> i.copyTo(o) } }
         }.getOrNull()
         // length() 取不到时是 0：这时只要求确实写进了东西
         val ok = written != null && written > 0 && (expected <= 0 || written == expected)
-        if (!ok) { runCatching { out.delete() }; return false }
+        if (!ok) { runCatching { out.delete() }; return null }
         // 原图删不掉：回收夹里那份也撤掉，免得同一张出现两份
-        if (!runCatching { doc.delete() }.getOrDefault(false)) { runCatching { out.delete() }; return false }
-        return true
+        if (!runCatching { doc.delete() }.getOrDefault(false)) { runCatching { out.delete() }; return null }
+        return out.uri
     }
 
     /** 评分 / 标签会写到哪里：JPEG 写进文件，RAW / TIFF 写旁边的 .xmp，其它格式写不了。和核心的 `xmp::carrier_of`、桌面端 carrierOf 一致。 */

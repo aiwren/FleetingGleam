@@ -482,7 +482,7 @@ fun FocusImage(path: String, modifier: Modifier = Modifier, quick: Boolean = fal
 // ---------------------------------------------------------------- 一张照片
 
 /** 照片额外的身份：RAW / HEIC 之类、实况或 HDR、长图（和桌面端 photoTags 一样的规则）。 */
-private val RAW_EXT = setOf("dng", "cr2", "cr3", "crw", "nef", "nrw", "arw", "srf", "sr2", "raf", "orf", "rw2", "pef", "srw", "x3f", "3fr", "erf", "kdc", "mef", "mos", "mrw", "raw", "rwl", "iiq", "fff", "dcr", "k25", "rwz")
+// RAW 扩展名见 ExifCard.kt 的 RAW_EXT
 private val FORMAT_TAG = setOf("heic", "heif", "avif", "jxl", "tif", "tiff", "bmp", "gif")
 
 fun photoTags(p: Photo): List<Pair<String, String?>> {
@@ -631,7 +631,9 @@ private fun Developing(path: String, stage: StageInfo?) {
 /** 记号：保留是点亮的金星（再有一道横向的光和一团光晕），待复查是空心星，淘汰没有图标，只有一下收拢的光圈。 */
 @Composable
 private fun androidx.compose.foundation.layout.BoxScope.Marks(state: String, changedTo: String?, changeN: Int, reveal: Boolean, index: Int, selected: Boolean) {
-    val play = { s: String -> (changedTo == s && changeN > 0) || reveal }
+    // 动效"克制"：记号直接出现，不播星光、光圈
+    val calm = com.fleetinggleam.android.ui.theme.LocalCalm.current
+    val play = { s: String -> !calm && ((changedTo == s && changeN > 0) || reveal) }
     val delayMs = if (reveal && changedTo == null) 300 + minOf(index, 40) * 55 else 0
     if (state == "keep") {
         // 星的出现：缩放 0.6 → 1、淡入，tap 弹簧，不转、不弹跳（设计审查 R7）
@@ -644,11 +646,11 @@ private fun androidx.compose.foundation.layout.BoxScope.Marks(state: String, cha
         if (play("keep")) Flare(changeN, reveal, delayMs)
     }
     if (state == "review") {
-        val d = remember(changeN) { Animatable(if (changedTo == "review") 0f else 1f) }
+        val d = remember(changeN) { Animatable(if (changedTo == "review" && !calm) 0f else 1f) }
         LaunchedEffect(changeN) { if (d.value < 1f) d.animateTo(1f, Motion.slow()) }
         Box(Modifier.align(Alignment.TopEnd).padding(9.dp)) { Star(false, 20.dp, color = Color.White.copy(alpha = 0.95f), draw = d.value) }
     }
-    if (state == "reject" && changedTo == "reject" && changeN > 0) Iris(changeN)
+    if (state == "reject" && changedTo == "reject" && changeN > 0 && !calm) Iris(changeN)
 }
 
 /** 保留时的一道横向长光（像变形镜头的拉丝光）和星点处的一团光晕。 */

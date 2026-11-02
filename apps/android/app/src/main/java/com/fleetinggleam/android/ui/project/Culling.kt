@@ -106,6 +106,8 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 
 // ------------------------------------------------------------------------------------------------ 状态
 
@@ -130,6 +132,8 @@ class CullState {
     var personFilter by mutableStateOf<Int?>(null)
     /** 手动星级筛选：只看 n 星及以上（null = 不筛）。 */
     var starFilter by mutableStateOf<Int?>(null)
+    /** 文件筛选"缺配对"：只看既无伴随文件、又是孤零零的 RAW 或 JPG 的。 */
+    var pairFilter by mutableStateOf(false)
     var selected by mutableStateOf<String?>(null)
     /** 选中是点出来的（就在手指下，不用滚过去）。 */
     var selectedByTap = false
@@ -174,7 +178,7 @@ class CullState {
     fun pickLayout(v: ViewStyle) { layout = v; UiPrefs.put("layout", v.id) }
     fun bumpHint(n: Int = 1) { hintUses = if (n == 99) 99 else maxOf(hintUses, hintUses + 1); UiPrefs.put("hint.dock", hintUses) }
     fun select(path: String?, byTap: Boolean = false) { selectedByTap = byTap; selected = path }
-    val filtered: Boolean get() = sceneFilter != null || personFilter != null || starFilter != null
+    val filtered: Boolean get() = sceneFilter != null || personFilter != null || starFilter != null || pairFilter
 
     companion object {
         /**
@@ -185,13 +189,13 @@ class CullState {
             save = { s ->
                 buildMap {
                     put("mode", s.mode); put("sceneView", s.sceneView)
-                    s.sceneFilter?.let { put("scene", it) }; s.personFilter?.let { put("person", it) }; s.starFilter?.let { put("stars", it) }; s.selected?.let { put("selected", it) }
+                    s.sceneFilter?.let { put("scene", it) }; s.personFilter?.let { put("person", it) }; s.starFilter?.let { put("stars", it) }; if (s.pairFilter) put("pair", true); s.selected?.let { put("selected", it) }
                 }
             },
             restore = { m ->
                 CullState().apply {
-                    mode = m["mode"] as? String ?: "all"; sceneView = m["sceneView"] as? Boolean ?: false
-                    sceneFilter = m["scene"] as? Int; personFilter = m["person"] as? Int; starFilter = m["stars"] as? Int; selected = m["selected"] as? String
+                    mode = (m["mode"] as? String)?.takeIf { it in MODES } ?: "all"; sceneView = m["sceneView"] as? Boolean ?: false
+                    sceneFilter = m["scene"] as? Int; personFilter = m["person"] as? Int; starFilter = m["stars"] as? Int; pairFilter = m["pair"] as? Boolean ?: false; selected = m["selected"] as? String
                 }
             },
         )
@@ -221,7 +225,8 @@ private class TrackRectNode(var map: MutableMap<String, LayoutCoordinates>, var 
     fun drop() { if (mine != null && map[key] === mine) map.remove(key); mine = null }
 }
 
-data class SceneItem(val scene: Int, val cover: Photo, val total: Int, val count: Int, val text: String)
+/** `done`：这个场景里已处理（手动判过或打过星）的张数，`total` 是这个场景的全部张数。 */
+data class SceneItem(val scene: Int, val cover: Photo, val total: Int, val count: Int, val text: String, val done: Int = 0)
 data class PersonItem(val person: Int, val photo: Photo, val box: List<Float>, val total: Int, val count: Int)
 
 /** 由照片、取舍与筛选推出来的一切（桌面端那一串 useMemo）。 */
@@ -235,9 +240,26 @@ class CullData(
     /** `starN[n]`：别的筛选都算上，n 星及以上有几张；`starX[n]`：正好 n 星有几张（面板只列真打过的星数）。下标 1..5。 */
     val starN: IntArray = IntArray(6),
     val starX: IntArray = IntArray(6),
+    /** 已处理（有手动判定或手动星级）的张数 / 全部张数：顶栏的"已处理 x / N"。 */
+    val processed: Int = 0,
+    val total: Int = 0,
+    /** 项目里有 RAW + JPG 成对或有 RAW：筛选里出现"文件"一栏；`lonelyN` 是"缺配对"现在点它会有几张。 */
+    val hasRaw: Boolean = false,
+    val lonelyN: Int = 0,
 ) {
     fun index(path: String?): Int = if (path == null) -1 else shown.indexOfFirst { it.path == path }
 }
+
+/** 已处理：有手动判定（overrides）或打过手动星级。 */
+fun processedSet(decisions: Map<String, Decision>, stars: Map<String, Int>): Set<String> =
+    HashSet<String>().apply { decisions.forEach { (k, d) -> if (d.manual) add(k) }; stars.forEach { (k, n) -> if (n > 0) add(k) } }
+
+private val JPG_EXT = setOf("jpg", "jpeg", "jpe")
+private fun extOf(path: String) = path.substringAfterLast('.', "").lowercase()
+/** 缺配对：没有伴随文件，自己又是孤零零的 RAW 或 JPG（HEIC、PNG 这些本来就不成对，不算）。 */
+fun isLonely(p: Photo): Boolean = p.companions.isEmpty() && extOf(p.path).let { it in RAW_EXT || it in JPG_EXT }
+/** 项目里有成对的 RAW + JPG，或者有 RAW：筛选里才出现"文件"一栏。 */
+fun hasRawFiles(photos: List<Photo>): Boolean = photos.any { it.companions.isNotEmpty() || extOf(it.path) in RAW_EXT }
 
 /** 照片按项目的排序方式排好（和桌面端一样：按相似分组时，组保持在文件夹里的位置，组里最好的在前）。 */
 fun ordered(photos: List<Photo>, sortBy: String): List<Photo> = when (sortBy) {
@@ -253,10 +275,14 @@ fun ordered(photos: List<Photo>, sortBy: String): List<Photo> = when (sortBy) {
 
 @Composable
 fun rememberCullData(cull: CullState, photos: List<Photo>, decisions: Map<String, Decision>, sortBy: String, sceneText: Map<Int, String>, stars: Map<String, Int> = emptyMap()): CullData {
-    val mode = cull.mode; val sceneF = cull.sceneFilter; val personF = cull.personFilter; val starF = cull.starFilter; val selected = cull.selected
+    val mode = cull.mode; val sceneF = cull.sceneFilter; val personF = cull.personFilter; val starF = cull.starFilter; val pairF = cull.pairFilter; val selected = cull.selected
     val rawHits = cull.rawHits; val query = cull.query
     val byPath = remember(photos) { photos.associateBy { it.path } }
     val order = remember(photos, sortBy) { ordered(photos, sortBy) }
+    val done = remember(decisions, stars) { processedSet(decisions, stars) }
+    val hasRaw = remember(photos) { hasRawFiles(photos) }
+    // 每个场景已处理几张（场景卡的角标）
+    val sceneDone = remember(photos, done) { HashMap<Int, Int>().apply { for (p in photos) if (p.path in done) put(p.scene, (get(p.scene) ?: 0) + 1) } }
     // 场景：后端做"兼顾不同场景"时已经分好的、相似的大簇；按大小排，同样大的保持出现的先后，封面是分最高的一张
     val scenes0 = remember(photos) {
         val by = LinkedHashMap<Int, Triple<Int, Photo, Int>>()
@@ -281,24 +307,30 @@ fun rememberCullData(cull: CullState, photos: List<Photo>, decisions: Map<String
         by.entries.sortedWith(compareByDescending<Map.Entry<Int, Acc>> { it.value.paths.size }.thenBy { it.key }).map { (id, a) -> PersonItem(id, a.photo, a.box, a.paths.size, a.paths.size) }
     }
     // 筛选面板里的每个数：要是现在点它，墙上会有几张（另外两个筛选照旧）
-    val facets = remember(photos, decisions, mode, sceneF, personF, starF, stars) {
+    val facets = remember(photos, decisions, mode, sceneF, personF, starF, pairF, stars, done) {
         fun st(p: Photo) = decisions[p.path]?.state
         val inScene = { p: Photo -> sceneF == null || p.scene == sceneF }
         val inPerson = { p: Photo -> personF == null || p.people.contains(personF) }
         val inStar = { p: Photo -> starF == null || (stars[p.path] ?: 0) >= starF }
-        val inMode = { p: Photo -> mode == "all" || st(p) == mode }
-        val status = HashMap<String, Int>().apply { put("all", 0); put("keep", 0); put("review", 0); put("reject", 0) }
+        val inPair = { p: Photo -> !pairF || isLonely(p) }
+        val inMode = { p: Photo -> inMode(mode, p.path, decisions, done) }
+        val status = HashMap<String, Int>().apply { put("all", 0); put("keep", 0); put("review", 0); put("reject", 0); put("untouched", 0) }
         val sceneN = HashMap<Int, Int>(); val personN = HashMap<Int, Int>()
         val starN = IntArray(6); val starX = IntArray(6)
+        var lonelyN = 0
         for (p in photos) {
-            if (inScene(p) && inPerson(p) && inStar(p)) { status["all"] = status["all"]!! + 1; st(p)?.let { status[it] = (status[it] ?: 0) + 1 } }
-            if (inMode(p) && inPerson(p) && inStar(p)) sceneN[p.scene] = (sceneN[p.scene] ?: 0) + 1
-            if (inMode(p) && inScene(p) && inStar(p)) p.people.filter { it >= 0 }.toSet().forEach { personN[it] = (personN[it] ?: 0) + 1 }
-            if (inMode(p) && inScene(p) && inPerson(p)) { val n = stars[p.path] ?: 0; if (n in 1..5) { starX[n]++; for (k in 1..n) starN[k]++ } }
+            if (inScene(p) && inPerson(p) && inStar(p) && inPair(p)) {
+                status["all"] = status["all"]!! + 1; st(p)?.let { status[it] = (status[it] ?: 0) + 1 }
+                if (p.path !in done) status["untouched"] = status["untouched"]!! + 1
+            }
+            if (inMode(p) && inPerson(p) && inStar(p) && inPair(p)) sceneN[p.scene] = (sceneN[p.scene] ?: 0) + 1
+            if (inMode(p) && inScene(p) && inStar(p) && inPair(p)) p.people.filter { it >= 0 }.toSet().forEach { personN[it] = (personN[it] ?: 0) + 1 }
+            if (inMode(p) && inScene(p) && inPerson(p) && inPair(p)) { val n = stars[p.path] ?: 0; if (n in 1..5) { starX[n]++; for (k in 1..n) starN[k]++ } }
+            if (inMode(p) && inScene(p) && inPerson(p) && inStar(p) && isLonely(p)) lonelyN++
         }
-        Facets(status, sceneN, personN, starN, starX)
+        Facets(status, sceneN, personN, starN, starX, lonelyN)
     }
-    val scenes = remember(scenes0, facets, sceneText) { scenes0.map { (id, cover, total) -> SceneItem(id, cover, total, facets.sceneN[id] ?: 0, sceneText[id] ?: "") } }
+    val scenes = remember(scenes0, facets, sceneText, sceneDone) { scenes0.map { (id, cover, total) -> SceneItem(id, cover, total, facets.sceneN[id] ?: 0, sceneText[id] ?: "", sceneDone[id] ?: 0) } }
     val people = remember(people0, facets) { people0.map { it.copy(count = facets.personN[it.person] ?: 0) } }
     // 场景的那句话也能搜到："花田"或"building"会找出描述成这样的场景里的每一张，排在文字模型找到的前面
     val hits = remember(rawHits, query, photos, sceneText) {
@@ -315,11 +347,11 @@ fun rememberCullData(cull: CullState, photos: List<Photo>, decisions: Map<String
             }
         }
     }
-    val matchesView = { p: Photo -> (mode == "all" || decisions[p.path]?.state == mode) && (sceneF == null || p.scene == sceneF) && (personF == null || p.people.contains(personF)) && (starF == null || (stars[p.path] ?: 0) >= starF) }
+    val matchesView = { p: Photo -> inMode(mode, p.path, decisions, done) && (sceneF == null || p.scene == sceneF) && (personF == null || p.people.contains(personF)) && (starF == null || (stars[p.path] ?: 0) >= starF) && (!pairF || isLonely(p)) }
     // 选中的那张一直留在眼前，直到你移开——哪怕刚做的改动让它不再符合这个视图。
     // 只有它真的不再符合时才"带着"；其余情况是 null，这样点选一张不会重算整个列表（也就不会重排整面墙）。
-    val carried = remember(selected, byPath, decisions, mode, sceneF, personF, starF, stars) { selected?.let { byPath[it] }?.takeIf { !matchesView(it) }?.path }
-    val shownRaw = remember(order, decisions, mode, sceneF, personF, starF, stars, carried, hits) {
+    val carried = remember(selected, byPath, decisions, mode, sceneF, personF, starF, pairF, stars, done) { selected?.let { byPath[it] }?.takeIf { !matchesView(it) }?.path }
+    val shownRaw = remember(order, decisions, mode, sceneF, personF, starF, pairF, stars, done, carried, hits) {
         val base = order.filter { matchesView(it) || it.path == carried }
         if (hits == null) base else {
             val rank = hits.withIndex().associate { (i, h) -> h.path to i }
@@ -330,11 +362,19 @@ fun rememberCullData(cull: CullState, photos: List<Photo>, decisions: Map<String
     val shownRef = remember { mutableStateOf(shownRaw) }
     if (shownRef.value !== shownRaw && (shownRef.value.size != shownRaw.size || shownRef.value.indices.any { shownRef.value[it] !== shownRaw[it] })) shownRef.value = shownRaw
     val shown = shownRef.value
-    return remember(shown, facets, scenes, people, byPath, hits) { CullData(shown, facets.status, scenes, people, byPath, hits, facets.starN, facets.starX) }
+    val processed = remember(photos, done) { photos.count { it.path in done } }
+    return remember(shown, facets, scenes, people, byPath, hits, processed, hasRaw) { CullData(shown, facets.status, scenes, people, byPath, hits, facets.starN, facets.starX, processed, photos.size, hasRaw, facets.lonelyN) }
+}
+
+/** 这张照片属不属于这个状态页签：`untouched`（未处理）= 既没手动判过、也没打过星。 */
+fun inMode(mode: String, path: String, decisions: Map<String, Decision>, done: Set<String>): Boolean = when (mode) {
+    "all" -> true
+    "untouched" -> path !in done
+    else -> decisions[path]?.state == mode
 }
 
 /** 筛选面板里每一栏的计数（见 rememberCullData）。 */
-private class Facets(val status: Map<String, Int>, val sceneN: Map<Int, Int>, val personN: Map<Int, Int>, val starN: IntArray, val starX: IntArray)
+private class Facets(val status: Map<String, Int>, val sceneN: Map<Int, Int>, val personN: Map<Int, Int>, val starN: IntArray, val starX: IntArray, val lonelyN: Int)
 
 /** 一条理由的文字（桌面端 reasonText）：参数原样带进去，`stateKey` 先翻译成状态的名字。 */
 fun reasonText(r: Reason): String {
@@ -354,13 +394,19 @@ fun reasonText(r: Reason): String {
 fun decideIn(cull: CullState, data: CullData, path: String, st: String?, order: List<Photo> = data.shown) {
     Session.decide(path, st)
     cull.bumpHint()
-    if (st != null && cull.mode != "all" && st != cull.mode) {
+    if (st == null) return
+    // 改了之后不在这个页签里了（"未处理"里判了任何一种都算）：选中挪到邻居上
+    if (cull.mode != "all" && st != cull.mode) {
         val i = order.indexOfFirst { it.path == path }
         val inView = data.shown.mapTo(HashSet()) { it.path }
         val ok = { p: Photo -> p.path != path && p.path in inView }
         val nb = order.drop(i + 1).firstOrNull(ok) ?: order.take(i.coerceAtLeast(0)).lastOrNull(ok)
             ?: order.getOrNull(i + 1) ?: order.getOrNull(i - 1)
         cull.select(nb?.path?.takeIf { it != path })
+    } else if (Settings.value.autoAdvance && (cull.viewer || cull.layout != ViewStyle.Compare)) {
+        // 判定后自动前进（设置里可关）：大图翻到下一张、照片墙选中下一张；最后一张不动。对比页有自己的"留第 n 张"，不跟着跳
+        val i = order.indexOfFirst { it.path == path }
+        if (i >= 0) order.getOrNull(i + 1)?.let { cull.select(it.path) }
     }
 }
 
@@ -463,11 +509,13 @@ fun CullingChrome(project: Project, cull: CullState, data: CullData, actions: Cu
     val decisions by Session.decisions.collectAsState()
     val sortBy = project.sort ?: "group"
     val hintOn = cull.hintUses < 4 && !cull.sceneView
+    val calm = com.fleetinggleam.android.ui.theme.LocalCalm.current
     Box(Modifier.fillMaxSize()) {
         // 操作提示：前几次改判之后就不再出现
         AnimatedVisibility(hintOn, modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 74.dp, start = 16.dp, end = 16.dp),
             enter = fadeIn(Motion.base()) + slideInVertically(Motion.base()) { it / 2 }, exit = fadeOut(Motion.fast())) {
-            GlassBox(shape = RoundedCornerShape(14.dp), style = glassStyle(strong = true)) {
+            // 动效"克制"时提示更淡
+            GlassBox(Modifier.graphicsLayer { alpha = if (calm) 0.72f else 1f }, shape = RoundedCornerShape(14.dp), style = glassStyle(strong = true)) {
                 Row(Modifier.height(44.dp).padding(start = 16.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(t("android.cull.hint"), style = Type.rowDesc.copy(color = c.ink), modifier = Modifier.weight(1f, fill = false), maxLines = 2)
                     Text(t("cull.hintDismiss"), style = Type.label.copy(color = c.ink, fontWeight = FontWeight.SemiBold), modifier = Modifier.clip(RoundedCornerShape(10.dp)).clickable { cull.bumpHint(99) }.padding(horizontal = 12.dp, vertical = 8.dp))
@@ -495,7 +543,9 @@ private fun EmptyView(cull: CullState, data: CullData) {
 }
 
 /** 页签的顺序（左右滑动按它走）。 */
-internal val MODES = listOf("all", "keep", "review", "reject")
+internal val MODES = listOf("all", "keep", "review", "reject", "untouched")
+/** 分析中还没有"未处理"这一说（判定还没出来）。 */
+internal val SCAN_MODES = listOf("all", "keep", "review", "reject")
 
 /** 页签切换：内容朝滑的方向滑入（分析中和分析完同一套）。 */
 internal val modeTransition: androidx.compose.animation.AnimatedContentTransitionScope<String>.() -> androidx.compose.animation.ContentTransform = {
@@ -507,7 +557,7 @@ internal val modeTransition: androidx.compose.animation.AnimatedContentTransitio
 
 /** 墙上左右滑切换页签（米家那种）。 */
 @Composable
-internal fun Modifier.swipeModes(cull: CullState): Modifier {
+internal fun Modifier.swipeModes(cull: CullState, modes: List<String> = MODES): Modifier {
     val haptic = LocalHapticFeedback.current
     val dragPx = with(LocalDensity.current) { 64.dp.toPx() }
     return pointerInput(Unit) {
@@ -516,8 +566,8 @@ internal fun Modifier.swipeModes(cull: CullState): Modifier {
             onDragStart = { dx = 0f },
             onDragEnd = {
                 if (kotlin.math.abs(dx) > dragPx) {
-                    val n = MODES.indexOf(cull.mode) + if (dx < 0) 1 else -1
-                    if (n in MODES.indices) { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); cull.mode = MODES[n] }
+                    val n = modes.indexOf(cull.mode) + if (dx < 0) 1 else -1
+                    if (n in modes.indices) { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); cull.mode = modes[n] }
                 }
             },
         ) { ch, d -> dx += d; ch.consume() }
@@ -537,13 +587,15 @@ fun StatusStrip(cull: CullState, data: CullData, padded: Boolean = true) {
     val target = spans[cull.mode]
     val lineX by animateFloatAsState(target?.first ?: 0f, Motion.glide(), label = "tabX")
     val lineW by animateFloatAsState(target?.second ?: 0f, Motion.glide(), label = "tabW")
-    val hasFilters = data.people.isNotEmpty() || data.scenes.size > 1 || data.starN[1] > 0 || cull.starFilter != null
-    val filtering = cull.personFilter != null || cull.sceneFilter != null || cull.starFilter != null
+    val hasFilters = data.people.isNotEmpty() || data.scenes.size > 1 || data.starN[1] > 0 || cull.starFilter != null || data.hasRaw || cull.pairFilter
+    val filtering = cull.personFilter != null || cull.sceneFilter != null || cull.starFilter != null || cull.pairFilter
+    // 分析中的页签数据里没有"未处理"：那时不列
+    val modes = if (data.status.containsKey("untouched")) MODES else SCAN_MODES
     Column(Modifier.fillMaxWidth().padding(horizontal = if (padded) 16.dp else 4.dp)) {
         Box(Modifier.fillMaxWidth()) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
-                    MODES.forEachIndexed { i, id ->
+                    modes.forEachIndexed { i, id ->
                         val on = cull.mode == id
                         var rowX by remember { mutableStateOf(0f) }
                         Row(
@@ -582,6 +634,7 @@ fun StatusStrip(cull: CullState, data: CullData, padded: Boolean = true) {
             cull.starFilter?.let { n ->
                 FilterChip(onClear = { cull.starFilter = null }) { Text(t("stars.atLeast", "count" to n), style = Type.rowDesc.copy(color = c.ink), modifier = Modifier.padding(start = 5.dp)) }
             }
+            if (cull.pairFilter) FilterChip(onClear = { cull.pairFilter = false }) { Text(t("cull.unpaired"), style = Type.rowDesc.copy(color = c.ink), modifier = Modifier.padding(start = 5.dp)) }
             cull.sceneFilter?.let { id ->
                 data.scenes.firstOrNull { it.scene == id }?.let { s ->
                     FilterChip(onClear = { cull.sceneFilter = null }) {
@@ -612,6 +665,8 @@ fun StateIcon(id: String, color: Color, size: Dp = 13.dp) {
         "keep" -> Star(true, size, color = if (color == LocalFg.current.onInk) color else LocalFg.current.gleam, glow = false)
         "review" -> Star(false, size, color = color, glow = false)
         "reject" -> FgIcon("M3 3l6 6M9 3L3 9", size = size * 0.8f, box = 12f, stroke = 1.8f, color = color)
+        // 未处理：一个空心圆（还没落定）
+        "untouched" -> FgIcon("M6 2a4 4 0 100 8A4 4 0 006 2z", size = size * 0.85f, box = 12f, stroke = 1.4f, color = color)
         else -> FgIcon("M1.5 1.5h4v4h-4zM6.5 1.5h4v4h-4zM1.5 6.5h4v4h-4zM6.5 6.5h4v4h-4z", size = size * 0.85f, box = 12f, stroke = 1.4f, color = color)
     }
 }
@@ -714,7 +769,7 @@ private fun FilterSheet(cull: CullState, data: CullData) {
             Text(t("cull.filters"), style = Type.navTitle.copy(color = c.ink))
             SheetTitle(t("cull.status"))
             Column(Modifier.clip(RoundedCornerShape(14.dp)).background(c.panel)) {
-                listOf("all", "keep", "review", "reject").forEachIndexed { i, id ->
+                MODES.forEachIndexed { i, id ->
                     if (i > 0) Box(Modifier.padding(start = 16.dp).fillMaxWidth().height(0.5.dp).background(c.line))
                     Row(Modifier.fillMaxWidth().clickable { cull.mode = id }.heightIn(min = 52.dp).padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.width(20.dp), contentAlignment = Alignment.Center) { StateIcon(id, c.ink, 14.dp) }
@@ -738,6 +793,18 @@ private fun FilterSheet(cull: CullState, data: CullData) {
                             com.fleetinggleam.android.ui.components.FgRadio(on, Modifier.padding(start = 12.dp))
                         }
                     }
+                }
+            }
+            // 文件：项目里有 RAW（成对或单独）时才出现；"缺配对" = 没有伴随文件、孤零零的 RAW 或 JPG
+            if (data.hasRaw || cull.pairFilter) {
+                SheetTitle(t("cull.files"), clear = if (cull.pairFilter) ({ cull.pairFilter = false }) else null)
+                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.panel).clickable { cull.pairFilter = !cull.pairFilter }.heightIn(min = 52.dp).padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(t("cull.unpaired"), style = Type.rowTitle.copy(color = c.ink))
+                        Text(t("android.cull.unpairedDesc"), style = Type.rowDesc.copy(color = c.ash))
+                    }
+                    Text("${data.lonelyN}", style = Type.mono.copy(color = c.ash))
+                    Box(Modifier.padding(start = 12.dp)) { com.fleetinggleam.android.ui.components.FgSwitch(cull.pairFilter, { cull.pairFilter = it }, t("cull.unpaired")) }
                 }
             }
             val livePeople = data.people.filter { it.count > 0 || it.person == cull.personFilter }
@@ -795,7 +862,22 @@ private fun SceneCard(s: SceneItem, on: Boolean, modifier: Modifier, onClick: ()
         Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Brush.verticalGradient(0.45f to Color.Transparent, 1f to Color(0xB3000000))))
         if (s.text.isNotEmpty()) Text(s.text, style = Type.monoSmall.copy(color = Color.White), maxLines = 2, overflow = Ellipsis, modifier = Modifier.align(Alignment.BottomStart).padding(start = 8.dp, end = 34.dp, bottom = 7.dp))
         Text("${s.count}", style = Type.monoSmall.copy(color = Color.White), modifier = Modifier.align(Alignment.BottomEnd).padding(7.dp))
+        DoneBadge(s.done, s.total, Modifier.align(Alignment.TopEnd).padding(6.dp))
     }
+}
+
+/** 场景卡右上角的"已处理 x / N"小标；一张都没处理时不出，全处理完用琥珀色。 */
+@Composable
+fun DoneBadge(done: Int, total: Int, modifier: Modifier = Modifier) {
+    if (done <= 0 || total <= 0) return
+    val c = LocalFg.current
+    val all = done >= total
+    Text(
+        if (all) "✓ $total" else "$done / $total",
+        style = Type.monoSmall.copy(color = if (all) c.gleamInk else Color.White, fontWeight = if (all) FontWeight.SemiBold else FontWeight.Normal),
+        modifier = modifier.clip(RoundedCornerShape(5.dp)).background(if (all) c.gleam else Color(0xA3000000)).padding(horizontal = 6.dp, vertical = 1.dp)
+            .semantics { contentDescription = t("cull.sceneHandled", "count" to total, "handled" to done) },
+    )
 }
 
 /** 浏览方式与排序（桌面端 ViewMenu）。 */

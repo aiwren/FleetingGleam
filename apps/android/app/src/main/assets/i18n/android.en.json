@@ -65,7 +65,9 @@
    "diagnosticsDone": "Saved",
    "diagnosticsFailed": "Could not export: {{error}}",
    "mirrorClearTitle": "Clear the local copy of “{{name}}”?",
-   "mirrorClearBody": "The project “{{project}}” is open and uses this copy. After clearing, its photos are fetched again from the source, and full-size views are unavailable until then. Analysis results are kept."
+   "mirrorClearBody": "The project “{{project}}” is open and uses this copy. After clearing, its photos are fetched again from the source, and full-size views are unavailable until then. Analysis results are kept.",
+   "cullTitle": "Culling",
+   "autoAdvanceDesc": "In the viewer, go to the next photo; on the wall, select the next one."
   },
   "cull": {
    "hint": "Tap a photo to select it; the bar below keeps, rejects or opens it. In single view, push up to keep and pull down to reject.",
@@ -81,7 +83,8 @@
    "bgFailed": "“{{name}}” could not be analysed: {{error}}",
    "open": "Open",
    "reevalDone": "Re-ranked with your latest taste",
-   "offline": "NAS “{{name}}” is not connected; showing the photos from the last sync"
+   "offline": "NAS “{{name}}” is not connected; showing the photos from the last sync",
+   "unpairedDesc": "A RAW or JPG without its same-name partner"
   },
   "models": {
    "background": "Download in background",
@@ -110,7 +113,8 @@
    "exportFailedN": "{{n}} were not exported:",
    "marksFailedN": "{{n}} could not be written:",
    "marksCopies": "{{n}} are on a NAS or in a cloud folder; the phone only has a copy, which Lightroom would never see, so they are skipped",
-   "marksDenied": "Gallery folders (DCIM, Pictures) only accept image files, so the .xmp next to a photo and the temporary file used while writing can't be created there; photos another app (such as the camera) saved can only be changed by that app. To write, first use Export to a folder… to copy them into a folder such as Documents or Download, make a project from that copy and write there."
+   "marksDenied": "Gallery folders (DCIM, Pictures) only accept image files, so the .xmp next to a photo and the temporary file used while writing can't be created there; photos another app (such as the camera) saved can only be changed by that app. To write, first use Export to a folder… to copy them into a folder such as Documents or Download, make a project from that copy and write there.",
+   "putBackConfirm": "Photos in your albums are put back after you confirm in the system dialog."
   },
   "tab": {
    "photos": "Photos"
@@ -258,7 +262,10 @@
   "trashItem": "Move rejected photos to the bin…",
   "trashTitle": "Move to the bin",
   "trashGo": "Move to the bin ({{count}})",
-  "trashed": "{{count}} moved to the bin"
+  "trashed": "{{count}} moved to the bin",
+  "putBackFailed": "{{n}} could not be put back (a file with that name is already there, it is no longer in the bin, or you cancelled the system dialog).",
+  "putBackDone_one": "Put back {{count}} photo",
+  "putBackDone_other": "Put back {{count}} photos"
  },
  "mark": {
   "clear": "Undo"

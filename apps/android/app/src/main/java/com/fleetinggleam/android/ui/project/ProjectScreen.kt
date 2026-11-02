@@ -176,6 +176,8 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
                 com.fleetinggleam.android.ui.components.NavBar(
                     if (scene) t("cull.scenes") else project.name, if (scene) project.name else t("home.title"),
                     { if (scene) cull.sceneView = false else Projects.setActive(null) }, onTitle = if (scene) null else ({ renaming = true }),
+                    subtitle = if (phase == Phase.Done && !scene && data.total > 0) t("cull.handled", "done" to data.processed, "total" to data.total) else null,
+                    subtitleDone = data.total > 0 && data.processed >= data.total,
                 ) {
                     if (phase == Phase.Done && !scene && project.search != false) IconBtn(Icons.SEARCH, t("search.label"), { cull.searchOpen = !cull.searchOpen; if (!cull.searchOpen) cull.query = "" }, on = cull.searchOpen, plain = true)
                     // 开着"学习我的喜好"就随时能点（作者 2026-10-23：删掉项目再新建同一个相册后，菜单一直是灰的，以为坏了）；

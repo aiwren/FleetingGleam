@@ -41,6 +41,7 @@ import com.fleetinggleam.android.core.ExportResult
 import com.fleetinggleam.android.core.Fg
 import com.fleetinggleam.android.core.Media
 import com.fleetinggleam.android.core.Organize
+import com.fleetinggleam.android.core.Projects
 import com.fleetinggleam.android.core.Pickers
 import com.fleetinggleam.android.core.Progress
 import com.fleetinggleam.android.core.Project
@@ -111,8 +112,12 @@ fun OrganizeDialogs(project: Project, open: Boolean, onDismissMenu: () -> Unit) 
     var markErr by remember { mutableStateOf<String?>(null) }
     var markUndone by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var undoing by remember { mutableStateOf(false) }
+    // 移走淘汰的之后的一次放回：放回用的记录、移走前这些照片的手动判定与星级（放回后还给它们）、放回的结果（放回几张, 没放回几张）
+    var trashUndo by remember { mutableStateOf<Organize.TrashUndo?>(null) }
+    var trashMarks by remember { mutableStateOf<Pair<Map<String, String>, Map<String, Int>>>(emptyMap<String, String>() to emptyMap()) }
+    var putBack by remember { mutableStateOf<Pair<Int, Int>?>(null) }
 
-    fun open(d: Dlg) { result = null; exportErr = null; exportRes = null; markRes = null; markErr = null; markUndone = null; undoing = false; stopping = false; phase = "confirm"; progress = Progress(); dlg = d; if (d != Dlg.Menu) onDismissMenu() }
+    fun open(d: Dlg) { result = null; exportErr = null; exportRes = null; markRes = null; markErr = null; markUndone = null; undoing = false; trashUndo = null; putBack = null; stopping = false; phase = "confirm"; progress = Progress(); dlg = d; if (d != Dlg.Menu) onDismissMenu() }
     fun close() { val reload = phase == "done"; dlg = null; onDismissMenu(); if (reload) Session.reload() }
 
     androidx.compose.runtime.LaunchedEffect(open) { if (open) open(Dlg.Menu) }
@@ -286,29 +291,50 @@ fun OrganizeDialogs(project: Project, open: Boolean, onDismissMenu: () -> Unit) 
 
     // ---- 移走淘汰的
     if (dlg == Dlg.Trash) {
-        FgDialog(true, { if (phase != "running") close() }, t("organize.trashTitle"), locked = phase == "running", footer = {
-            if (phase == "done") FgButton(t("organize.done"), { close() }, primary = true, small = true)
-            else {
+        FgDialog(true, { if (phase != "running" && !undoing) close() }, t("organize.trashTitle"), locked = phase == "running" || undoing, footer = {
+            if (phase == "done") {
+                // 一次回滚：整批放回原处（相册里的系统会再问一次）；放回后把它们原来的手动判定与星级还回去
+                val u = trashUndo
+                if (u != null && putBack == null) FgButton(if (undoing) t("organize.puttingBack") else t("organize.putBack", "count" to u.size), {
+                    undoing = true
+                    scope.launch {
+                        val (back, bad) = runCatching { Organize.untrash(ctx, u) { s -> withContext(Dispatchers.Main) { Pickers.confirm(s) } } }.getOrElse { emptyList<String>() to u.size }
+                        val set = back.toSet()
+                        val (ov, st) = trashMarks
+                        if (set.isNotEmpty()) Projects.update(project.id) { p -> p.copy(overrides = p.overrides + ov.filterKeys { it in set }, stars = p.stars + st.filterKeys { it in set }) }
+                        putBack = back.size to bad; undoing = false
+                    }
+                }, small = true, enabled = !undoing)
+                FgButton(t("organize.done"), { close() }, primary = true, small = true, enabled = !undoing)
+            } else {
                 FgButton(t("organize.cancel"), { close() }, enabled = phase != "running", small = true)
                 FgButton(if (phase == "running") t("organize.trashing") else t("organize.trashGo", "count" to trashList.size), {
                     phase = "running"
                     scope.launch {
                         val (out, gone) = runCatching { withContext(Dispatchers.IO) { Organize.trash(ctx, trashList.map { it.path }) { s -> withContext(Dispatchers.Main) { Pickers.confirm(s) } } } }
                             .getOrElse { Organize.TrashOutcome(0, trashList.size, emptyList()) to emptyList() }
+                        val goneSet = gone.toSet()
+                        trashMarks = project.overrides.filterKeys { it in goneSet } to project.stars.filterKeys { it in goneSet }
                         Organize.forget(project.id, gone)
                         if (out.cancelled && out.moved == 0) { phase = "confirm"; return@launch }
+                        trashUndo = out.undo.takeIf { it.size > 0 }
                         result = Triple(out.moved, out.failed, out.bins); phase = "done"
                     }
                 }, primary = true, small = true, enabled = phase != "running" && trashList.isNotEmpty())
             }
         }) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (phase == "done") {
+                val pb = putBack
+                if (phase == "done" && pb != null) {
+                    Text(t("organize.putBackDone", "count" to pb.first), style = Type.body.copy(color = c.ink))
+                    if (pb.second > 0) Text(t("organize.putBackFailed", "n" to pb.second), style = Type.rowDesc.copy(color = c.ash))
+                } else if (phase == "done") {
                     val r = result
                     Text(t("organize.trashed", "count" to (r?.first ?: 0)), style = Type.body.copy(color = c.ink))
                     if ((r?.second ?: 0) > 0) Text(t("organize.trashFailed", "n" to r!!.second), style = Type.rowDesc.copy(color = c.ash))
                     if (!r?.third.isNullOrEmpty()) Text(t("organize.trashedToShare", "where" to r!!.third.joinToString(" · ")), style = Type.rowDesc.copy(color = c.ash))
                     else Text(t("organize.trashRecover"), style = Type.rowDesc.copy(color = c.ash))
+                    if (trashUndo?.album?.isNotEmpty() == true) Text(t("android.organize.putBackConfirm"), style = Type.rowDesc.copy(color = c.ash))
                 } else {
                     Text(t("organize.trashBody"), style = Type.body.copy(color = c.ink))
                     Radio(t("organize.scopeManual", "count" to rejectManual.size), !scopeAll, enabled = rejectManual.isNotEmpty()) { scopeAll = false }

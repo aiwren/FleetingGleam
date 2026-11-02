@@ -28,6 +28,10 @@ data class AppSettings(
     val tierRev: Int = 0,
     /** 液态玻璃（折射、模糊、高光）。关掉就是普通的半透明磨砂，弱机器和模拟器上省很多 GPU。 */
     val glass: Boolean = true,
+    /** 判定后自动前进：大图里判完翻到下一张，照片墙上判完选中下一张（A7，默认开）。 */
+    val autoAdvance: Boolean = true,
+    /** 界面动效：`full` 完整 / `calm` 克制（判定的星光、光圈不播，提示类浮层更淡）。和桌面端同名。 */
+    val effects: String = "full",
 )
 
 object Settings {
@@ -77,7 +81,7 @@ object Settings {
     /** 从别处导入的设置：只取在任何机器上意思都一样的那几项；这台机器装了哪个模型、用什么硬件，照旧。 */
     fun adopt(carried: JsonObject?) {
         if (carried == null) return
-        val keep = setOf("theme", "learn", "search", "customStyles", "eyeMethod", "quality")
+        val keep = setOf("theme", "learn", "search", "customStyles", "eyeMethod", "quality", "autoAdvance", "effects")
         val now = Fg.camel.encodeToJsonElement(_state.value).jsonObject.toMutableMap()
         for (k in keep) carried[k]?.let { now[k] = it }
         val next = runCatching { Fg.camel.decodeFromJsonElement(AppSettings.serializer(), JsonObject(now)) }.getOrNull() ?: return

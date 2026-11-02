@@ -139,6 +139,9 @@ object Motion {
     fun stagger(index: Int): Long = 40L + minOf(index, 8) * 30L
 }
 
+/** 设置里"界面动效"选了克制：判定的星光、光圈不播，提示类浮层更淡。 */
+val LocalCalm = androidx.compose.runtime.staticCompositionLocalOf { false }
+
 @Composable
 fun FleetingGleamTheme(theme: String, content: @Composable () -> Unit) {
     val dark = when (theme) { "light" -> false; "dark" -> true; else -> isSystemInDarkTheme() }

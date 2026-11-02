@@ -65,7 +65,9 @@
    "diagnosticsDone": "已存好",
    "diagnosticsFailed": "没能导出：{{error}}",
    "mirrorClearTitle": "清掉「{{name}}」的本机副本？",
-   "mirrorClearBody": "项目「{{project}}」正开着、用着这份副本。清掉后它的照片要从原处重新拉一遍，拉回来之前大图看不了；分析结果都留着。"
+   "mirrorClearBody": "项目「{{project}}」正开着、用着这份副本。清掉后它的照片要从原处重新拉一遍，拉回来之前大图看不了；分析结果都留着。",
+   "cullTitle": "选片",
+   "autoAdvanceDesc": "大图里判完翻到下一张，照片墙上判完选中下一张。"
   },
   "cull": {
    "hint": "点一张照片选中，底栏可以保留、淘汰或放大查看；单张模式里上推留下、下拉淘汰。",
@@ -81,7 +83,8 @@
    "bgFailed": "「{{name}}」分析出错：{{error}}",
    "open": "打开",
    "reevalDone": "已按新喜好重排",
-   "offline": "NAS「{{name}}」没连上，显示上次同步的照片"
+   "offline": "NAS「{{name}}」没连上，显示上次同步的照片",
+   "unpairedDesc": "只有 RAW 或只有 JPG、没有同名的另一半"
   },
   "models": {
    "background": "后台下载",
@@ -110,7 +113,8 @@
    "exportFailedN": "{{n}} 张没导出：",
    "marksFailedN": "{{n}} 张没能写入：",
    "marksCopies": "{{n}} 张在 NAS 或网盘文件夹里，手机上只是副本，写了 Lightroom 也看不到，会跳过",
-   "marksDenied": "相册文件夹（DCIM、Pictures）里只许放图片，旁边的 .xmp 和写入时用的临时文件都放不进去；相机等别的应用存的照片，也只许那个应用自己改。要写入，可以先用「导出到文件夹…」导到「文档」或「下载」这类文件夹，再用那份建项目写入。"
+   "marksDenied": "相册文件夹（DCIM、Pictures）里只许放图片，旁边的 .xmp 和写入时用的临时文件都放不进去；相机等别的应用存的照片，也只许那个应用自己改。要写入，可以先用「导出到文件夹…」导到「文档」或「下载」这类文件夹，再用那份建项目写入。",
+   "putBackConfirm": "放回相册里的照片需要在系统对话框里确认。"
   },
   "tab": {
    "photos": "照片"
@@ -247,7 +251,8 @@
   "trashItem": "把淘汰的照片移到回收站…",
   "trashTitle": "移到回收站",
   "trashGo": "移到回收站（{{count}} 张）",
-  "trashed": "已移到回收站 {{count}} 张"
+  "trashed": "已移到回收站 {{count}} 张",
+  "putBackFailed": "有 {{n}} 张没能放回（原处已有同名文件、回收站里已经没有了，或在系统对话框里取消了）。"
  },
  "mark": {
   "clear": "撤销"

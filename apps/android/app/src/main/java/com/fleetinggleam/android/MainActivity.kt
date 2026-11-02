@@ -38,7 +38,9 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             val s by Settings.state.collectAsState()
-            FleetingGleamTheme(s.theme) { AppShell() }
+            FleetingGleamTheme(s.theme) {
+                androidx.compose.runtime.CompositionLocalProvider(com.fleetinggleam.android.ui.theme.LocalCalm provides (s.effects == "calm")) { AppShell() }
+            }
         }
     }
 
