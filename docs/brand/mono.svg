@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1b2044"/><stop offset="1" stop-color="#07080f"/></linearGradient>
+    <linearGradient id="g" gradientUnits="userSpaceOnUse" x1="300" y1="760" x2="720" y2="300"><stop offset="0" stop-color="#ffb547" stop-opacity="0.15"/><stop offset="0.6" stop-color="#ffb547"/><stop offset="1" stop-color="#fff1cf"/></linearGradient>
+    <radialGradient id="glow"><stop offset="0" stop-color="#fff6dc"/><stop offset="0.3" stop-color="#ffc466" stop-opacity="0.5"/><stop offset="1" stop-color="#ffb547" stop-opacity="0"/></radialGradient>
+    <filter id="soft" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="10"/></filter>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <!-- 一笔写成的 G：从右上的光点起，逆时针绕一圈，收在中心横杠 -->
+  <path id="G" d="M 712 316 A 250 250 0 1 0 762 512 L 560 512" fill="none" stroke="url(#g)" stroke-width="54" stroke-linecap="round" stroke-linejoin="round"/>
+  <use href="#G" filter="url(#soft)" opacity="0.5"/>
+  <circle cx="712" cy="316" r="150" fill="url(#glow)"/>
+  <circle cx="712" cy="316" r="30" fill="#fff8e6"/>
+</svg>
