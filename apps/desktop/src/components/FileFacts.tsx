@@ -30,9 +30,10 @@ function useInfo(path: string) {
 }
 
 /** 顶部角标：按扩展名与伴随文件判断这张照片由什么组成。 */
-function kindOf(photo: Photo): "jpgOnly" | "rawJpg" | "rawOnly" {
+function kindOf(photo: Photo, files: { path: string }[]): "jpgOnly" | "rawJpg" | "rawOnly" {
   if (isRawPath(photo.path)) return "rawOnly";
-  return photo.companions?.some(isRawPath) ? "rawJpg" : "jpgOnly";
+  // 核心列出的文件（含同名 RAW）比前端手里的 companions 更可靠：照片记录是旧的也能对上
+  return files.some((f) => f.path !== photo.path && isRawPath(f.path)) || photo.companions?.some(isRawPath) ? "rawJpg" : "jpgOnly";
 }
 
 /**
@@ -72,7 +73,7 @@ export default function FileFacts({ photo, dark = false }: { photo: Photo; dark?
   ];
   return (
     <div className={`exif ${dark ? "dark" : ""}`}>
-      <span className="exif-kind mono">{t(`file.${kindOf(photo)}`)}</span>
+      <span className="exif-kind mono">{t(`file.${kindOf(photo, files)}`)}</span>
       <div className="exif-grid">
         {cells.map(([k, v, sub]) => <div key={k}><b className="mono">{v || "—"}</b>{sub && <i className="mono">{sub}</i>}<small>{k}</small></div>)}
       </div>
