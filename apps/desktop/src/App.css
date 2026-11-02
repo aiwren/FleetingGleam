@@ -436,6 +436,10 @@ input[type=range]::-webkit-slider-thumb { appearance: none; width: 14px; height:
 .kv dt { color: var(--ash); }
 .kv dd { margin: 0; text-align: right; }
 .settings-body .segmented { flex: none; }
+/* 快捷键设置里的键帽（A7.4）：录制中显示省略号并高亮边框，撞键或固定键时边框变色 */
+.keycap { display: inline-grid; place-items: center; min-width: 28px; height: 24px; padding: 0 8px; margin: 0; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); font-size: 12px; opacity: 1; color: var(--ink); transition: border-color .2s, box-shadow .2s; }
+.keycap.recording { border-color: var(--ink); box-shadow: 0 0 0 2px color-mix(in srgb, var(--ink) 14%, transparent); }
+.keycap.bad { border-color: var(--gleam); color: var(--gleam); }
 
 html[data-mock] .sidebar-wrap { background: var(--panel); }
 

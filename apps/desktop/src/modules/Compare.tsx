@@ -8,6 +8,7 @@ import { FaceAvatar } from "../components/FilterPanel";
 import { useLarge } from "../largeSrc";
 import { SPRING } from "../motion";
 import { Decision, Photo, State, pct, thumbSrc } from "../types";
+import { decisionOf, keyFor, keyVars, useKeymap } from "../keymap";
 
 const GAP = 12;
 /** The shared view: zoom factor and pan, the pan as a fraction of a frame's own size so every frame shows the same spot. */
@@ -25,6 +26,7 @@ function Cell({ p, index, st, manual, view, dragging, metrics, set, count, perso
   resetOrZoom: (e: { clientX: number; clientY: number; currentTarget: HTMLElement }) => void;
 }) {
   const { t } = useTranslation();
+  const km = useKeymap(); // 保留 / 淘汰按钮提示里显示的键
   // The big preview is prepared shortly after the photo is shown, so zooming in finds it ready; the thumbnail stays until it has loaded.
   const [warm, setWarm] = useState(false);
   useEffect(() => { setWarm(false); const id = setTimeout(() => setWarm(true), 500); return () => clearTimeout(id); }, [p.path]);
@@ -93,8 +95,8 @@ function Cell({ p, index, st, manual, view, dragging, metrics, set, count, perso
             </div>
           </div>
           <div className="cmp2-act">
-            <button className={`cmp2-decide keep ${st === "keep" ? "on" : ""}`} aria-label={t("state.keep")} data-tip={`${t("state.keep")} · P`} onClick={() => onDecide(st === "keep" && manual ? null : "keep")}><Star filled size={17} /></button>
-            <button className={`cmp2-decide reject ${st === "reject" ? "on" : ""}`} aria-label={t("state.reject")} data-tip={`${t("state.reject")} · X`} onClick={() => onDecide(st === "reject" && manual ? null : "reject")}>
+            <button className={`cmp2-decide keep ${st === "keep" ? "on" : ""}`} aria-label={t("state.keep")} data-tip={`${t("state.keep")} · ${keyFor("keep", km)}`} onClick={() => onDecide(st === "keep" && manual ? null : "keep")}><Star filled size={17} /></button>
+            <button className={`cmp2-decide reject ${st === "reject" ? "on" : ""}`} aria-label={t("state.reject")} data-tip={`${t("state.reject")} · ${keyFor("reject", km)}`} onClick={() => onDecide(st === "reject" && manual ? null : "reject")}>
               <svg width="13" height="13" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden><path d="M3 3l6 6M9 3L3 9" /></svg>
             </button>
           </div>
@@ -108,7 +110,7 @@ function Cell({ p, index, st, manual, view, dragging, metrics, set, count, perso
 /**
  * Pick the best of a burst. The photos fill the whole area, as large as they can be, side by side; wheel, drag and double-click zoom and
  * pan all of them together, so the same detail (an eye, a hand) can be checked in every frame. The numbers sit on each photo.
- * Left / right step through groups of similar shots, the keys 1-4 choose a photo, P / X decide.
+ * Left / right step through groups of similar shots, the keys 1-4 choose a photo, the decision keys (keymap.ts; P / X by default) decide.
  */
 export default function Compare({ photos, all, scope: scopeProp, personFilter, onPerson, selected, decisions, onSelect, onDecide, onOpen, enabled = true, showHint = true }: {
   photos: Photo[]; all: Photo[];
@@ -122,6 +124,7 @@ export default function Compare({ photos, all, scope: scopeProp, personFilter, o
   showHint?: boolean;
 }) {
   const { t } = useTranslation();
+  const km = useKeymap(); // 操作提示里显示的键
   const cur = photos.find((p) => p.path === selected) ?? photos[0];
   // The scope follows the scene filter, and can also be switched here: "scene" steps through whole scenes instead of bursts.
   const [scope, setScope] = useState(scopeProp);
@@ -248,9 +251,9 @@ export default function Compare({ photos, all, scope: scopeProp, personFilter, o
       else if (e.key === "ArrowDown" || e.key === "Tab") { e.preventDefault(); cycle(1); }
       else if (e.key === "ArrowUp") { e.preventDefault(); cycle(-1); }
       else if (e.key === "0") apply(FIT);
-      else if (hover.current && ["p", "r", "x"].includes(e.key.toLowerCase())) {
-        // The photo under the pointer is the target of the keys.
-        const path = hover.current, target = ({ p: "keep", r: "review", x: "reject" } as const)[e.key.toLowerCase() as "p" | "r" | "x"];
+      else if (hover.current && decisionOf(e)) {
+        // The photo under the pointer is the target of the keys (which keys: keymap.ts).
+        const path = hover.current, target = decisionOf(e) as State;
         // pressing the key of a state the app merely suggested confirms it; pressing it again on one you marked clears the mark
         const d = decisions.get(path);
         onDecide(path, d?.state === target && d.manual ? null : target);
@@ -347,7 +350,7 @@ export default function Compare({ photos, all, scope: scopeProp, personFilter, o
             ))}
           </div>
         )}
-        {showHint && <span className="ash cmp2-hint">{t("cmp.hint")}</span>}
+        {showHint && <span className="ash cmp2-hint">{t("cmp.hint", keyVars(km))}</span>}
       </div>
     </div>
   );

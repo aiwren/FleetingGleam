@@ -6,6 +6,7 @@ import { DUR, SPRING } from "../motion";
 import { Photo, State, pct, thumbSrc } from "../types";
 import PhotoTags from "./PhotoTags";
 import FocusImg, { markSeen } from "./FocusImg";
+import { keyFor, useKeymap } from "../keymap";
 
 export type StageInfo = { stage: string; pct: number; thumb?: string; width?: number; height?: number };
 
@@ -62,6 +63,7 @@ const Cross = () => <svg width="12" height="12" viewBox="0 0 12 12" fill="none" 
  */
 function Tile({ path, ratio, photo, stage, state, reveal, dim, box, manual, stars, groupEnd, showScore, index, interactive, stamp = false, onSelect, onOpen, onDecide }: Props) {
   const { t } = useTranslation();
+  const km = useKeymap(); // 悬浮按钮提示里显示的键
   const ref = useRef<HTMLDivElement>(null);
   const prev = useRef<State | "">(state);
   const [changed, setChanged] = useState<{ to: State; n: number } | null>(null);
@@ -164,12 +166,12 @@ function Tile({ path, ratio, photo, stage, state, reveal, dim, box, manual, star
         {interactive && (
           <span className="dock" onClick={stop} onDoubleClick={stop} onPointerMove={stop}>
             <button className={`dk keep ${state === "keep" ? "on" : ""}`} aria-label={t("mark.keepAct")} aria-pressed={state === "keep"}
-              data-tip={`${state === "keep" && manual ? t("mark.clear") : t("mark.keepAct")} · P`}
+              data-tip={`${state === "keep" && manual ? t("mark.clear") : t("mark.keepAct")} · ${keyFor("keep", km)}`}
               onClick={() => onDecide(path, "keep", state === "keep" && manual)}>
               <Star filled size={18} />
             </button>
             <button className={`dk reject ${state === "reject" ? "on" : ""}`} aria-label={t("mark.rejectAct")} aria-pressed={state === "reject"}
-              data-tip={`${state === "reject" && manual ? t("mark.clear") : t("mark.rejectAct")} · X`}
+              data-tip={`${state === "reject" && manual ? t("mark.clear") : t("mark.rejectAct")} · ${keyFor("reject", km)}`}
               onClick={() => onDecide(path, "reject", state === "reject" && manual)}>
               <Cross />
             </button>

@@ -5,6 +5,7 @@ import { SPRING } from "../motion";
 import { Decision, Photo, Reason, State, pct } from "../types";
 import { Star } from "./Tile";
 import Stars from "./Stars";
+import { keyFor, useKeymap } from "../keymap";
 
 const STATES: State[] = ["keep", "review", "reject"];
 
@@ -30,6 +31,7 @@ export default function PhotoVerdict({ photo, decision, onDecide, stars, onRate,
   onZoom?: () => void;
 }) {
   const { t, i18n } = useTranslation();
+  const km = useKeymap(); // 三个按钮提示里显示的键
   const state = decision?.state ?? "review";
   // sentences joined the way the language joins them (a full-width semicolon in Chinese, a plain one elsewhere)
   const reasons = decision?.reasons.map((r) => reasonText(r)).join(i18n.language.startsWith("zh") ? "；" : "; ");
@@ -50,8 +52,8 @@ export default function PhotoVerdict({ photo, decision, onDecide, stars, onRate,
         {scoreTip}
       </div>
       <div className="strio">
-        {STATES.map((st, i) => (
-          <button key={st} className={`sbtn ${st} ${state === st ? "on" : ""}`} onClick={() => onDecide(st)} data-tip={`${t(`state.${st}`)} · ${["P", "R", "X"][i]}`}>
+        {STATES.map((st) => (
+          <button key={st} className={`sbtn ${st} ${state === st ? "on" : ""}`} onClick={() => onDecide(st)} data-tip={`${t(`state.${st}`)} · ${keyFor(st, km)}`}>
             {st === "keep" && <Star filled size={13} />}{st === "review" && <Star filled={false} size={13} />}{st === "reject" && <span aria-hidden>×</span>}
             {t(`state.${st}`)}
           </button>
