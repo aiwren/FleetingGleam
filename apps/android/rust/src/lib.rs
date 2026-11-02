@@ -320,7 +320,7 @@ fn dispatch(e: &Arc<Engine>, method: &str, a: &Value) -> Result<Value, String> {
         "nas_mirror_usage" => out(e.nas_mirror_usage()),
         "nas_mirror_clear" => out(e.nas_mirror_clear(&s(a, "id")?)?),
         // 整理
-        "export_photos" => out(e.export_photos(&strings(a, "paths"), &s(a, "dest")?)?),
+        "export_photos" => out(e.export_photos_with(&strings(a, "paths"), &s(a, "dest")?, b(a, "withRaw"))?),
         "export_cancel" => {
             e.export_cancel();
             Ok(Value::Null)
