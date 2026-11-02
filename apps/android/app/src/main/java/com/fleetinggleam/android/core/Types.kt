@@ -48,6 +48,8 @@ data class Photo(
     val kind: String = "",
     val utility: Boolean = false,
     val flags: List<String> = emptyList(),
+    /** 跟着这张一起走的同名 RAW 原片（RAW + JPG 配对，核心每次列文件时重算）；没有就是空。 */
+    val companions: List<String> = emptyList(),
     val takenAt: Long? = null,
     val score: Float = 0f,
     val group: Int = 0,
@@ -137,6 +139,9 @@ data class Decision(val state: String, val manual: Boolean = false, val reasons:
  */
 @Serializable data class ExportResult(val copied: Int = 0, val skipped: Int = 0, val dest: String = "", val remote: Boolean = false, val failed: List<ExportFailure> = emptyList(), val cancelled: Boolean = false)
 @Serializable data class ExportFailure(val path: String, val error: String = "")
+/** 写回 Lightroom / Bridge（`write_marks`）：写了几个 .xmp 旁车、几个 JPEG，跳过的（格式不支持）和失败的；`undo` 是写前的原样，原样交回 `undo_marks` 就能整体回滚。 */
+@Serializable data class MarkResult(val sidecars: Int = 0, val embedded: Int = 0, val skipped: List<String> = emptyList(), val failed: List<ExportFailure> = emptyList(), val undo: List<kotlinx.serialization.json.JsonElement> = emptyList())
+@Serializable data class MarkUndo(val restored: List<String> = emptyList(), val failed: List<String> = emptyList())
 @Serializable data class Machine(val memoryGb: Int = 8, val cores: Int = 4, val accelerator: String = "cpu")
 @Serializable data class SceneText(val id: Int, val text: String)
 

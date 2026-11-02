@@ -88,7 +88,7 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
     // 选片界面的状态：换项目整个换一份；页签、筛选、选中、场景页离开再回来还在（外面按项目给了 SaveableStateProvider）
     val cull = rememberSaveable(project.id, saver = CullState.Saver) { CullState() }
     val sceneText by com.fleetinggleam.android.core.Scenes.texts.collectAsState()
-    val data = rememberCullData(cull, photos, decisions, project.sort ?: "group", sceneText)
+    val data = rememberCullData(cull, photos, decisions, project.sort ?: "group", sceneText, project.stars)
     SearchEffects(project, cull, phase == Phase.Done)
 
     val addFolder: () -> Unit = { scope.launch { Actions.pickFolder()?.let { Session.addFolder(it) } } }

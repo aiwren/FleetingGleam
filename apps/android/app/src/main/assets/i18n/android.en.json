@@ -107,7 +107,10 @@
    "stopping": "Stopping…",
    "exportCancelled": "Stopped: {{count}} exported, the rest left as they were.",
    "exportedSame": "{{n}} were already there, identical, and were skipped",
-   "exportFailedN": "{{n}} were not exported:"
+   "exportFailedN": "{{n}} were not exported:",
+   "marksFailedN": "{{n}} could not be written:",
+   "marksCopies": "{{n}} are on a NAS or in a cloud folder; the phone only has a copy, which Lightroom would never see, so they are skipped",
+   "marksDenied": "Gallery folders (DCIM, Pictures) only accept image files, so the .xmp next to a photo and the temporary file used while writing can't be created there; photos another app (such as the camera) saved can only be changed by that app. To write, first use Export to a folder… to copy them into a folder such as Documents or Download, make a project from that copy and write there."
   },
   "tab": {
    "photos": "Photos"

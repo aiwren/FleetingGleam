@@ -29,9 +29,9 @@ object Organize {
         return File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "${t("brand.name")}/$safe")
     }
 
-    /** 导出到一个路径（相册目录或换算得出路径的文件夹），然后让媒体库收录新文件。 */
-    suspend fun exportTo(ctx: Context, paths: List<String>, dest: String): ExportResult {
-        val r = Core.get<ExportResult>("export_photos", args("paths" to paths, "dest" to dest))
+    /** 导出到一个路径（相册目录或换算得出路径的文件夹），然后让媒体库收录新文件。`withRaw`：同名的 RAW 原片一起复制（核心展开）。 */
+    suspend fun exportTo(ctx: Context, paths: List<String>, dest: String, withRaw: Boolean = false): ExportResult {
+        val r = Core.get<ExportResult>("export_photos", args("paths" to paths, "dest" to dest, "withRaw" to withRaw))
         // 传到 NAS 上的不在这台手机上，不用让媒体库收录
         if (!r.remote) {
             val files = File(dest).listFiles()?.map { it.absolutePath }?.toTypedArray() ?: emptyArray()
@@ -61,7 +61,8 @@ object Organize {
                 var name = src.name
                 var n = 1
                 while (name in names) { name = "${src.nameWithoutExtension} ($n).${src.extension}"; n++ }
-                val mime = when (src.extension.lowercase()) { "png" -> "image/png"; "webp" -> "image/webp"; "heic", "heif" -> "image/heif"; else -> "image/jpeg" }
+                // RAW 等没有通用图片类型的写成 octet-stream：提供者不会给它另加扩展名
+                val mime = when (src.extension.lowercase()) { "png" -> "image/png"; "webp" -> "image/webp"; "heic", "heif" -> "image/heif"; "jpg", "jpeg", "jpe" -> "image/jpeg"; "dng" -> "image/x-adobe-dng"; else -> "application/octet-stream" }
                 out = dir.createFile(mime, name) ?: error("denied:create")
                 val written = ctx.contentResolver.openOutputStream(out!!.uri)?.use { o -> src.inputStream().use { it.copyTo(o) } } ?: error("denied:open")
                 if (written != src.length()) error("short write")
@@ -145,11 +146,53 @@ object Organize {
         return true
     }
 
+    /** 评分 / 标签会写到哪里：JPEG 写进文件，RAW / TIFF 写旁边的 .xmp，其它格式写不了。和核心的 `xmp::carrier_of`、桌面端 carrierOf 一致。 */
+    fun carrierOf(path: String): String {
+        val ext = path.substringAfterLast('.', "").lowercase()
+        return when (ext) {
+            "jpg", "jpeg", "jpe" -> "jpeg"
+            "heic", "heif", "png", "webp", "gif", "bmp", "avif", "jxl" -> "none"
+            else -> "sidecar"
+        }
+    }
+
+    /**
+     * 写回只对这台手机上的原图有意义：NAS 上的和从网盘等选来的文件夹里的照片，手里只是应用私有目录里的一份副本，
+     * 写进副本 Lightroom 看不到，下次同步还会被盖掉，所以跳过（桌面端直接挂载共享，没有这个区别）。
+     */
+    fun isCopy(ctx: Context, path: String): Boolean = path.startsWith(ctx.applicationInfo.dataDir + "/") || path.startsWith(ctx.filesDir.absolutePath + "/") || Media.isMirror(ctx, path)
+
+    /** 一张要写回的照片：路径、判定、应用的评分（0..1）和手动星级（有就优先）。 */
+    data class MarkItem(val path: String, val state: String, val score: Float, val stars: Int?)
+
+    /**
+     * 写回 Lightroom / Bridge（桌面端 Organize.tsx 的 marks）：保留 → 星级 + 绿色标签，待复查 → 黄色，淘汰 → 拒绝 + 红色。
+     * 改写过的 JPEG 让媒体库重新收录（核心是换文件写的，相册里那条记录要跟上）。
+     */
+    suspend fun writeMarks(ctx: Context, items: List<MarkItem>, stars: Boolean, labels: Boolean): MarkResult {
+        val list = items.map { mapOf("path" to it.path, "state" to it.state, "score" to it.score, "stars" to it.stars) }
+        val r = Core.get<MarkResult>("write_marks", args("items" to list, "stars" to stars, "labels" to labels))
+        rescanJpegs(ctx, items.map { it.path }.filter { carrierOf(it) == "jpeg" && it !in r.skipped && r.failed.none { f -> f.path == it } })
+        return r
+    }
+
+    /** 撤销整次写回：写前的原样（`MarkResult.undo`）原样交回核心。 */
+    suspend fun undoMarks(ctx: Context, before: List<kotlinx.serialization.json.JsonElement>): MarkUndo {
+        val r = Core.get<MarkUndo>("undo_marks", args("before" to before))
+        rescanJpegs(ctx, r.restored.filter { carrierOf(it) == "jpeg" })
+        return r
+    }
+
+    private fun rescanJpegs(ctx: Context, paths: List<String>) {
+        val local = paths.filter { File(it).exists() && !Media.isMirror(ctx, it) }
+        if (local.isNotEmpty()) MediaScannerConnection.scanFile(ctx, local.toTypedArray(), null, null)
+    }
+
     /** 照片已不在了：从项目的改判里忘掉（和桌面端一样）。 */
     fun forget(projectId: String, gone: List<String>) {
         if (gone.isEmpty()) return
         val set = gone.toSet()
-        Projects.update(projectId) { p -> p.copy(overrides = p.overrides.filterKeys { it !in set }) }
+        Projects.update(projectId) { p -> p.copy(overrides = p.overrides.filterKeys { it !in set }, stars = p.stars.filterKeys { it !in set }) }
     }
 
 }

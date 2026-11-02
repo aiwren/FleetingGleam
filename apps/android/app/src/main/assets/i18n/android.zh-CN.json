@@ -107,7 +107,10 @@
    "stopping": "正在停下…",
    "exportCancelled": "已停下：导出了 {{count}} 张，剩下的没动。",
    "exportedSame": "{{n}} 张目标文件夹里已有一模一样的，跳过了",
-   "exportFailedN": "{{n}} 张没导出："
+   "exportFailedN": "{{n}} 张没导出：",
+   "marksFailedN": "{{n}} 张没能写入：",
+   "marksCopies": "{{n}} 张在 NAS 或网盘文件夹里，手机上只是副本，写了 Lightroom 也看不到，会跳过",
+   "marksDenied": "相册文件夹（DCIM、Pictures）里只许放图片，旁边的 .xmp 和写入时用的临时文件都放不进去；相机等别的应用存的照片，也只许那个应用自己改。要写入，可以先用「导出到文件夹…」导到「文档」或「下载」这类文件夹，再用那份建项目写入。"
   },
   "tab": {
    "photos": "照片"

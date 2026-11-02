@@ -152,6 +152,9 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, re
     var quiet by remember { mutableStateOf(true) }
     var clip by remember { mutableStateOf<String?>(null) }
     val backdrop = rememberLayerBackdrop()
+    // 手动星级（当前项目的 stars 表）：打了星马上反映在这里
+    val store by com.fleetinggleam.android.core.Projects.store.collectAsState()
+    val starsOf = store.projects.firstOrNull { it.id == store.activeId }?.stars ?: emptyMap()
 
     // 选中的跟着翻页走；从外面换了（下面的小图条）就翻过去
     LaunchedEffect(pager) { snapshotFlow { pager.settledPage }.distinctUntilChanged().collect { i -> shown.getOrNull(i)?.let { cull.select(it.path) } } }
@@ -284,13 +287,17 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, re
                 }
             }
 
-            // ---- 下面：小图条、保留 / 待复查 / 淘汰、详情
+            // ---- 下面：小图条、手动星级、保留 / 待复查 / 淘汰、详情
             AnimatedVisibility(chrome && barsIn, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.BottomCenter)) {
                 Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     // 小图条和单张同一规格（A7.5）：当前项白色描边
                     Filmstrip(shown, decisions, pager.currentPage, Modifier.fillMaxWidth(), ring = Color.White) { cull.select(it) }
                     val d = decisions[photo.path]
                     // 只看（分析中点开的）：不放改判。底部胶囊只剩三个判定项；"待复查"只放图标（A9.1）
+                    // 手动星级：一排五颗可点的星（点第 n 颗打 n 星，再点同一颗取消），和保留 / 淘汰互不影响
+                    if (!readOnly) GlassBox(Modifier.padding(top = 6.dp), shape = RoundedCornerShape(50)) {
+                        RateStars(starsOf[photo.path] ?: 0, { n -> haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); Session.rate(photo.path, n) }, Modifier.padding(horizontal = 4.dp), star = 17.dp, hit = 36.dp, color = Color.White)
+                    }
                     if (!readOnly) GlassBox(Modifier.padding(top = 6.dp), shape = RoundedCornerShape(50)) {
                         Row(Modifier.padding(6.dp), verticalAlignment = Alignment.CenterVertically) {
                             listOf("keep", "review", "reject").forEach { st ->
@@ -309,7 +316,8 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, re
         val mates = remember(photo, data) { Session.photos.value.filter { it.group == photo.group } }
         com.fleetinggleam.android.ui.components.GlassSheet(true, { info = false }, dark = true) {
             Column(Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
-                InspectorBody(photo, decisions[photo.path], mates, onDecide = { onDecide(photo.path, it, shown) }, onSelect = { cull.select(it) })
+                InspectorBody(photo, decisions[photo.path], mates, onDecide = { onDecide(photo.path, it, shown) }, onSelect = { cull.select(it) },
+                    stars = starsOf[photo.path] ?: 0, onRate = if (readOnly) null else ({ n -> Session.rate(photo.path, n) }))
             }
         }
     }

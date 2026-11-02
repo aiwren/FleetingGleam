@@ -69,6 +69,7 @@ private sealed interface Dlg {
     data object Menu : Dlg
     data class Export(val dest: Dest) : Dlg
     data object Trash : Dlg
+    data object Marks : Dlg
 }
 
 /** 整理（桌面端 Organize.tsx）：从底部玻璃条的"整理"打开——导出保留的、把淘汰的移走。`open` 为真时显示菜单。 */
@@ -95,8 +96,23 @@ fun OrganizeDialogs(project: Project, open: Boolean, onDismissMenu: () -> Unit) 
     val rejectAll = photos.filter { decisions[it.path]?.state == "reject" }
     val rejectManual = rejectAll.filter { decisions[it.path]?.manual == true }
     val trashList = if (scopeAll) rejectAll else rejectManual
+    // 保留的照片里有带同名 RAW 的：导出时可以把 RAW 一起带上
+    val rawCount = keep.count { it.companions.isNotEmpty() }
+    var withRaw by remember { mutableStateOf(true) }
+    // 写回 Lightroom / Bridge：有判定的照片都写（NAS 与网盘文件夹里的只是副本，跳过）；先数一数会写几个旁车、几个 JPEG、几张写不了
+    val stars = project.stars
+    val decidedAll = photos.filter { decisions.containsKey(it.path) }
+    val decided = decidedAll.filter { !Organize.isCopy(ctx, it.path) }
+    val copies = decidedAll.size - decided.size
+    val markCounts = decided.flatMap { listOf(it.path) + it.companions }.groupingBy { Organize.carrierOf(it) }.eachCount()
+    var markStars by remember { mutableStateOf(true) }
+    var markLabels by remember { mutableStateOf(true) }
+    var markRes by remember { mutableStateOf<com.fleetinggleam.android.core.MarkResult?>(null) }
+    var markErr by remember { mutableStateOf<String?>(null) }
+    var markUndone by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var undoing by remember { mutableStateOf(false) }
 
-    fun open(d: Dlg) { result = null; exportErr = null; exportRes = null; stopping = false; phase = "confirm"; progress = Progress(); dlg = d; if (d != Dlg.Menu) onDismissMenu() }
+    fun open(d: Dlg) { result = null; exportErr = null; exportRes = null; markRes = null; markErr = null; markUndone = null; undoing = false; stopping = false; phase = "confirm"; progress = Progress(); dlg = d; if (d != Dlg.Menu) onDismissMenu() }
     fun close() { val reload = phase == "done"; dlg = null; onDismissMenu(); if (reload) Session.reload() }
 
     androidx.compose.runtime.LaunchedEffect(open) { if (open) open(Dlg.Menu) }
@@ -126,6 +142,9 @@ fun OrganizeDialogs(project: Project, open: Boolean, onDismissMenu: () -> Unit) 
                         val path = com.fleetinggleam.android.core.Nas.pick(nasShares.singleOrNull()?.id, source = "nas", title = t("organize.exportNasPick"), choose = t("organize.exportHere")) ?: return@launch
                         open(Dlg.Export(Dest.Path(path, com.fleetinggleam.android.core.Nas.label(path))))
                     }
+                }
+                OrgItem(Icons.MARKS, t("organize.marksItem"), if (decidedAll.isEmpty()) t("organize.none") else t("organize.marksDesc", "count" to decided.size), decided.isNotEmpty()) {
+                    open(Dlg.Marks)
                 }
                 OrgItem(Icons.TRASH, t("organize.trashItem"), if (offline) t("android.organize.offline") else if (rejectAll.isEmpty()) t("organize.none") else t("organize.trashDesc", "count" to rejectAll.size), rejectAll.isNotEmpty() && !offline, box = 14f) {
                     scopeAll = rejectManual.isEmpty(); open(Dlg.Trash)
@@ -157,13 +176,15 @@ fun OrganizeDialogs(project: Project, open: Boolean, onDismissMenu: () -> Unit) 
             } else {
                 FgButton(t("organize.cancel"), { close() }, small = true)
                 FgButton(t("organize.exportGo"), {
+                    val raw = rawCount > 0 && withRaw
                     phase = "running"; progress = Progress(0, keep.size); stopping = false
                     scope.launch {
                         val paths = keep.map { it.path }
                         val r = runCatching {
                             when (val x = d.dest) {
-                                is Dest.Path -> Organize.exportTo(ctx, paths, x.path)
-                                is Dest.Tree -> withContext(Dispatchers.IO) { Organize.exportToTree(ctx, paths, x.uri) { a, b -> progress = Progress(a, b) } }
+                                is Dest.Path -> Organize.exportTo(ctx, paths, x.path, withRaw = raw)
+                                // 网盘等只能按 Uri 逐张写的：同名 RAW 在这边展开
+                                is Dest.Tree -> withContext(Dispatchers.IO) { Organize.exportToTree(ctx, if (raw) keep.flatMap { listOf(it.path) + it.companions } else paths, x.uri) { a, b -> progress = Progress(a, b) } }
                             }
                         }.getOrElse { exportErr = it.message; ExportResult(0, 0, label) }
                         exportRes = r; phase = "done"
@@ -192,7 +213,72 @@ fun OrganizeDialogs(project: Project, open: Boolean, onDismissMenu: () -> Unit) 
                     Text(t("organize.exportBody", "count" to keep.size), style = Type.body.copy(color = c.ink))
                     // 路径只是一行等宽灰字；"原图不会被改动"在整理菜单里已经说过一次（A12.2）
                     Text(label, style = Type.mono.copy(color = c.ash))
+                    if (rawCount > 0) SwitchLine(t("organize.withRaw", "count" to rawCount), withRaw, enabled = phase != "running") { withRaw = it }
                     if (phase == "running") LiveBar(if (progress.total > 0) progress.done.toFloat() / progress.total else 0f, Modifier.padding(top = 4.dp))
+                }
+            }
+        }
+    }
+
+    // ---- 写回 Lightroom / Bridge
+    if (dlg == Dlg.Marks) {
+        val busy = phase == "running" || undoing
+        FgDialog(true, { if (!busy) close() }, t("organize.marksTitle"), locked = busy, footer = {
+            if (phase == "done") {
+                val r = markRes
+                if (r != null && r.undo.isNotEmpty() && markUndone == null) FgButton(if (undoing) t("organize.marksUndoing") else t("organize.marksUndo"), {
+                    undoing = true
+                    scope.launch {
+                        markUndone = runCatching { Organize.undoMarks(ctx, r.undo) }.map { it.restored.size to it.failed.size }.getOrElse { 0 to r.undo.size }
+                        undoing = false
+                    }
+                }, small = true, enabled = !undoing)
+                FgButton(t("organize.done"), { close() }, primary = true, small = true, enabled = !undoing)
+            } else {
+                FgButton(t("organize.cancel"), { close() }, enabled = phase != "running", small = true)
+                FgButton(if (phase == "running") t("organize.marksWriting") else t("organize.marksGo"), {
+                    phase = "running"
+                    scope.launch {
+                        val items = decided.map { Organize.MarkItem(it.path, decisions[it.path]!!.state, it.score, stars[it.path]) }
+                        runCatching { Organize.writeMarks(ctx, items, markStars, markLabels) }.onSuccess { markRes = it }.onFailure { markErr = it.message ?: "?" }
+                        phase = "done"
+                    }
+                }, primary = true, small = true,
+                    enabled = phase != "running" && decided.isNotEmpty() && (markStars || markLabels) && (markCounts["jpeg"] ?: 0) + (markCounts["sidecar"] ?: 0) > 0)
+            }
+        }) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                val undone = markUndone
+                val r = markRes
+                if (phase == "done" && undone != null) {
+                    Text(t("organize.marksUndone", "count" to undone.first), style = Type.body.copy(color = c.ink))
+                    if (undone.second > 0) Text(t("organize.marksUndoFailed", "count" to undone.second, "n" to undone.second), style = Type.rowDesc.copy(color = c.ash))
+                } else if (phase == "done" && markErr != null) {
+                    Text(t("organize.marksFailed", "error" to (com.fleetinggleam.android.core.Errors.explain(markErr) ?: markErr)), style = Type.body.copy(color = c.ink))
+                } else if (phase == "done" && r != null) {
+                    Text(t("organize.marksWritten", "sidecars" to r.sidecars, "embedded" to r.embedded), style = Type.body.copy(color = c.ink))
+                    if (r.skipped.isNotEmpty()) Text(t("organize.marksSkipped", "count" to r.skipped.size, "n" to r.skipped.size), style = Type.rowDesc.copy(color = c.ash))
+                    // 没写成的：同一个原因的归在一起，各举一张（相册里别的应用的照片，系统不让改，会在这里）
+                    if (r.failed.isNotEmpty()) {
+                        Text(t("android.organize.marksFailedN", "n" to r.failed.size), style = Type.rowDesc.copy(color = c.ink))
+                        r.failed.groupBy { com.fleetinggleam.android.core.Errors.explain(it.error) ?: com.fleetinggleam.android.core.Errors.detail(it.error).ifEmpty { it.error.ifEmpty { "?" } } }.forEach { (why, list) ->
+                            Text("· $why（${list.size}）${File(list[0].path).name}" + if (list.size > 1) " …" else "", style = Type.rowDesc.copy(color = c.ash), maxLines = 2, overflow = Ellipsis)
+                        }
+                    }
+                    // 相册里别的应用（相机等）存的照片，系统只许它自己改：说清楚原因和办法
+                    if (r.failed.any { "os error 1" in it.error || "os error 13" in it.error || it.error.startsWith("denied") }) Text(t("android.organize.marksDenied"), style = Type.rowDesc.copy(color = c.ash))
+                    if (r.sidecars + r.embedded > 0) Text(t("organize.marksNext"), style = Type.rowDesc.copy(color = c.ash))
+                } else {
+                    Text(t("organize.marksBody", "count" to decided.size), style = Type.body.copy(color = c.ink))
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        markCounts["sidecar"]?.let { Text("· " + t("organize.marksSidecars", "count" to it, "n" to it), style = Type.rowDesc.copy(color = c.ink)) }
+                        markCounts["jpeg"]?.let { Text("· " + t("organize.marksEmbedded", "count" to it, "n" to it), style = Type.rowDesc.copy(color = c.ink)) }
+                        markCounts["none"]?.let { Text("· " + t("organize.marksUnsupported", "count" to it, "n" to it), style = Type.rowDesc.copy(color = c.ash)) }
+                        if (copies > 0) Text("· " + t("android.organize.marksCopies", "n" to copies), style = Type.rowDesc.copy(color = c.ash))
+                    }
+                    SwitchLine(t("organize.marksStars"), markStars, enabled = phase != "running") { markStars = it }
+                    SwitchLine(t("organize.marksLabels"), markLabels, enabled = phase != "running") { markLabels = it }
+                    Text(t("organize.marksSafe"), style = Type.rowDesc.copy(color = c.ash))
                 }
             }
         }
@@ -254,6 +340,16 @@ private fun OrgItem(icon: String, title: String, desc: String, enabled: Boolean,
             }
             FgIcon(Icons.CHEVRON, size = 14.dp, stroke = 1.6f, color = c.ash)
         }
+    }
+}
+
+/** 对话框里的一行开关：左边一句话，右边开关；整行可点。 */
+@Composable
+private fun SwitchLine(text: String, on: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
+    val c = LocalFg.current
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable(enabled = enabled) { onChange(!on) }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(text, style = Type.rowDesc.copy(color = c.ink), modifier = Modifier.weight(1f).padding(end = 12.dp))
+        com.fleetinggleam.android.ui.components.FgSwitch(on, onChange, text, enabled = enabled)
     }
 }
 

@@ -38,6 +38,8 @@ data class Project(
     val search: Boolean? = null,
     /** false = this project ignores the learned taste model. */
     val learn: Boolean? = null,
+    /** 手动打的星级（1–5），按照片路径；没打过的不在表里。和保留 / 淘汰互不影响，写回 Lightroom 时优先于应用的评分（和桌面端同格式）。 */
+    val stars: Map<String, Int> = emptyMap(),
     val updated: Long = 0,
     /** Set when the project is in the recycle bin (ms timestamp). Its photo files are never touched. */
     val trashed: Long? = null,

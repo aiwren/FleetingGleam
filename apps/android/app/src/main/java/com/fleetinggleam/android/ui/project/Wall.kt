@@ -488,7 +488,10 @@ private val FORMAT_TAG = setOf("heic", "heif", "avif", "jxl", "tif", "tiff", "bm
 fun photoTags(p: Photo): List<Pair<String, String?>> {
     val out = mutableListOf<Pair<String, String?>>()
     val e = p.path.substringAfterLast('.', "").lowercase()
-    if (e in RAW_EXT) out.add("raw" to if (e == "dng") "RAW · DNG" else "RAW · ${e.uppercase()}")
+    // RAW + JPG 配对：代表文件的格式 + 伴随的 RAW（"JPG + RAW"）
+    val raws = p.companions.map { it.substringAfterLast('.', "").lowercase() }
+    if (raws.isNotEmpty()) out.add("raw" to "${e.uppercase()} + ${if (raws[0] == "dng") "DNG" else "RAW"}")
+    else if (e in RAW_EXT) out.add("raw" to if (e == "dng") "RAW · DNG" else "RAW · ${e.uppercase()}")
     else if (e in FORMAT_TAG) out.add("format" to if (e == "tif") "TIFF" else e.uppercase())
     // Live and HDR are never both shown: a Live photo says "Live" (the more useful thing to know), otherwise HDR.
     if (p.motion) out.add("motion" to null) else if (p.hdr) out.add("hdr" to null)
@@ -537,6 +540,8 @@ fun Tile(
     dock: Boolean = true,
     /** 从"还没判"到有判定也算一次变化（分析中第一次判出来：星星弹出来、淘汰收一下光圈）；分析完的墙上不算，免得整面墙一起动。 */
     stamp: Boolean = false,
+    /** 手动打的星级（1–5，0 = 没打）：右下角一个小标，和保留 / 淘汰的记号无关。 */
+    stars: Int = 0,
     onSelect: (String) -> Unit,
     onOpen: (String) -> Unit,
     onDecide: (String, String?) -> Unit,
@@ -582,6 +587,11 @@ fun Tile(
             if (showScore) Text(
                 "${pct(photo.score)}", style = Type.monoSmall.copy(color = Color.White),
                 modifier = Modifier.align(Alignment.BottomStart).padding(8.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xA3000000)).padding(horizontal = 6.dp, vertical = 2.dp),
+            )
+            if (stars > 0) Text(
+                "★".repeat(stars), style = Type.caption.copy(color = Color.White),
+                modifier = Modifier.align(Alignment.BottomEnd).padding(6.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xA3000000)).padding(horizontal = 5.dp, vertical = 1.dp)
+                    .semantics { contentDescription = t("stars.tile", "count" to stars) },
             )
             Marks(state, changedTo, changeN, reveal, index, selected)
             if (selected && interactive) {

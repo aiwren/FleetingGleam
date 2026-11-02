@@ -102,8 +102,12 @@ object Session {
     private var job: Job? = null
     private var decideJob: Job? = null
     private var currentKey = ""
-    /** 手动改判的撤销栈（最近 50 次），换项目清空。 */
-    private val undoStack = ArrayDeque<Pair<String, String?>>()
+    /** 撤销栈里的一步：一次改判（之前的判定）或一次打星（之前的星数）。 */
+    private sealed interface Step { val path: String }
+    private data class Mark(override val path: String, val prev: String?) : Step
+    private data class Rate(override val path: String, val prev: Int?) : Step
+    /** 手动改判与打星的撤销栈（最近 50 次），换项目清空。 */
+    private val undoStack = ArrayDeque<Step>()
     /** 一次只改一张、而且没有上限和"每组一张"时，本地直接改，不再问引擎（见 `decide`）。 */
     private var localPatch: Triple<String, String, List<Photo>>? = null
 
@@ -526,16 +530,37 @@ object Session {
             scope.launch { runCatching { Core.call("record_label", args("path" to path, "label" to if (st == null || st == "review") null else st == "keep", "style" to project.style)) } }
         }
         dirty.value += 1
-        if (!fromUndo) {
-            undoStack.addLast(path to prev)
-            if (undoStack.size > 50) undoStack.removeFirst()
-            undoCount.value = undoStack.size
-        }
+        if (!fromUndo) push(Mark(path, prev))
+    }
+
+    private fun push(s: Step) {
+        undoStack.addLast(s)
+        if (undoStack.size > 50) undoStack.removeFirst()
+        undoCount.value = undoStack.size
+    }
+
+    /** 手动打星（1–5，null = 取消）：只记在项目里，和保留 / 淘汰互不影响，也不拿来学喜好（桌面端 rate）。 */
+    fun rate(path: String, n: Int?, fromUndo: Boolean = false) {
+        val project = current() ?: return
+        val prev = project.stars[path]
+        if (prev == n) return
+        val next = project.stars.toMutableMap()
+        if (n == null || n !in 1..5) next.remove(path) else next[path] = n
+        Projects.update(project.id) { it.copy(stars = next) }
+        if (!fromUndo) push(Rate(path, prev))
     }
 
     fun canUndo(): Boolean = undoStack.isNotEmpty()
-    /** 撤销最近一次改判；返回被撤销的那张（界面把它选中、滚到眼前）。 */
-    fun undo(): String? { val e = undoStack.removeLastOrNull() ?: return null; undoCount.value = undoStack.size; decide(e.first, e.second, fromUndo = true); return e.first }
+    /** 撤销最近一次改判或打星；返回被撤销的那张（界面把它选中、滚到眼前）。 */
+    fun undo(): String? {
+        val e = undoStack.removeLastOrNull() ?: return null
+        undoCount.value = undoStack.size
+        when (e) {
+            is Mark -> decide(e.path, e.prev, fromUndo = true)
+            is Rate -> rate(e.path, e.prev, fromUndo = true)
+        }
+        return e.path
+    }
 
     /** 刚才整理掉（导出 / 回收）之后：重新读文件夹，已不在的照片的改判随之忘掉。 */
     fun reload() { enter() }

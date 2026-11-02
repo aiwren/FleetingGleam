@@ -72,11 +72,11 @@ fun stars(v: Float): Int = kotlin.math.ceil(v * 5).toInt().coerceIn(1, 5)
  * 手机上它在大图下面拉上来的面板里，和单张模式的照片下面。
  */
 @Composable
-fun InspectorBody(photo: Photo, decision: Decision?, mates: List<Photo>, onDecide: (String?) -> Unit, onSelect: (String) -> Unit, dark: Boolean = false) {
+fun InspectorBody(photo: Photo, decision: Decision?, mates: List<Photo>, onDecide: (String?) -> Unit, onSelect: (String) -> Unit, dark: Boolean = false, stars: Int = 0, onRate: ((Int?) -> Unit)? = null) {
     val c = LocalFg.current
     // 区块之间 16（设计审查 A10.5）；详细数据的摘要带名字、不再列一遍"综合"（A10.2）；人脸也是一行名字 · 值（A10.3）
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        PhotoVerdict(photo, decision, onDecide)
+        PhotoVerdict(photo, decision, onDecide, stars, onRate)
         if (mates.size > 1) Mates(photo, mates, onSelect)
         Column(Modifier.clip(RoundedCornerShape(14.dp)).background(c.panel).then(if (c.dark) Modifier.border(1.dp, c.line, RoundedCornerShape(14.dp)) else Modifier)) {
             Accordion("M2.5 12.5V8.5M6.5 12.5V4M10.5 12.5V6.5M14 12.5H1.5", t("inspector.details"),
@@ -123,7 +123,7 @@ fun DecideTrio(decision: Decision?, onDecide: (String?) -> Unit, modifier: Modif
 /** 判定：名字、星、保留 / 待复查 / 淘汰、理由、几条数据条（桌面端 PhotoVerdict）。 */
 /** 判定（设计审查 A10.1 / R2）：名字、综合分（24sp 等宽数字，不画星）+ "?"、三个判定钮、理由、几条数据条。 */
 @Composable
-fun PhotoVerdict(photo: Photo, decision: Decision?, onDecide: (String?) -> Unit) {
+fun PhotoVerdict(photo: Photo, decision: Decision?, onDecide: (String?) -> Unit, stars: Int = 0, onRate: ((Int?) -> Unit)? = null) {
     val c = LocalFg.current
     val reasons = decision?.reasons?.map { reasonText(it) }?.joinToString(if (I18n.isZh) "；" else "; ")
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -131,6 +131,11 @@ fun PhotoVerdict(photo: Photo, decision: Decision?, onDecide: (String?) -> Unit)
             Text(photo.name, style = Type.mono.copy(color = c.ink), maxLines = 1, modifier = Modifier.weight(1f, fill = false))
             if (photo.kind.isNotEmpty() && I18n.has("kind.${photo.kind}")) Text(t("kind.${photo.kind}"), style = Type.monoSmall.copy(color = c.ash),
                 modifier = Modifier.padding(start = 8.dp).clip(CircleShape).border(1.dp, c.line, CircleShape).padding(horizontal = 8.dp, vertical = 2.dp))
+            // 格式标签（"JPG + RAW"、"RAW · DNG"、"HEIC"…），和格子左上角的一样
+            photoTags(photo).filter { (id, text) -> text != null && (id == "raw" || id == "format") }.forEach { (_, text) ->
+                Text(text!!, style = Type.monoSmall.copy(color = c.ash), maxLines = 1,
+                    modifier = Modifier.padding(start = 6.dp).clip(CircleShape).border(1.dp, c.line, CircleShape).padding(horizontal = 8.dp, vertical = 2.dp))
+            }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("${pct(photo.score)}", style = Type.score.copy(color = c.ink))
@@ -138,6 +143,11 @@ fun PhotoVerdict(photo: Photo, decision: Decision?, onDecide: (String?) -> Unit)
             InfoPop(t("inspector.overall"), t("inspector.scoreTip"))
         }
         DecideTrio(decision, onDecide, Modifier.padding(top = 4.dp))
+        // 手动星级：一行五颗可点的星，和保留 / 淘汰互不影响
+        if (onRate != null) Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(t("stars.label"), style = Type.rowDesc.copy(color = c.ash), modifier = Modifier.width(76.dp))
+            RateStars(stars, onRate, Modifier.padding(start = 0.dp), star = 18.dp, hit = 36.dp)
+        }
         if (!reasons.isNullOrEmpty()) Text(reasons, style = Type.rowDesc.copy(color = c.ash))
         Column(Modifier.padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             MBar(t("inspector.sharp"), pct(photo.sharpScore))
@@ -267,6 +277,8 @@ fun FileSection(photo: Photo) {
             (info?.camera ?: info?.lens)?.let { add(t("file.camera") to (it to info?.lens?.takeIf { _ -> info.camera != null })) }
             if (tags.isNotEmpty()) add(t("file.exposure") to tags)
             info?.taken?.let { add(t("file.taken") to niceTime(it)) }
+            // RAW + JPG 配对：这张实际由哪几个文件组成
+            if (photo.companions.isNotEmpty()) add(t("file.files") to (listOf(photo.path) + photo.companions).map { it.substringAfterLast('/') })
         }
         Kv(rows)
     }

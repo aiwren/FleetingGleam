@@ -20,7 +20,12 @@ import kotlin.math.roundToInt
  * 会从核心库的工作线程并发调用；没有共享状态。
  */
 object AndroidImages : ImageHelper {
-    private val EXT = setOf("jpg", "jpeg", "jpe", "png", "webp", "gif", "bmp", "heic", "heif") + if (Build.VERSION.SDK_INT >= 31) setOf("avif") else emptySet()
+    /**
+     * 相机 RAW：Android 的解码器（Skia）认 DNG，其它常见 RAW 取文件里内嵌的预览图。要报出来，核心列文件时才看得见它们：
+     * 和同名 JPG 配成一张（RAW 作伴随文件，导出、回收、写回一起走），单独的 RAW 解不出来的照旧在探测时剔除。
+     */
+    private val RAW = setOf("dng", "cr2", "cr3", "crw", "nef", "nrw", "arw", "srf", "sr2", "raf", "orf", "rw2", "pef", "srw", "x3f", "3fr", "erf", "kdc", "mef", "mos", "mrw", "raw", "rwl", "iiq", "fff", "dcr", "k25", "rwz")
+    private val EXT = setOf("jpg", "jpeg", "jpe", "png", "webp", "gif", "bmp", "heic", "heif") + RAW + if (Build.VERSION.SDK_INT >= 31) setOf("avif") else emptySet()
 
     override fun supports(ext: String): Boolean = ext.lowercase() in EXT
 
