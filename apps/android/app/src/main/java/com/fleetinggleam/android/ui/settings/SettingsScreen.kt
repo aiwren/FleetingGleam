@@ -60,6 +60,7 @@ import com.fleetinggleam.android.core.Share
 import com.fleetinggleam.android.core.Strategy
 import com.fleetinggleam.android.core.Styles
 import com.fleetinggleam.android.core.TasteSummary
+import com.fleetinggleam.android.core.Updates
 import com.fleetinggleam.android.core.args
 import com.fleetinggleam.android.core.baseName
 import com.fleetinggleam.android.core.fmtBytes
@@ -502,7 +503,49 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                     }
                 }
                 SettingGroup("") {
-                    SettingRow(t("settings.aboutVersion"), null, first = true) { Text("v$version", style = Type.mono.copy(color = c.ash)) }
+                    // 版本与应用内更新（core/Updates.kt）：一行"版本 · v0.1.0 (105)" + 检查 / 下载 / 安装按钮；
+                    // 发现新版本时下面展开更新说明、进度；下好后交给系统安装器（第一次要先允许"安装未知应用"）
+                    val upd by Updates.state.collectAsState()
+                    val updInfo = when (val u = upd) { is Updates.State.Found -> u.info; is Updates.State.Downloading -> u.info; is Updates.State.Ready -> u.info; is Updates.State.Error -> u.info; else -> null }
+                    var canInstall by remember { mutableStateOf(true) }
+                    // 从系统设置允许了"安装未知应用"回来，按钮要跟着变
+                    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) { canInstall = Updates.canInstall(); onPauseOrDispose { } }
+                    val updDesc = when (val u = upd) {
+                        is Updates.State.Latest -> t("settings.updateLatest")
+                        is Updates.State.Failed -> t("settings.updateFailed")
+                        is Updates.State.Ready -> if (canInstall) t("android.settings.updateReadyAndroid", "version" to u.info.version, "size" to fmtBytes(u.file.length())) else t("android.settings.updateAllowDesc")
+                        else -> if (updInfo != null) t("settings.updateFound", "version" to updInfo.version, "current" to updInfo.current) else t("settings.updateIdle")
+                    }
+                    val updBelow: (@Composable () -> Unit)? = if (updInfo == null || upd is Updates.State.Ready) null else ({
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            updInfo.notes?.let { notes ->
+                                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(c.surface).padding(12.dp)) {
+                                    Text(t("settings.updateNotes"), style = Type.overline.copy(color = c.ash))
+                                    Text(plainNotes(notes), style = Type.rowDesc.copy(color = c.ink), maxLines = 14, overflow = com.fleetinggleam.android.ui.theme.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+                                }
+                            }
+                            when (val u = upd) {
+                                is Updates.State.Downloading -> {
+                                    com.fleetinggleam.android.ui.components.LiveBar(if (u.total > 0) u.done.toFloat() / u.total else 0f)
+                                    Text("${t("settings.updateDownloading")} ${fmtBytes(u.done)}${if (u.total > 0) " / " + fmtBytes(u.total) else ""}", style = Type.monoSmall.copy(color = c.ash))
+                                }
+                                is Updates.State.Error -> Text(t("settings.updateError", "error" to u.error), style = Type.rowDesc.copy(color = c.ash))
+                                else -> Text(t("android.settings.updateInstallHint"), style = Type.rowDesc.copy(color = c.ash))
+                            }
+                        }
+                    })
+                    SettingRow(t("settings.aboutVersion") + " · v" + version, updDesc, first = true, below = updBelow) {
+                        when (upd) {
+                            is Updates.State.Checking -> FgButton(t("settings.updateChecking"), {}, small = true, enabled = false)
+                            is Updates.State.Downloading -> {}
+                            is Updates.State.Ready -> if (canInstall) FgButton(t("android.settings.updateInstallNow"), { Updates.install(ctx) }, small = true, on = true)
+                                else FgButton(t("android.settings.updateAllow"), { Updates.openInstallPermission(ctx) }, small = true, on = true)
+                            is Updates.State.Found -> FgButton(t("settings.updateInstall"), { Updates.download() }, small = true, on = true)
+                            is Updates.State.Error -> FgButton(t("android.settings.updateRetry"), { Updates.download() }, small = true, on = true)
+                            else -> FgButton(t("settings.updateCheck"), { scope.launch { Updates.check(silent = false) } }, small = true)
+                        }
+                    }
+                    SettingRow(t("settings.autoUpdate"), t("settings.autoUpdateDesc")) { FgSwitch(s.autoUpdate, { v -> Settings.set { it.copy(autoUpdate = v) } }, t("settings.autoUpdate")) }
                     // 本地的诊断文件（审查第 36 条）：写到用户自己选的位置，不联网
                     SettingRow(t("android.settings.diagnostics"), diagMsg ?: t("android.settings.diagnosticsDesc")) {
                         FgButton(if (diagDone) t("android.settings.diagnosticsDone") else t("android.settings.diagnosticsBtn"), {
@@ -677,3 +720,8 @@ private fun MirrorLine(name: String, bytes: Long, busy: Boolean, onClear: () -> 
 
 private data class BkForm(val id: String? = null, val name: String = "", val account: String = "", val bucket: String = "", val accessKey: String = "", val secret: String = "", val hasSecret: Boolean = false)
 private data class NasForm(val id: String? = null, val name: String = "", val host: String = "", val user: String = "", val password: String = "", val remember: Boolean = true, val editingUser: String = "", val editingHost: String = "")
+
+/** 更新说明（Release 正文的 Markdown）压成几行平实的文字：去掉标题的井号、加粗的星号，列表项换成圆点（桌面端 Settings.tsx 的 plainNotes）。 */
+private fun plainNotes(md: String): String = md.replace("\r", "").lines()
+    .map { it.replace(Regex("^#{1,6}\\s*"), "").replace(Regex("^\\s*[-*]\\s+"), "• ").replace("**", "") }
+    .joinToString("\n").replace(Regex("\n{3,}"), "\n\n").trim()

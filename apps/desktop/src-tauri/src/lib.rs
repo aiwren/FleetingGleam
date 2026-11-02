@@ -9,6 +9,7 @@ mod mounts;
 mod power;
 mod proxy;
 mod samples;
+mod update;
 mod vision;
 #[cfg(test)]
 mod bench;
@@ -825,6 +826,8 @@ pub fn run() {
         )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        // 应用内更新（update.rs）：清单地址与公钥在 tauri.conf.json 的 plugins.updater
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let handle = app.handle().clone();
             // macOS 的平台能力：ImageIO 边车、Apple Vision 边车、Metal 上的 CLIP、访达的废纸篓
@@ -841,6 +844,7 @@ pub fn run() {
             e.start_background();
             app.manage(e);
             app.manage(DecideState::default());
+            app.manage(update::Pending::default());
             let menu = build_menu(&handle, "en")?;
             app.set_menu(menu)?;
             Ok(())
@@ -857,7 +861,7 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![forget_folders, probe_folder, scan_project, scan_cancel, decide_photos, decide_reasons, projects_load, projects_save, projects_quarantine, taste_export, taste_import, nas_list, nas_add, nas_remove, nas_connect, nas_disconnect, nas_ensure, nas_browse, nas_probe, nas_update, nas_set_enabled, nas_mirror_usage, nas_mirror_clear, backup_status, backup_save_target, backup_remove_target, backup_set_options, backup_now, backup_restore, backup_peek, set_rotation, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, export_cancel, trash_photos, untrash_photos, write_marks, undo_marks, reveal, preview_thumbs, photo_info, large_preview, motion_clip, hdrview::hdr_overlay_supported, hdrview::hdr_overlay_show, hdrview::hdr_overlay_move, hdrview::hdr_overlay_hide, hdrview::hdr_overlay_detail, hdrview::hdr_overlay_detail_hide, photo_detail, machine_info, search_status, search_index, search_photos, scene_text, packs_status, pack_size, pack_download, pack_cancel, pack_remove, diagnostics_export, diagnostics_dir, proxy::proxy_info, proxy::proxy_set, samples::samples_folder, quit_ready, dropped_folders])
+        .invoke_handler(tauri::generate_handler![forget_folders, probe_folder, scan_project, scan_cancel, decide_photos, decide_reasons, projects_load, projects_save, projects_quarantine, taste_export, taste_import, nas_list, nas_add, nas_remove, nas_connect, nas_disconnect, nas_ensure, nas_browse, nas_probe, nas_update, nas_set_enabled, nas_mirror_usage, nas_mirror_clear, backup_status, backup_save_target, backup_remove_target, backup_set_options, backup_now, backup_restore, backup_peek, set_rotation, set_locale, cache_size, clear_cache, record_label, prefs_info, prefs_reset, styles_list, style_create, style_rename, style_delete, style_set_default, learn_from_folder, export_photos, export_cancel, trash_photos, untrash_photos, write_marks, undo_marks, reveal, preview_thumbs, photo_info, large_preview, motion_clip, hdrview::hdr_overlay_supported, hdrview::hdr_overlay_show, hdrview::hdr_overlay_move, hdrview::hdr_overlay_hide, hdrview::hdr_overlay_detail, hdrview::hdr_overlay_detail_hide, photo_detail, machine_info, search_status, search_index, search_photos, scene_text, packs_status, pack_size, pack_download, pack_cancel, pack_remove, diagnostics_export, diagnostics_dir, proxy::proxy_info, proxy::proxy_set, samples::samples_folder, quit_ready, dropped_folders, update::update_check, update::update_install, update::update_restart])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {

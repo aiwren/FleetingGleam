@@ -294,6 +294,13 @@ const en = {
     aboutPrivacy: "Privacy policy", aboutTerms: "Terms of use",
     aboutIssues: "Report a problem", aboutIssuesDesc: "File a bug or suggestion on GitHub",
     aboutVersion: "Version",
+    // In-app updates (shared by updater.ts and Android's Updates.kt)
+    updateCheck: "Check for updates", updateChecking: "Checking…",
+    updateIdle: "New versions are published on GitHub Releases; you can also ask right now.", updateLatest: "You have the latest version.", updateFailed: "Could not check just now (offline, or GitHub is unreachable). Try again later.",
+    updateFound: "Version {{version}} is available (you have {{current}})", updateNotes: "What's new",
+    updateInstall: "Download and install", updateDownloading: "Downloading…", updateInstalling: "Installing…",
+    updateReady: "{{version}} is installed and takes effect when the app reopens.", updateRestart: "Restart now", updateError: "Not installed: {{error}}",
+    autoUpdate: "Check for updates automatically", autoUpdateDesc: "A few seconds after each launch the app asks once whether a new version is out; if it cannot tell, nothing happens. Only the version number is sent, nothing else.",
     diag: "Export diagnostics", diagDesc: "When reporting a problem, make a local file to attach; whether to send it is up to you.", diagBtn: "Export…", diagBusy: "Writing…",
     diagInfo: "The file holds the app version, system details, the settings (without passwords, tokens or user names in NAS addresses), the recent log and any crash reports; no photos, though the log may mention photo file paths. It is written only where you choose and never uploaded, so you can read it before sending.",
     diagDone: "Written to {{path}}", diagFailed: "Not written: {{error}}",

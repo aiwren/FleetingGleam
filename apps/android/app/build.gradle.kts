@@ -11,7 +11,9 @@ plugins {
 val repoRoot = rootProject.projectDir.parentFile.parentFile
 val rustCrate = "fleetinggleam-android"
 // 版本号只有一处：根 Cargo.toml 的 [workspace.package] version（核心库、桌面端也用它；发版时改那一处，见 docs/RELEASING.md）
-val appVersion: String = Regex("""(?m)^version\s*=\s*"([^"]+)"""").find(File(repoRoot, "Cargo.toml").readText())?.groupValues?.get(1)
+// （-PFG_VERSION_NAME=0.2.0 只用于本机验证应用内更新：编一个"更新包"装到现有的上面；发布工作流会核对正式包仍取自 Cargo.toml）
+val appVersion: String = (findProperty("FG_VERSION_NAME") as String?)?.takeIf { it.isNotBlank() }
+    ?: Regex("""(?m)^version\s*=\s*"([^"]+)"""").find(File(repoRoot, "Cargo.toml").readText())?.groupValues?.get(1)
     ?: throw GradleException("读不到根目录 Cargo.toml 里 [workspace.package] 的 version")
 // 内部版本号（build）：仓库的提交次数，每提交一次加一。系统的 versionCode 用它（覆盖安装要求递增），关于页显示成"0.1.0 (105)"。
 // 取不到（没有 git、浅克隆）就构建失败：以前退回 1，装出来的包比手机上已有的旧，覆盖安装会被系统拒绝。

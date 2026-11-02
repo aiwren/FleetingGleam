@@ -1357,6 +1357,13 @@ img { -webkit-user-drag: none; }
 .about-intro { margin: 8px 0 0; max-width: 60ch; line-height: 1.55; }
 .about-link { width: 100%; text-align: left; background: none; border: 0; border-top: 1px solid var(--line); color: var(--ink); cursor: pointer; font: inherit; }
 .about-link:hover { background: var(--surface); }
+/* 应用内更新：版本行下面展开的更新说明、进度与"下载并安装" */
+.upd-box { display: grid; gap: 10px; padding: 0 16px 14px; max-width: 60ch; }
+.upd-notes b { display: block; font-size: 12px; color: var(--ash); font-weight: 500; margin-bottom: 4px; }
+.upd-notes pre { margin: 0; max-height: 180px; overflow: auto; white-space: pre-wrap; font: inherit; font-size: 12px; line-height: 1.55; color: var(--ink); padding: 8px 10px; border-radius: 8px; background: var(--surface); }
+.upd-progress { display: grid; gap: 6px; font-size: 12px; }
+.upd-progress .bar { height: 5px; border-radius: 3px; margin: 0; }
+.upd-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 12px; }
 .about-link svg { color: var(--ash); flex: none; }
 
 /* ---- 分析中的分拣动效：一粒光从格子飘进筛选栏里对应的那一行 */

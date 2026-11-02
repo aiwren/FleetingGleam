@@ -15,6 +15,7 @@ import { newProjectFromDialog, projectFromFolders } from "./projectActions";
 import { purgeExpired, setActive, useProjectsStatus } from "./projects";
 import { refreshShares } from "./nas";
 import { watchForBackup } from "./backup";
+import { scheduleAutoCheck } from "./updater";
 import { DUR, SPRING } from "./motion";
 import { editHistory } from "./history";
 import logo from "./assets/logo.png";
@@ -53,6 +54,7 @@ export default function App() {
     purgeExpired();
     void refreshShares(); // 添加过 NAS 的话，"新建项目"要先问文件夹在本机还是共享里
     watchForBackup();     // 配置过云备份的话，设置和喜好一变就自动上传
+    scheduleAutoCheck();  // 几秒后在后台问一次 GitHub 有没有新版本（设置里可关；查不到就算了）
     // 后端启动时在后台连 NAS，连完会说一声；设置页的状态跟着刷新
     const un = listen("nas-changed", () => { void refreshShares(); });
     window.addEventListener("focus", purgeExpired);

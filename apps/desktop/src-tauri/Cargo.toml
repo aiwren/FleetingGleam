@@ -37,6 +37,10 @@ kamadak-exif.workspace = true
 trash = "5.2.9"
 # 基准测试里直接用 ONNX Runtime 对比 GPU 编码器
 ort.workspace = true
+# 应用内更新：GitHub Releases 上的 latest.json（minisign 签名，公钥在 tauri.conf.json）
+tauri-plugin-updater = "2"
+# 更新说明里的发布时间格式化成 RFC 3339
+time = { version = "0.3", features = ["formatting"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # 访达挂载的网络卷（statfs）

@@ -292,6 +292,13 @@ const zh = {
     aboutPrivacy: "隐私政策", aboutTerms: "使用条款",
     aboutIssues: "反馈问题", aboutIssuesDesc: "在 GitHub 上提交 bug 或建议",
     aboutVersion: "版本",
+    // 应用内更新（updater.ts / Android 的 Updates.kt 共用这组文案）
+    updateCheck: "检查更新", updateChecking: "正在检查…",
+    updateIdle: "新版本发布在 GitHub Releases 上，也可以现在就问一次。", updateLatest: "已是最新版本。", updateFailed: "刚才没查到（离线，或 GitHub 暂时不通），稍后再试。",
+    updateFound: "有新版本 {{version}}（当前 {{current}}）", updateNotes: "更新说明",
+    updateInstall: "下载并安装", updateDownloading: "正在下载…", updateInstalling: "正在安装…",
+    updateReady: "{{version}} 已装好，重新打开应用后生效。", updateRestart: "现在重启", updateError: "没有装上：{{error}}",
+    autoUpdate: "自动检查更新", autoUpdateDesc: "每次启动后几秒在后台问一次有没有新版本；查不到就当没有，不会打扰你。只传版本号，不传任何别的。",
     diag: "导出诊断信息", diagDesc: "遇到问题想反馈时，生成一个本地文件附上；发不发由你决定。", diagBtn: "导出…", diagBusy: "正在生成…",
     diagInfo: "文件里有应用版本、系统信息、设置（已去掉密码、令牌和 NAS 地址里的用户名）、最近的运行日志和崩溃记录；不含照片本身，但日志里可能有照片的文件路径。只写到你选的位置，不会自动上传，发之前可以先打开看看。",
     diagDone: "已写到 {{path}}", diagFailed: "没有生成：{{error}}",

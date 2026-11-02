@@ -67,7 +67,13 @@
    "mirrorClearTitle": "清掉「{{name}}」的本机副本？",
    "mirrorClearBody": "项目「{{project}}」正开着、用着这份副本。清掉后它的照片要从原处重新拉一遍，拉回来之前大图看不了；分析结果都留着。",
    "cullTitle": "选片",
-   "autoAdvanceDesc": "大图里判完翻到下一张，照片墙上判完选中下一张。"
+   "autoAdvanceDesc": "大图里判完翻到下一张，照片墙上判完选中下一张。",
+   "updateInstallHint": "下载完成后由系统安装器安装，会再确认一次；第一次要先允许惊鸿安装应用。",
+   "updateAllow": "去允许安装",
+   "updateAllowDesc": "系统还没允许惊鸿安装应用。点这里到系统设置里打开，回来后再点“安装”。",
+   "updateInstallNow": "安装",
+   "updateReadyAndroid": "{{version}} 已下载好（{{size}}），点“安装”交给系统。",
+   "updateRetry": "重试"
   },
   "cull": {
    "hint": "点一张照片选中，底栏可以保留、淘汰或放大查看；单张模式里上推留下、下拉淘汰。",

@@ -17,7 +17,8 @@ export type Effects = "full" | "calm";
 export type Settings = { compute: Compute; theme: Theme; learn: boolean; quality: Quality; search: boolean; customStyles: boolean; eyeMethod: EyeMethod; tier: Quality | null; /** counts the times a better model was chosen on purpose (the project in view is looked at again then) */ tierRev: number; /** 快捷键：预设 + 逐个改过的键（keymap.ts） */ keymap: KeymapSetting;
   /** 判定（P / R / X、格子上的 ★ / ✕、查看器）单张之后自动选中下一张（A7.6）。 */ autoAdvance: boolean;
   /** 照片墙底部常驻一条常用快捷键。 */ keyHints: boolean;
-  /** 界面动效的多少（见 Effects）。 */ effects: Effects };
+  /** 界面动效的多少（见 Effects）。 */ effects: Effects;
+  /** 启动后几秒在后台问一次 GitHub Releases 有没有新版本（updater.ts）；和 Android 同名。 */ autoUpdate: boolean };
 /** What the last analysis actually ran on, reported by the backend. */
 export type ScanInfo = { cpu_only: boolean; clip: string | null; model: string | null; vision: boolean; cores: number };
 
@@ -32,7 +33,7 @@ function read<T>(key: string, fallback: T): T {
 }
 function write(key: string, v: unknown) { try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* storage may be unavailable */ } }
 
-let state: Settings = read<Settings>(KEY, { compute: "auto", theme: "system", learn: true, quality: "fast", search: false, customStyles: false, eyeMethod: "vision", tier: null, tierRev: 0, keymap: { preset: "default", custom: {} }, autoAdvance: true, keyHints: true, effects: "full" });
+let state: Settings = read<Settings>(KEY, { compute: "auto", theme: "system", learn: true, quality: "fast", search: false, customStyles: false, eyeMethod: "vision", tier: null, tierRev: 0, keymap: { preset: "default", custom: {} }, autoAdvance: true, keyHints: true, effects: "full", autoUpdate: true });
 // Someone who has analysed photos before keeps the model their results were made with (changing it would redo everything).
 (() => {
   try {

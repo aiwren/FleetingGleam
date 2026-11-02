@@ -1,4 +1,5 @@
 # 发布：只在推送形如 v0.1.0 的版本标签时运行，构建 macOS 安装包与安卓安装包，放进同一个 GitHub Release（草稿）。
+# 同时上传应用内更新要的东西：Mac 的 .app.tar.gz + .sig + latest.json（签名密钥在 Secrets），安卓端直接读 Release API 与固定名字的 APK。
 # 日常提交不会触发它。发布步骤见 docs/RELEASING.md。
 # 也可以在 Actions 页手动运行（workflow_dispatch）：那样只编安卓包、用正式密钥签名，作为工作流产物留下，不碰任何 Release，用来检查签名配置。
 name: Release
@@ -78,6 +79,37 @@ jobs:
         run: echo "RUSTFLAGS=--remap-path-prefix=$HOME=/build --remap-path-prefix=$GITHUB_WORKSPACE=/src" >> "$GITHUB_ENV"
 
       # Apple 签名与公证是可选配置：没有设置对应的 Secret 时就跳过，构建仍会成功，只是得到未签名的安装包。
+      # 应用内更新的签名密钥（必须）：更新包 .app.tar.gz 用它签名，应用只认 tauri.conf.json 里对应的公钥（见 docs/RELEASING.md 的"应用内更新"）。
+      # 没配就直接失败：没有签名的更新包任何已装的应用都不会接受，发出去也没用。
+      - name: 读取更新包的签名密钥
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::仓库 Secrets 里缺 TAURI_SIGNING_PRIVATE_KEY：更新包没法签名，已装的应用不会接受这个版本。配置方法见 docs/RELEASING.md 的“应用内更新”。"
+            exit 1
+          fi
+          echo "::add-mask::$TAURI_SIGNING_PRIVATE_KEY"
+          [ -n "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" ] && echo "::add-mask::$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+          printf 'TAURI_SIGNING_PRIVATE_KEY=%s\n' "$TAURI_SIGNING_PRIVATE_KEY" >> "$GITHUB_ENV"
+          printf 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD=%s\n' "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" >> "$GITHUB_ENV"
+
+      # Release 正文和 latest.json 的 notes 都用 CHANGELOG.md 里这个版本的那一节（两端应用的"更新说明"显示的就是它）
+      - name: 从 CHANGELOG 摘更新说明
+        id: notes
+        run: |
+          body=$(.github/scripts/changelog-section.sh "${GITHUB_REF_NAME#v}" || true)
+          if [ -z "$body" ]; then
+            echo "::warning::CHANGELOG.md 里没有 [${GITHUB_REF_NAME#v}] 这一节，更新说明只放一个链接。"
+            body="见 https://github.com/$GITHUB_REPOSITORY/blob/main/CHANGELOG.md"
+          fi
+          {
+            echo "body<<FG_NOTES_EOF"
+            printf '%s\n' "$body"
+            echo "FG_NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: 读取可选的签名配置
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -123,12 +155,31 @@ jobs:
 
             照片只在你自己的设备上处理；应用只为下载模型、连接你自己设置的 NAS 或备份才联网。 / Your photos stay on your own devices; the app only goes online to download models and to reach a NAS or backup you set up yourself.
 
-            更新内容 / What's new: [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)
+            装好之后不用再回来：两端的应用都会自己发现新版本，在“设置 › 关于”里一键更新。 / After this you need not come back: both apps notice new versions themselves and update from Settings › About.
+
+            ## 更新内容 / What's new
+
+            ${{ steps.notes.outputs.body }}
+
+            完整记录 / Full history: [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)
           # 先作为草稿，维护者检查安装包后再手动发布
           releaseDraft: true
-          # 没有自动更新功能：不生成 .app.tar.gz 与 latest.json，Release 里只有 .dmg，用户不会下错
-          includeUpdaterJson: false
+          # 应用内更新：上传 .app.tar.gz 与 .sig（tauri.conf.json 的 createUpdaterArtifacts），并生成 latest.json 放进 Release；
+          # 发布后 Mac 端在 releases/latest/download/latest.json 读到它。下面一步把它的 notes 换成只有更新说明。
+          includeUpdaterJson: true
           prerelease: ${{ contains(github.ref_name, '-') }}
+
+      # tauri-action 生成的 latest.json 把整个 Release 正文当 notes（含安装说明）；Mac 端"更新说明"只要 CHANGELOG 那一节
+      - name: 整理 latest.json 的更新说明
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NOTES: ${{ steps.notes.outputs.body }}
+        run: |
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern latest.json --dir "$RUNNER_TEMP" --clobber
+          jq --arg notes "$NOTES" '.notes = $notes' "$RUNNER_TEMP/latest.json" > "$RUNNER_TEMP/latest.fixed.json"
+          cat "$RUNNER_TEMP/latest.fixed.json"
+          mv "$RUNNER_TEMP/latest.fixed.json" "$RUNNER_TEMP/latest.json"
+          gh release upload "$GITHUB_REF_NAME" "$RUNNER_TEMP/latest.json" --clobber --repo "$GITHUB_REPOSITORY"
 
   # 安卓：和 CI 一样交叉编译核心库、Gradle 出 release 包，但用正式密钥签名（密钥在仓库的 Secrets 里，见 docs/RELEASING.md），
   # 这样它能覆盖安装手机上已有的正式版。和 Mac 包并行编；打标签时由下面的 android-upload 放进 Release。

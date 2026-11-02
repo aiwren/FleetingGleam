@@ -33,8 +33,8 @@ Release 一律先创建成**草稿**，你检查过安装包再手动点“Publi
    ```
 
    工作流会先检查标签和 `tauri.conf.json` 的版本是否一致，不一致会直接报错并停下。
-5. 在仓库的 **Actions** 页面看构建。成功后，到 **Releases** 里能看到一个草稿，里面有 Apple Silicon（`aarch64`）的 `.dmg`。
-6. 下载安装包，**自己装一遍、跑一遍**，确认没问题后点 **Publish release**。
+5. 在仓库的 **Actions** 页面看构建。成功后，到 **Releases** 里能看到一个草稿，里面有 Apple Silicon（`aarch64`）的 `.dmg`、更新包 `.app.tar.gz` + `.sig` + `latest.json`，以及安卓的 `FleetingGleam-android.apk`。
+6. 下载安装包，**自己装一遍、跑一遍**，确认没问题后点 **Publish release**。一发布，已装的应用下次启动就会提示更新（见"应用内更新"）。
 
 带连字符的标签（例如 `v0.2.0-beta.1`）会被标成“预发布”。
 
@@ -44,12 +44,58 @@ Release 一律先创建成**草稿**，你检查过安装包再手动点“Publi
 git tag -d v0.1.0 && git push --delete origin v0.1.0   # 删除标签，同时到 Releases 里删掉对应的草稿
 ```
 
+## 应用内更新
+
+两端的应用都会自己发现新版本并在"设置 › 关于"里更新，版本来源只有本仓库的 GitHub Releases（已发布的、非预发布的那个）：
+
+- **Mac**（Tauri 的 updater 插件）：读 `https://github.com/aiwren/FleetingGleam/releases/latest/download/latest.json`，里面写着新版本号、更新说明、`.app.tar.gz` 的地址和 minisign 签名。应用只接受用仓库里那把**公钥**（`tauri.conf.json` 的 `plugins.updater.pubkey`）验得过的更新包，然后下载、原地替换 `.app`、提示重启。
+- **Android**：读 GitHub 的公开接口 `releases/latest`，拿 `tag_name` 和已装的 `versionName` 比，新的就把 Release 里固定名字的 `FleetingGleam-android.apk` 下到应用私有目录，交给系统安装器（Android 会再确认一次，第一次要允许"安装未知应用"）。覆盖安装要求同一把签名密钥——所以 CI 必须用正式密钥签（见下面"Android 安装包"）。
+- 启动后几秒静默检查一次（设置里可关），离线或 GitHub 不通就当没有，不会弹错。更新说明来自 `CHANGELOG.md` 里这个版本的那一节（`.github/scripts/changelog-section.sh`），所以发版前务必把那一节写好。
+
+### 一次性配置：更新包的签名密钥（必须）
+
+密钥对由 `pnpm tauri signer generate` 生成，**私钥不进仓库**。本机的那份在：
+
+| 文件 | 内容 |
+|---|---|
+| `~/.config/fleetinggleam/updater.key` | 私钥（已加密） |
+| `~/.config/fleetinggleam/updater.key.password` | 私钥的密码 |
+| `~/.config/fleetinggleam/updater.key.pub` | 公钥（和 `tauri.conf.json` 里的一致） |
+
+把它们存进仓库 Secrets（用 aiwren 身份，在**你自己的终端**里跑；屏幕上不显示任何值）：
+
+```bash
+R=aiwren/FleetingGleam
+gh secret set TAURI_SIGNING_PRIVATE_KEY --repo $R < ~/.config/fleetinggleam/updater.key
+gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD --repo $R < ~/.config/fleetinggleam/updater.key.password
+gh secret list --repo $R
+```
+
+没配这两个 Secret，发布工作流的 Mac 任务会直接失败（没签名的更新包任何已装的应用都不会接受）。**私钥或密码丢了就再也签不出已装应用认的更新包**，只能换公钥发一个用户手动安装的版本；请在密码管理器里另存一份。
+
+### 发布时 CI 做了什么
+
+1. `tauri-action` 构建 `.dmg`，同时（`createUpdaterArtifacts: true`）打出 `FleetingGleam.app.tar.gz` 和它的 `.sig`，一起传进草稿 Release，并生成 `latest.json`。
+2. "整理 latest.json 的更新说明"一步把 `latest.json` 的 `notes` 换成 CHANGELOG 那一节，重新上传。
+3. Release 正文也带上同一段"更新内容"；Android 端显示的就是正文里 `## 更新内容` 之后的部分。
+
+**草稿期间没有人会收到更新**：`releases/latest` 只指向已发布的版本。你点 Publish 之后，已装的应用下次启动就会看到。
+
+### 本地验证更新流程
+
+调试构建可以把清单指到本机（正式包只认 GitHub）：
+
+- Mac：先编两个调试包——当前版本的 `.app`，和用 `--config '{"version":"0.2.0"}'` 编的"新版本"（它的 `.app.tar.gz` 与 `.sig` 就是更新包）。打更新包要私钥：`export TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.config/fleetinggleam/updater.key)" TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$(cat ~/.config/fleetinggleam/updater.key.password)"`（tauri-cli 2.11 只认这个变量，值是私钥文件的内容；`scripts/release.sh` 会自动读）。再用 `FG_UPDATE_ENDPOINT=http://127.0.0.1:8787/latest.json` 启动旧的那个（直接跑 `Contents/MacOS/fleetinggleam`），调试构建允许 http。假的 `.app.tar.gz` 用 `pnpm tauri signer sign -k ~/.config/fleetinggleam/updater.key -p "$(cat ~/.config/fleetinggleam/updater.key.password)" <文件>` 签名，签名串写进 `latest.json`。
+- Android：调试包读 `files/update_url`：`adb shell "run-as com.fleetinggleam.android sh -c 'echo http://10.0.2.2:8787/release.json > files/update_url'"`，JSON 的格式和 GitHub 的 `releases/latest` 一样（`tag_name`、`body`、`assets[].name/browser_download_url/size`）。调试清单允许明文 HTTP，正式包不允许。
+- 界面本身在浏览器里就能看：`http://localhost:1420/?mock&update`（`&update=fail` 看"没查到"）。
+
 ## 在仓库里配置
 
-**Settings → Secrets and variables → Actions**。下面全部是**可选**的：不配置，构建照样成功，只是得到未签名的安装包，工作流会在日志里用黄色警告告诉你。
+**Settings → Secrets and variables → Actions**。更新包的签名密钥（上一节）是**必须**的；下面这些是**可选**的：不配置，构建照样成功，只是得到未签名的安装包，工作流会在日志里用黄色警告告诉你。
 
 | 名称 | 类型 | 作用 |
 |---|---|---|
+| `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Secret | **必须**。更新包的 minisign 私钥与密码（见"应用内更新"） |
 | `APPLE_CERTIFICATE` | Secret | Developer ID Application 证书（`.p12` 文件的 base64） |
 | `APPLE_CERTIFICATE_PASSWORD` | Secret | 上述证书的密码 |
 | `APPLE_SIGNING_IDENTITY` | Secret | 例如 `Developer ID Application: 你的名字 (TEAMID)` |

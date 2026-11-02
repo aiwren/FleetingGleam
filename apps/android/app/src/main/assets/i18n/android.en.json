@@ -67,7 +67,13 @@
    "mirrorClearTitle": "Clear the local copy of “{{name}}”?",
    "mirrorClearBody": "The project “{{project}}” is open and uses this copy. After clearing, its photos are fetched again from the source, and full-size views are unavailable until then. Analysis results are kept.",
    "cullTitle": "Culling",
-   "autoAdvanceDesc": "In the viewer, go to the next photo; on the wall, select the next one."
+   "autoAdvanceDesc": "In the viewer, go to the next photo; on the wall, select the next one.",
+   "updateInstallHint": "After the download the system installer takes over and asks once more; the first time, allow FleetingGleam to install apps.",
+   "updateAllow": "Allow installing",
+   "updateAllowDesc": "Android does not yet allow FleetingGleam to install apps. Tap to open the system setting, then come back and tap Install.",
+   "updateInstallNow": "Install",
+   "updateReadyAndroid": "{{version}} is downloaded ({{size}}); tap Install to hand it to the system.",
+   "updateRetry": "Retry"
   },
   "cull": {
    "hint": "Tap a photo to select it; the bar below keeps, rejects or opens it. In single view, push up to keep and pull down to reject.",

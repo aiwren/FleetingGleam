@@ -468,6 +468,22 @@ w.__TAURI_INTERNALS__ = {
       case "cache_size": return 48_300_000;
       case "clear_cache": return null;
       case "plugin:app|version": return "0.1.0";
+      // 应用内更新：`?mock&update` 时假装 GitHub 上有 0.2.0（`&update=fail` 假装没查到）；下载走两秒的假进度，"重启"就是刷新页面
+      case "update_check": {
+        await sleep(600);
+        const want = new URLSearchParams(location.search).get("update");
+        if (want === null) return null;
+        if (want === "fail") throw new Error("mock: GitHub unreachable");
+        return { version: "0.2.0", current: "0.1.0", notes: "## 0.2.0\n\n### 新增\n- 应用内更新：设置 › 关于里检查、下载并安装新版本。\n- **大 RAW 秒开**：查看器先取相机内嵌预览。\n\n### 修复\n- 对比布局的同步放大。", date: new Date().toISOString() };
+      }
+      case "update_install": {
+        const total = 48_000_000;
+        for (let done = 0; done < total; done += total / 25) { await sleep(80); emit("update-progress", { done: Math.min(done, total), total }); }
+        emit("update-downloaded", null);
+        await sleep(700);
+        return null;
+      }
+      case "update_restart": { location.reload(); return null; }
       default: return null;
     }
   },

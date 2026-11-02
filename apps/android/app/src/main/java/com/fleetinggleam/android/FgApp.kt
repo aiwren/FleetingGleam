@@ -32,6 +32,9 @@ class FgApp : Application() {
         Backup.watch()
         Session.init(this)
         Scans.init(this)
+        // 应用内更新：几秒后在后台问一次 GitHub 有没有新版本（设置里可关；查不到就算了）
+        com.fleetinggleam.android.core.Updates.init(this)
+        com.fleetinggleam.android.core.Updates.scheduleAutoCheck()
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             Styles.refresh()
             Projects.load()

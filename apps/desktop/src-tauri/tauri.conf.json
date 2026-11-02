@@ -40,6 +40,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "macOS": { "minimumSystemVersion": "15.0" }
+    "macOS": { "minimumSystemVersion": "15.0" },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFGOTZFRjNDNDAxMkZDODgKUldTSS9CSkFQTytXcjhyUFRLTG9jd2VUVEd5a0NWdXRBa0laeVUvS2I1bU96ZHpSUDhNU2R2bSsK",
+      "endpoints": ["https://github.com/aiwren/FleetingGleam/releases/latest/download/latest.json"]
+    }
   }
 }

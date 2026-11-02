@@ -25,6 +25,12 @@ import Select from "../components/Select";
 import { LANGS, Pref, setPref, storedPref } from "../i18n";
 import { type Settings as AppSettings, Effects, Theme, bumpCacheRev, setSettings, useScanInfo, useSettings } from "../settings";
 import { ACTIONS, Action, PRESETS, Preset, checkBinding, conflicts, isBindable, keyFor, keyVars, resetKeymap, setBinding, setPreset, useKeymap } from "../keymap";
+import { checkForUpdate, installUpdate, restartToUpdate, useUpdate } from "../updater";
+
+/** 更新说明（Release 正文的 Markdown）压成几行平实的文字：去掉标题的井号、加粗的星号，列表项换成圆点。 */
+function plainNotes(md: string): string {
+  return md.replace(/\r/g, "").split("\n").map((l) => l.replace(/^#{1,6}\s*/, "").replace(/^\s*[-*]\s+/, "• ").replace(/\*\*/g, "")).join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
 
 
 // 分组不再逐个入场，整页一次淡入（M9.8）
@@ -78,6 +84,29 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
     { id: "sec-about", label: t("settings.about") },
   ];
   const [current, setCurrent] = useState(sections[0].id);
+  const upd = useUpdate();
+  const updInfo = "info" in upd ? upd.info : null;
+  const updDesc = upd.status === "latest" ? t("settings.updateLatest")
+    : upd.status === "failed" ? t("settings.updateFailed")
+    : upd.status === "ready" && updInfo ? t("settings.updateReady", { version: updInfo.version })
+    : updInfo ? t("settings.updateFound", { version: updInfo.version, current: updInfo.current })
+    : t("settings.updateIdle");
+  const updBox = updInfo && upd.status !== "ready" ? (
+    <div className="upd-box">
+      {updInfo.notes && <div className="upd-notes"><b>{t("settings.updateNotes")}</b><pre>{plainNotes(updInfo.notes)}</pre></div>}
+      {upd.status === "downloading" || upd.status === "installing" ? (
+        <div className="upd-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={upd.status === "downloading" && upd.total ? Math.round(upd.done / upd.total * 100) : undefined}>
+          <div className={`bar${upd.status === "downloading" && upd.total ? " live" : ""}`}><i style={{ width: upd.status === "installing" ? "100%" : upd.total ? `${Math.min(100, upd.done / upd.total * 100)}%` : "100%" }} /></div>
+          <span className="ash">{upd.status === "installing" ? t("settings.updateInstalling") : `${t("settings.updateDownloading")} ${upd.total ? `${fmtBytes(i18n.language, upd.done)} / ${fmtBytes(i18n.language, upd.total)}` : fmtBytes(i18n.language, upd.done)}`}</span>
+        </div>
+      ) : (
+        <div className="upd-actions">
+          {upd.status === "error" && <span className="ash">{t("settings.updateError", { error: upd.error })}</span>}
+          <button className="btn primary" onClick={() => void installUpdate()}>{t("settings.updateInstall")}</button>
+        </div>
+      )}
+    </div>
+  ) : undefined;
 
   useEffect(() => {
     if (!active) return;
@@ -655,8 +684,16 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
                   </button>
                 ));
               })()}
-              <Row label={t("settings.aboutVersion")}>
-                <span className="mono ash">{version ? `v${version} (${__BUILD__})` : ""}</span>
+              {/* 版本与更新：一行版本号 + "检查更新"；发现新版本时下面展开版本、更新说明、"下载并安装"与进度；装好后换成"现在重启" */}
+              <Row label={t("settings.aboutVersion")} desc={updDesc} below={updBox}>
+                <span className="sctl-pair">
+                  <span className="mono ash">{version ? `v${version} (${__BUILD__})` : ""}</span>
+                  {upd.status === "ready" ? <button className="btn on" onClick={() => void restartToUpdate()}>{t("settings.updateRestart")}</button>
+                    : <button className="btn" disabled={upd.status === "checking" || upd.status === "downloading" || upd.status === "installing"} onClick={() => void checkForUpdate(false)}>{upd.status === "checking" ? t("settings.updateChecking") : t("settings.updateCheck")}</button>}
+                </span>
+              </Row>
+              <Row label={t("settings.autoUpdate")} desc={t("settings.autoUpdateDesc")}>
+                <button className="switch" role="switch" aria-checked={s.autoUpdate} aria-label={t("settings.autoUpdate")} onClick={() => setSettings({ autoUpdate: !s.autoUpdate })} />
               </Row>
               <Row label={t("settings.diag")} desc={diagMsg?.text ?? t("settings.diagDesc")} info={<p className="ash">{t("settings.diagInfo")}</p>}>
                 <span className="sctl-pair">

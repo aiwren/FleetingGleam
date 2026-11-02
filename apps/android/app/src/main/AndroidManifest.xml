@@ -15,6 +15,8 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROCESSING" />
+    <!-- 应用内更新：不在应用商店，新版本的 APK 从 GitHub Releases 下到私有缓存后交给系统安装器（用户要先允许"安装未知应用"） -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- 允许用 simpleperf / Perfetto 对发布包采样（不是 debuggable；Google 建议发布包都这么标） -->
     <!-- 关于页的半屏浏览器要找到支持 Custom Tabs 的浏览器（Android 11+ 的包可见性） -->
@@ -54,5 +56,15 @@
             android:name=".service.DownloadService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <!-- 把下好的更新包（cache/updates/）给系统安装器读（core/Updates.kt） -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.updates"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/update_paths" />
+        </provider>
     </application>
 </manifest>

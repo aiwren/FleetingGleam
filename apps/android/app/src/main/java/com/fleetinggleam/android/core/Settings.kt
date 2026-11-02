@@ -32,6 +32,8 @@ data class AppSettings(
     val autoAdvance: Boolean = true,
     /** 界面动效：`full` 完整 / `calm` 克制（判定的星光、光圈不播，提示类浮层更淡）。和桌面端同名。 */
     val effects: String = "full",
+    /** 启动后几秒在后台问一次 GitHub Releases 有没有新版本（Updates.kt）。和桌面端同名。 */
+    val autoUpdate: Boolean = true,
 )
 
 object Settings {
