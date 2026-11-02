@@ -303,6 +303,15 @@ pub fn analyze(
 
 /// A quick preview thumbnail (used before analysis, so the confirmation screen never has to decode originals in the UI).
 pub fn quick_thumb(src: &Path, out: &Path) -> Result<(), String> {
+    // 大 RAW 秒开（A7）：分析前的预览缩略图先从 RAW 内嵌的 JPEG 预览缩出来（几十毫秒），不等几秒钟的完整解码；
+    // 正式分析时会用完整解码的那张把它换掉
+    if crate::imageio::is_raw(src) {
+        if let Some(e) = crate::rawpreview::embedded_jpeg(src, None) {
+            if let Ok(img) = image::load_from_memory_with_format(&e.bytes, image::ImageFormat::Jpeg) {
+                return fast_resize(&rotate_image(img, e.rotation), THUMB_SIZE).into_rgb8().save(out).map_err(|e| e.to_string());
+            }
+        }
+    }
     let (full, _, _) = load_with_size(src, ANALYZE_SIZE)?;
     let work = fast_resize(&full, ANALYZE_SIZE);
     // 缩略图也走 SIMD 缩小（`image::thumbnail` 是标量的）
