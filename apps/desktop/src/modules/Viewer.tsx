@@ -9,6 +9,7 @@ import { useLarge } from "../largeSrc";
 import { Decision, Photo, State, pct, thumbSrc } from "../types";
 import PhotoTags from "../components/PhotoTags";
 import Stars from "../components/Stars";
+import { actionOf, keyFor, keyVars, useKeymap } from "../keymap";
 
 type Props = {
   /** false while another page is in front: the keys belong to it then */
@@ -197,6 +198,7 @@ export default function Viewer({ photo, decision, index, total, onClose, onStep,
   const [liveMenu, setLiveMenu] = useState(false);
   /** 快捷键气泡：按 ? 打开（底部不再常驻那一行提示——M7.2）。 */
   const [help, setHelp] = useState(false);
+  const km = useKeymap(); // 按钮提示和帮助气泡里显示的键
   /** Opening a Live photo plays it once by itself, silently; playing it from the menu has sound. */
   const [quiet, setQuiet] = useState(false);
   const startMotion = async (silent = false) => {
@@ -366,11 +368,10 @@ export default function Viewer({ photo, decision, index, total, onClose, onStep,
     else if (k === "+" || k === "=") { ease(); zoom(1.4); }
     else if (k === "-") { ease(); zoom(1 / 1.4); }
     else if (k === "0") reset();
-    else if (k === "m") void playMotion();
     else if ((e.metaKey || e.ctrlKey) && (e.key === "]" || e.key === "[")) { e.preventDefault(); onRotate(e.key === "]" ? 1 : -1); }
-    else if (k === "p") onDecide("keep");
-    else if (k === "r") onDecide("review");
-    else if (k === "x") onDecide("reject");
+    // 判定键和播放实况读设置里的快捷键表（keymap.ts）
+    else if (actionOf(e) === "motion") void playMotion();
+    else if (actionOf(e)) onDecide(actionOf(e) as State);
     // 数字键 1–5 打星，再按一次取消（0 在这里是复位缩放）
     else if (/^[1-5]$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey) { const n = Number(e.key); onRate(stars === n ? null : n); }
   };
@@ -456,7 +457,7 @@ export default function Viewer({ photo, decision, index, total, onClose, onStep,
         )}
         <span className="mono ash">{index + 1} / {total} · <span ref={pctRef}>100%</span></span>
         <div className="viewer-actions">
-          {btn("keep", "P")}{btn("review", "R")}{btn("reject", "X")}
+          {btn("keep", keyFor("keep", km))}{btn("review", keyFor("review", km))}{btn("reject", keyFor("reject", km))}
           <i className="tb-sep" aria-hidden />
           <Stars value={stars} onChange={onRate} size={15} dark />
           <i className="tb-sep" aria-hidden />
@@ -466,7 +467,7 @@ export default function Viewer({ photo, decision, index, total, onClose, onStep,
           <button className={`vbtn icon ${help ? "on" : ""}`} onClick={() => setHelp((v) => !v)} aria-label={t("viewer.help")} data-tip={`${t("viewer.help")} · ?`}>?</button>
         </div>
       </div>
-      {help && <div className="vhelp mono" role="dialog" onClick={() => setHelp(false)}>{t("viewer.hint")}</div>}
+      {help && <div className="vhelp mono" role="dialog" onClick={() => setHelp(false)}>{t("viewer.hint", keyVars(km))}</div>}
       <div
         className="viewer-stage" ref={stageRef}
         style={{ cursor: scale > 1 ? (dragging ? "grabbing" : "grab") : "zoom-in" }}

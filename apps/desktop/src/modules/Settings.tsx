@@ -24,6 +24,7 @@ import Segmented from "../components/Segmented";
 import Select from "../components/Select";
 import { LANGS, Pref, setPref, storedPref } from "../i18n";
 import { type Settings as AppSettings, Theme, bumpCacheRev, setSettings, useScanInfo, useSettings } from "../settings";
+import { ACTIONS, Action, PRESETS, Preset, checkBinding, conflicts, isBindable, keyFor, keyVars, resetKeymap, setBinding, setPreset, useKeymap } from "../keymap";
 
 
 // 分组不再逐个入场，整页一次淡入（M9.8）
@@ -55,6 +56,7 @@ function Row({ label, desc, children, info, below }: { label: string; desc?: str
 export default function Settings({ active, onOpenStyles }: { active: boolean; onOpenStyles: () => void }) {
   const { t, i18n } = useTranslation();
   const s = useSettings();
+  const km = useKeymap(); // 快捷键分组和"还没学习"那句里显示的键
   const info = useScanInfo();
   const [pref, setPrefState] = useState<Pref>(storedPref());
   const [cache, setCache] = useState<number | null>(null);
@@ -67,6 +69,7 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
   const scrollRef = useRef<HTMLDivElement>(null);
   const sections = [
     { id: "sec-general", label: t("settings.general") },
+    { id: "sec-keys", label: t("settings.keys") },
     { id: "sec-performance", label: t("settings.analysis") },
     { id: "sec-personal", label: t("settings.personal") },
     { id: "sec-data", label: t("settings.data") },
@@ -310,7 +313,39 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
     setDiagBusy(false);
   };
   const clipLabel = !info ? "—" : info.clip === null ? t("settings.off") : info.clip.startsWith("gpu") || info.clip.startsWith("coreml") ? t("settings.clipGpu") : t("settings.clipCpu");
-  const learnStatus = !prefs || prefs.labels === 0 ? t("settings.learnNone") : t("settings.learnStatus", { n: prefs.labels, k: prefs.keeps });
+  const learnStatus = !prefs || prefs.labels === 0 ? t("settings.learnNone", keyVars(km)) : t("settings.learnStatus", { n: prefs.labels, k: prefs.keeps });
+
+  // 快捷键（A7.4）：点"改"进入录制态，按一个键就设好；Esc 取消，⌫ 恢复预设的键。固定键和撞键的在行下面提示。
+  const [recording, setRecording] = useState<Action | null>(null);
+  const [keyErr, setKeyErr] = useState<{ action: Action; text: string } | null>(null);
+  useEffect(() => {
+    if (!recording || !active) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return; // ⌘, 之类的系统快捷键照常
+      e.preventDefault(); e.stopPropagation();
+      const k = e.key.toLowerCase();
+      if (k === "escape") { setRecording(null); setKeyErr(null); return; }
+      if (k === "backspace" || k === "delete") { setBinding(recording, null); setKeyErr(null); setRecording(null); return; }
+      if (!isBindable(k) && k.length !== 1) return; // Shift 之类的修饰键本身不算按键
+      const bad = checkBinding(recording, k);
+      if (bad) { setKeyErr({ action: recording, text: bad.kind === "fixed" ? t("settings.keysFixed", { key: k === " " ? t("inspector.space") : k.toUpperCase() }) : t("settings.keysConflict", { key: k.toUpperCase(), action: t(`keys.${bad.with}`) }) }); return; }
+      setBinding(recording, k); setKeyErr(null); setRecording(null);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [recording, active, t]);
+  useEffect(() => { if (!active) { setRecording(null); setKeyErr(null); } }, [active]);
+  const kmConflicts = conflicts(km);
+  /** 行下面的一句：录制中的说明、出错的提示，或者"已改" */
+  const keyDesc = (a: Action): string | undefined => {
+    if (recording === a) return keyErr?.action === a ? keyErr.text : t("settings.keysRecordingDesc");
+    if (keyErr?.action === a) return keyErr.text;
+    if (kmConflicts.has(a)) return t("settings.keysConflict", { key: keyFor(a, km), action: t(`keys.${[...kmConflicts].find((b) => b !== a && km[b] === km[a]) ?? a}`) });
+    const preset = PRESETS[s.keymap.preset][a];
+    if (km[a] !== preset) return t("settings.keysCustom", { key: preset.toUpperCase() });
+    return a === "motion" ? t("keys.motionDesc") : undefined;
+  };
+  const keysDefault = s.keymap.preset === "default" && Object.keys(s.keymap.custom ?? {}).length === 0;
 
   return (
     <div className="module" data-active={active}>
@@ -419,7 +454,25 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
               </Row>
             </Group>
 
-            <Group id="sec-performance" title={t("settings.analysis")} index={1}>
+            <Group id="sec-keys" title={t("settings.keys")} index={1}>
+              <Row label={t("settings.keysPreset")} desc={t("settings.keysPresetDesc")}>
+                <Segmented<Preset> id="keypreset" value={s.keymap.preset}
+                  options={[{ value: "default", label: t("keys.preset.default") }, { value: "left", label: t("keys.preset.left") }]}
+                  onChange={(v) => { setPreset(v); setRecording(null); setKeyErr(null); }} />
+              </Row>
+              {ACTIONS.map((a) => (
+                <Row key={a} label={t(`keys.${a}`)} desc={keyDesc(a)}>
+                  <kbd className={`keycap mono ${recording === a ? "recording" : ""} ${kmConflicts.has(a) || keyErr?.action === a ? "bad" : ""}`} aria-live="polite">{recording === a ? "…" : keyFor(a, km)}</kbd>
+                  <button className="btn" aria-pressed={recording === a} onClick={() => { setKeyErr(null); setRecording(recording === a ? null : a); }}>{recording === a ? t("settings.keysRecording") : t("settings.keysChange")}</button>
+                </Row>
+              ))}
+              <Row label={t("settings.keysReset")} desc={t("settings.keysResetDesc")}>
+                <button className="btn" disabled={keysDefault} onClick={() => { resetKeymap(); setRecording(null); setKeyErr(null); }}>{t("settings.keysReset")}</button>
+              </Row>
+              <p className="ash small srow-hint">{t("settings.keysFixedHint")}</p>
+            </Group>
+
+            <Group id="sec-performance" title={t("settings.analysis")} index={2}>
               <Row label={t("settings.analysisAuto")} desc={t("settings.analysisAutoDesc")}
                 info={(
                   <>

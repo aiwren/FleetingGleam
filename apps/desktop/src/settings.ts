@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import type { KeymapSetting } from "./keymap";
 
 export type Compute = "auto" | "cpu";
 export type Theme = "system" | "light" | "dark";
@@ -11,7 +12,7 @@ export type EyeMethod = "vision" | "mediapipe";
  * one for the whole app (the learned taste, search and grouping all compare embeddings, which only agree when one model made them), null until
  * the first analysis.
  */
-export type Settings = { compute: Compute; theme: Theme; learn: boolean; quality: Quality; search: boolean; customStyles: boolean; eyeMethod: EyeMethod; tier: Quality | null; /** counts the times a better model was chosen on purpose (the project in view is looked at again then) */ tierRev: number };
+export type Settings = { compute: Compute; theme: Theme; learn: boolean; quality: Quality; search: boolean; customStyles: boolean; eyeMethod: EyeMethod; tier: Quality | null; /** counts the times a better model was chosen on purpose (the project in view is looked at again then) */ tierRev: number; /** 快捷键：预设 + 逐个改过的键（keymap.ts） */ keymap: KeymapSetting };
 /** What the last analysis actually ran on, reported by the backend. */
 export type ScanInfo = { cpu_only: boolean; clip: string | null; model: string | null; vision: boolean; cores: number };
 
@@ -26,7 +27,7 @@ function read<T>(key: string, fallback: T): T {
 }
 function write(key: string, v: unknown) { try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* storage may be unavailable */ } }
 
-let state: Settings = read<Settings>(KEY, { compute: "auto", theme: "system", learn: true, quality: "fast", search: false, customStyles: false, eyeMethod: "vision", tier: null, tierRev: 0 });
+let state: Settings = read<Settings>(KEY, { compute: "auto", theme: "system", learn: true, quality: "fast", search: false, customStyles: false, eyeMethod: "vision", tier: null, tierRev: 0, keymap: { preset: "default", custom: {} } });
 // Someone who has analysed photos before keeps the model their results were made with (changing it would redo everything).
 (() => {
   try {

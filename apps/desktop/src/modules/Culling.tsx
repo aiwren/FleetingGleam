@@ -28,6 +28,7 @@ import { DUR, EASE_OUT, SPRING } from "../motion";
 import { newProjectFromDialog, openSamples, pickFolder, takeAutoStart } from "../projectActions";
 import { Project, getStore, setActive, trashProject, updateProject, useProjects, useProjectsStatus } from "../projects";
 import { getSettings, ScanInfo, setScanInfo, useSettings, useCacheRev } from "../settings";
+import { decisionOf, keyFor, keyVars, useKeymap } from "../keymap";
 import { Decision, Photo, Probe, ProbeFile, Reason, State, pct, thumbSrc } from "../types";
 import { NasProgress } from "../nas";
 import Organize from "./Organize";
@@ -96,6 +97,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const [hiddenSave, setHiddenSave] = useState<string | null>(null);
   const project: Project | null = store.projects.find((p) => p.id === store.activeId && !p.trashed) ?? null;
   const settings = useSettings();
+  const km = useKeymap(); // 提示文案里显示的判定键
 
   const [phase, setPhase] = useState<Phase>("idle");
   const phaseRef = useRef(phase);
@@ -935,15 +937,14 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
       const k = e.key.toLowerCase();
       if ((e.metaKey || e.ctrlKey) && k === "z") return; // 撤销 / 重做在上面单独处理（开着大图时也要能用）
       if ((e.metaKey || e.ctrlKey) && (e.key === "]" || e.key === "[")) { if (sel) { e.preventDefault(); rotate(sel.path, e.key === "]" ? 1 : -1); } return; }
-      if (phase === "done" && layout === "compare" && ["arrowright", "arrowleft", "p", "r", "x"].includes(k)) return; // Compare handles these itself (groups; the photo under the pointer)
+      const decision = decisionOf(e); // 判定键读设置里的快捷键表（keymap.ts）
+      if (phase === "done" && layout === "compare" && (k === "arrowright" || k === "arrowleft" || decision)) return; // Compare handles these itself (groups; the photo under the pointer)
       if (k === "escape" && multi.size) { setMulti(NONE); return; }
       if (k === "arrowright") { e.preventDefault(); move(1, e.shiftKey); }
       else if (k === "arrowleft") { e.preventDefault(); move(-1, e.shiftKey); }
       else if (onWall && ["arrowup", "arrowdown", "pageup", "pagedown", "home", "end"].includes(k)) { e.preventDefault(); moveRow(k, e.shiftKey); }
       else if (k === " " && sel) { e.preventDefault(); openViewer(sel.path); }
-      else if (k === "p") decideSel("keep");
-      else if (k === "r") decideSel("review");
-      else if (k === "x") decideSel("reject");
+      else if (decision) decideSel(decision);
       else if (/^[0-5]$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey) rateSel(e.key === "0" ? null : Number(e.key));
     };
     window.addEventListener("keydown", onKey);
@@ -1298,7 +1299,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
                   {sel ? (
                     <motion.div key="body" className="inspector-body" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.2, ease: EASE_OUT }}>
                       {/* 没有预览缩略图：它就是墙上带焦点框的那一张（M8.1）；名字行右边一个"放大" */}
-                      {multi.size > 1 && <p className="ash multi-note">{t("inspector.multi", { count: selection().length })}</p>}
+                      {multi.size > 1 && <p className="ash multi-note">{t("inspector.multi", { count: selection().length, ...keyVars(km) })}</p>}
                       <PhotoVerdict photo={sel} decision={decision} onDecide={decideSel} stars={starsOf[sel.path]} onRate={(n) => rate([{ path: sel.path, n }])} reasonText={reasonText}
                         scoreTip={<InfoPop title={t("inspector.overall")} width={280}><p className="ash">{t("inspector.scoreTip")}</p></InfoPop>}
                         onZoom={() => openViewer(sel.path)} />
@@ -1334,9 +1335,9 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
                       <p className="ash hints">
                         <span><kbd>←</kbd><kbd>→</kbd> {t("inspector.hintMove")}</span>
                         <span><kbd>{t("inspector.space")}</kbd> {t("inspector.hintZoom")}</span>
-                        <span><kbd>P</kbd> {t("state.keep")}</span>
-                        <span><kbd>R</kbd> {t("state.review")}</span>
-                        <span><kbd>X</kbd> {t("state.reject")}</span>
+                        <span><kbd>{keyFor("keep", km)}</kbd> {t("state.keep")}</span>
+                        <span><kbd>{keyFor("review", km)}</kbd> {t("state.review")}</span>
+                        <span><kbd>{keyFor("reject", km)}</kbd> {t("state.reject")}</span>
                       </p>
                     </motion.div>
                   )}
@@ -1350,7 +1351,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
       <AnimatePresence>
         {project && phase === "done" && hintUses < 4 && !sceneView && (layout === "justified" || layout === "grid") && (
           <motion.div className="hintcard" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: DUR.base, ease: EASE_OUT, delay: 0.6 }}>
-            <span>{t("cull.hint")}</span>
+            <span>{t("cull.hint", keyVars(km))}</span>
             <button onClick={() => bumpHint(99)}>{t("cull.hintDismiss")}</button>
           </motion.div>
         )}
