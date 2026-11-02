@@ -5,6 +5,7 @@
 | 什么时候 | 跑什么 | 结果 |
 |---|---|---|
 | 每次推送到 `main`、每个 Pull Request | [`ci.yml`](../.github/workflows/ci.yml) | 只做检查：落地页类型检查与构建；桌面前端构建、`cargo check`、`cargo test`（含 Android 绑定 crate 在宿主上的测试）；Android 目标的 `cargo check` 与 Gradle `assembleRelease`。不发布任何东西 |
+| 推送到 `main` 且 `apps/web/` 有改动 | [`deploy-web.yml`](../.github/workflows/deploy-web.yml) | 构建落地页并部署到 Cloudflare（要先配两个 Cloudflare Secret，见"部署落地页"） |
 | 推送形如 `v0.1.0` 的**版本标签** | [`release.yml`](../.github/workflows/release.yml) | 在 macOS 上构建 `.dmg`、在 Linux 上构建正式签名的安卓 `.apk`，创建一个**草稿** GitHub Release，两个都传上去。也能在 Actions 页手动运行，那样只编安卓包检查签名，不碰 Release |
 
 **发布是由标签触发的，不是由某个“发布分支”触发的。** 日常提交到 `main` 不会打包；只有你主动打一个版本标签才会。这是开源项目里最常见的做法：标签就是版本的唯一标记，Release 页面上的每个版本都能对应到一个确切的提交。
@@ -99,6 +100,7 @@ gh secret list --repo $R
 | 名称 | 类型 | 作用 |
 |---|---|---|
 | `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Secret | **必须**。更新包的 minisign 私钥与密码（见"应用内更新"） |
+| `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` | Secret | 落地页自动部署（见"部署落地页"）；不配就只构建不部署 |
 | `APPLE_CERTIFICATE` | Secret | Developer ID Application 证书（`.p12` 文件的 base64） |
 | `APPLE_CERTIFICATE_PASSWORD` | Secret | 上述证书的密码 |
 | `APPLE_SIGNING_IDENTITY` | Secret | 例如 `Developer ID Application: 你的名字 (TEAMID)` |
@@ -178,7 +180,16 @@ gh release upload v<版本号> FleetingGleam-android.apk --clobber
 
 落地页（`apps/web`）构建时会预渲染成静态 HTML，由 Cloudflare 以“静态资源”的方式托管，没有服务端代码。配置在 [`apps/web/wrangler.jsonc`](../apps/web/wrangler.jsonc)。静态资源的请求在 Cloudflare 上免费且不限量。
 
-部署（或更新）一次，需要先用 `wrangler login` 登录自己的 Cloudflare 账号：
+**自动部署**：[`deploy-web.yml`](../.github/workflows/deploy-web.yml) 在推送到 `main` 且 `apps/web/` 有改动时构建并 `wrangler deploy`，也能在 Actions 页手动运行（"Deploy web" → Run workflow）。只需一次性配两个 Secret（用 aiwren 身份，同上面"应用内更新"的做法）：
+
+| 名称 | 值从哪来 |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | Cloudflare 控制台 → 右上角头像 → My Profile → API Tokens → Create Token → 选 **Edit Cloudflare Workers** 模板，账户选部署落地页的那个，生成后复制（只显示一次） |
+| `CLOUDFLARE_ACCOUNT_ID` | `pnpm dlx wrangler@4.146.0 whoami` 打出的 Account ID，或 Cloudflare 控制台 Workers 页右侧的 Account ID |
+
+没配齐时工作流只构建、用黄字提醒，不算失败。
+
+**手动部署**（不想等 CI，或在别的分支上试）：需要先用 `wrangler login` 登录自己的 Cloudflare 账号：
 
 ```bash
 pnpm build:web

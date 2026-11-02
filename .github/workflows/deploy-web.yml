@@ -1,0 +1,61 @@
+# 落地页（apps/web）自动部署到 Cloudflare：推送到 main 且落地页有改动时构建并 `wrangler deploy`；也能在 Actions 页手动运行。
+# 需要仓库 Secrets：CLOUDFLARE_API_TOKEN（Cloudflare 里用"编辑 Cloudflare Workers"模板建的令牌）与 CLOUDFLARE_ACCOUNT_ID。
+# 没配就只构建、在日志里黄字提醒，不算失败（见 docs/RELEASING.md 的"部署落地页"）。
+name: Deploy web
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/web/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/deploy-web.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 同一时间只部署一次；新的推送来了，取消还没跑完的旧部署（最后一次推送的内容才是要上线的）
+concurrency:
+  group: deploy-web
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: 构建并部署落地页
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      # pnpm 版本取自根目录 package.json 的 packageManager 字段
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @fleetinggleam/web exec tsc --noEmit
+      - run: pnpm build:web
+
+      - name: 检查部署密钥
+        id: creds
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::仓库 Secrets 里缺 CLOUDFLARE_API_TOKEN 或 CLOUDFLARE_ACCOUNT_ID：只构建，没有部署。配置方法见 docs/RELEASING.md 的“部署落地页”。"
+          fi
+
+      - name: 部署到 Cloudflare
+        if: steps.creds.outputs.ok == 'true'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/web
+          # 和 docs/RELEASING.md 里手动部署用的同一个版本
+          wranglerVersion: "4.146.0"
+          command: deploy
