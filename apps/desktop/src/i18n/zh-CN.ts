@@ -65,7 +65,8 @@ const zh = {
     pickModeBestDesc: "只看分数,把最好的留下。", pickModeDiverseDesc: "不同场景都留一点,记录更完整。",
     filters: "筛选", status: "状态", scenes: "场景", people: "人物", clearFilter: "清除", sceneCount: "{{count}} 张", personCount: "{{count}} 张照片", allScenes: "查看全部 {{count}} 个场景", describe: "为其余场景生成描述", describing: "正在描述场景 {{done}}/{{total}}", resizeHint: "拖动调整宽度，双击恢复", backToPhotos: "返回照片", morePeople: "展开全部 {{count}} 人", fewer: "收起", noPeopleHere: "这个筛选下没有识别到的人物",
   },
-  file: { title: "文件信息", format: "格式", size: "文件大小", pixels: "像素", color: "色彩空间", depth: "位深", camera: "相机", lens: "镜头", exposure: "拍摄参数", taken: "拍摄时间", files: "包含文件" },
+  file: { title: "文件信息", format: "格式", size: "文件大小", pixels: "像素", color: "色彩空间", depth: "位深", camera: "相机", lens: "镜头", exposure: "拍摄参数", taken: "拍摄时间", files: "包含文件",
+    shutter: "快门", aperture: "光圈", focal: "焦距", bias: "曝光补偿", wb: "白平衡", flash: "闪光", metering: "测光", program: "曝光程序", jpgOnly: "JPG ONLY", rawJpg: "RAW + JPG", rawOnly: "RAW ONLY" },
   single: { pagePrev: "上一页", pageNext: "下一页", prev: "上一张", next: "下一张" },
   search: { label: "搜索照片", placeholder: "搜索照片：烟花、两个人、雨伞…", globalPlaceholder: "搜索所有项目里的照片", clear: "清除", indexing: "正在为搜索建立索引 {{pct}}%", none: "没有找到「{{q}}」", noneHint: "试试换个说法，比如描述画面里的东西或场景。", inProject: "在「{{name}}」", results: "{{count}} 张" },
   models: {
@@ -154,9 +155,9 @@ const zh = {
   },
   tag: { raw: "RAW", format: "", hdr: "HDR", motion: "实况", long: "长图", rawTip: "相机原始文件，按拍摄时的原始数据显示", hdrTip: "高动态范围：按拍摄时的亮度和色彩显示", motionTip: "实况照片：里面带一小段视频，放大后点“实况”播放", longTip: "长图（全景或竖长图）", formatTip: "" },
   viewer: { navigator: "当前查看的区域", navigatorHint: "拖动方框移动视野", liveOff: "关闭实况", liveOn: "开启实况", replayMotion: "重新播放", playMotion: "播放实况", stopMotion: "停止播放", strip: "所有照片",
-    close: "关闭", overall: "综合", ai: "AI 观感", sharp: "清晰度", expo: "曝光", help: "快捷键",
+    close: "关闭", overall: "综合", ai: "AI 观感", sharp: "清晰度", expo: "曝光", help: "快捷键", info: "拍摄信息",
     rotate: "旋转", rotateTip: "顺时针转 90°（⌘]；⌘[ 反向）。只改显示，原文件不动。",
-    hint: "滚轮缩放 · 拖动平移 · 双击放大 · ← → 切换 · P / R / X 判定 · 1–5 打星 · ⌘] 旋转",
+    hint: "滚轮缩放 · 拖动平移 · 双击放大 · ← → 切换 · P / R / X 判定 · 1–5 打星 · I 拍摄信息 · ⌘] 旋转",
   },
   reason: {
     blur: "主体清晰度不足，疑似虚焦或手抖",

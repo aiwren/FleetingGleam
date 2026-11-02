@@ -47,6 +47,8 @@ export type Photo = {
 const RAW_EXT = new Set(["dng", "cr2", "cr3", "crw", "nef", "nrw", "arw", "srf", "sr2", "raf", "orf", "rw2", "pef", "srw", "x3f", "3fr", "erf", "kdc", "mef", "mos", "mrw", "raw", "rwl", "iiq", "fff", "dcr", "k25", "rwz"]);
 const FORMAT_TAG = new Set(["heic", "heif", "avif", "jxl", "tif", "tiff", "bmp", "gif"]);
 const extOf = (p: Photo) => (p.path.split(".").pop() ?? "").toLowerCase();
+/** 按扩展名判断一个路径是不是 RAW 原片（EXIF 卡的角标用）。 */
+export const isRawPath = (path: string) => RAW_EXT.has((path.split(".").pop() ?? "").toLowerCase());
 
 /** The small picture of a photo (the web view shows it as standard range; the full-size viewer shows the real HDR). */
 export const thumbSrc = (p: Photo) => convertFileSrc(p.thumb);

@@ -378,7 +378,8 @@ w.__TAURI_INTERNALS__ = {
         return q;
       }
       case "backup_peek": return null;
-      case "photo_info": return { format: "JPEG", bytes: 9_400_000, color_space: "sRGB", bit_depth: "8, 8, 8", camera: "FUJIFILM X-T5", lens: "XF35mmF1.4 R", focal: "35 mm", aperture: "f/2", shutter: "1/250 s", iso: "400", software: null, taken: "2026-04-17 18:22:31" };
+      case "photo_info": return { format: "JPEG", bytes: 9_400_000, color_space: "sRGB", bit_depth: "8, 8, 8", camera: "FUJIFILM X-T5", lens: "XF35mmF1.4 R", focal: "35 mm", focal_35: "52 mm", aperture: "f/2", shutter: "1/250 s", iso: "400", software: null, taken: "2026-04-17 18:22",
+        exposure_bias: "+0.3 EV", white_balance: "Auto", flash: "Off", metering: "Multi", exposure_program: "A", files: [{ path: String(args.path), bytes: 9_400_000 }, { path: String(args.path).replace(/\.\w+$/, ".RAF"), bytes: 31_200_000 }] };
       case "machine_info": return { memory_gb: 32, cores: 10 };
       case "packs_status": return (["standard", "high", "ultra", "search", "eyes", "faces", "scenetext"] as const).map((id) => ({ id, installed: packState[id], bytes: 0 }));
       case "pack_size": return { standard: 266_000_000, high: 609_000_000, ultra: 870_000_000, search: 139_000_000, eyes: 7_000_000, faces: 39_000_000, scenetext: 400_000_000 }[String(args.id) as "standard"];

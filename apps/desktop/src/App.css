@@ -1063,6 +1063,22 @@ html[data-mock] .sidebar-wrap { background: var(--panel); }
 .kv .tags { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
 .kv .tags i { font-style: normal; padding: 1px 7px; border-radius: 6px; font-size: 11px; background: color-mix(in srgb, var(--ink) 8%, transparent); }
 
+/* ---- EXIF 卡（检查器的"文件信息"；查看器里按 i 浮出同一张，.dark）---- */
+.exif { position: relative; display: grid; gap: 12px; }
+.exif-kind { position: absolute; right: 0; top: -2px; padding: 1px 7px; border-radius: 4px; font-size: 10px; font-weight: 600; letter-spacing: .04em; color: var(--ash); background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.exif-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; padding-top: 18px; }
+.exif-grid > div { display: grid; gap: 1px; min-width: 0; padding: 8px 0 7px; border-radius: 8px; background: var(--surface); text-align: center; }
+.exif-grid b { font-weight: 600; font-size: 12px; letter-spacing: -.02em; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.exif-grid i { font-style: normal; font-size: 9.5px; color: var(--ash); white-space: nowrap; }
+.exif-grid small { font-size: 10.5px; color: var(--ash); letter-spacing: .02em; }
+.exif .kv:empty { display: none; }
+.exif-files dd small { display: inline; margin: 0 0 0 8px; }
+/* 深色版本：查看器的黑底上，表面与分隔线都用白色透明度 */
+.exif.dark { color: #f2f2f4; }
+.exif.dark .kv dt, .exif.dark .exif-grid i, .exif.dark .exif-grid small, .exif.dark .kv dd small, .exif.dark .exif-kind { color: rgba(242, 242, 244, .6); }
+.exif.dark .exif-grid > div { background: rgba(255, 255, 255, .08); }
+.exif.dark .exif-kind { background: rgba(255, 255, 255, .1); }
+
 /* ---- search box ---- */
 .sbox { position: relative; display: inline-flex; align-items: center; height: 30px; padding: 0 8px 0 0; border-radius: 9px; border: 1px solid var(--line); background: var(--surface); overflow: hidden; cursor: text; color: var(--ink); transition: border-color .2s, background .2s; }
 .sbox:hover, .sbox:focus-within { border-color: color-mix(in srgb, var(--ink) 30%, var(--line)); }
@@ -1519,6 +1535,8 @@ img { -webkit-user-drag: none; }
 .vclose:hover::after { opacity: 1; transition-delay: .3s; }
 .viewer .tb-sep { background: rgba(255, 255, 255, .16); }
 .vhelp { position: absolute; left: 50%; top: 60px; transform: translateX(-50%); z-index: 6; padding: 8px 14px; border-radius: 999px; background: rgba(30, 30, 34, .94); color: #f2f2f4; font-size: 11px; box-shadow: 0 12px 32px -8px rgba(0, 0, 0, .6), inset 0 0 0 1px rgba(255, 255, 255, .12); cursor: default; }
+/* 直接子元素会被上面的 `.viewer > *` 设成 relative，这里要压过它 */
+.viewer > .vinfo { position: absolute; right: 16px; top: 56px; z-index: 6; width: 300px; max-height: calc(100% - 140px); overflow: auto; padding: 14px 14px 12px; border-radius: 12px; background: rgba(30, 30, 34, .94); box-shadow: 0 12px 32px -8px rgba(0, 0, 0, .6), inset 0 0 0 1px rgba(255, 255, 255, .12); cursor: default; }
 .vcell { top: 10px; width: 56px; height: 56px; border-radius: 6px; opacity: .6; }
 .vcell.cur { transform: none; box-shadow: inset 0 0 0 2px #f2f2f4; }
 .vcell.reject { opacity: .4; }

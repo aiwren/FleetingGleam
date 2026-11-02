@@ -9,6 +9,7 @@ import { useLarge } from "../largeSrc";
 import { Decision, Photo, State, pct, thumbSrc } from "../types";
 import PhotoTags from "../components/PhotoTags";
 import Stars from "../components/Stars";
+import FileFacts from "../components/FileFacts";
 
 type Props = {
   /** false while another page is in front: the keys belong to it then */
@@ -197,6 +198,8 @@ export default function Viewer({ photo, decision, index, total, onClose, onStep,
   const [liveMenu, setLiveMenu] = useState(false);
   /** 快捷键气泡：按 ? 打开（底部不再常驻那一行提示——M7.2）。 */
   const [help, setHelp] = useState(false);
+  // EXIF 卡（按 i 开关，右上角浮一张跟检查器一样的小卡）
+  const [info, setInfo] = useState(false);
   /** Opening a Live photo plays it once by itself, silently; playing it from the menu has sound. */
   const [quiet, setQuiet] = useState(false);
   const startMotion = async (silent = false) => {
@@ -359,7 +362,9 @@ export default function Viewer({ photo, decision, index, total, onClose, onStep,
     if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable)) return;
     const k = e.key.toLowerCase();
     if (k === "escape" && help) { setHelp(false); return; }
+    if (k === "escape" && info) { setInfo(false); return; }
     if (k === "?") { setHelp((v) => !v); return; }
+    if (k === "i" && !e.metaKey && !e.ctrlKey && !e.altKey) { setInfo((v) => !v); return; }
     if (k === "escape" || k === " ") { e.preventDefault(); onClose(); }
     else if (k === "arrowright") onStep(1);
     else if (k === "arrowleft") onStep(-1);
@@ -463,10 +468,14 @@ export default function Viewer({ photo, decision, index, total, onClose, onStep,
           <button className="vbtn icon" onClick={() => onRotate(1)} aria-label={t("viewer.rotate")} data-tip={`${t("viewer.rotate")} · ⌘]`}>
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12.9 9.6A5 5 0 1 1 11.5 4.5M13.5 2.5v3.5H10" /></svg>
           </button>
+          <button className={`vbtn icon ${info ? "on" : ""}`} onClick={() => setInfo((v) => !v)} aria-label={t("viewer.info")} aria-pressed={info} data-tip={`${t("viewer.info")} · I`}>
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden><circle cx="8" cy="8" r="6.2" /><path d="M8 7.2v4M8 5.1v.1" /></svg>
+          </button>
           <button className={`vbtn icon ${help ? "on" : ""}`} onClick={() => setHelp((v) => !v)} aria-label={t("viewer.help")} data-tip={`${t("viewer.help")} · ?`}>?</button>
         </div>
       </div>
       {help && <div className="vhelp mono" role="dialog" onClick={() => setHelp(false)}>{t("viewer.hint")}</div>}
+      {info && <aside className="vinfo" role="dialog" aria-label={t("viewer.info")} onPointerDown={(e) => e.stopPropagation()}><FileFacts photo={photo} dark /></aside>}
       <div
         className="viewer-stage" ref={stageRef}
         style={{ cursor: scale > 1 ? (dragging ? "grabbing" : "grab") : "zoom-in" }}
