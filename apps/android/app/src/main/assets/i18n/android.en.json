@@ -180,6 +180,21 @@
   },
   "a11y": {
    "photo": "{{name}}, {{state}}"
+  },
+  "exif": {
+   "info": "Info",
+   "shutter": "Shutter",
+   "aperture": "Aperture",
+   "focal": "Focal",
+   "focal35": "35 mm equiv.",
+   "bias": "Exposure comp.",
+   "wb": "White balance",
+   "flash": "Flash",
+   "metering": "Metering",
+   "program": "Program",
+   "only": "{{fmt}} ONLY",
+   "rawPlus": "RAW + {{fmt}}",
+   "rawOnly": "RAW ONLY"
   }
  },
  "models": {

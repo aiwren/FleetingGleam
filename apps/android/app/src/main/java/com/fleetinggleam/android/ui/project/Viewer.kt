@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -143,6 +144,8 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, re
     var zoomed by remember { mutableStateOf(false) }
     var chrome by remember { mutableStateOf(true) }
     var info by remember { mutableStateOf(false) }
+    // 右上角浮着的 EXIF 小卡（"信息"按钮开关）；翻页时跟着换成当前这张
+    var exif by remember { mutableStateOf(false) }
     val enter = remember { Animatable(0f) }
     val drag = remember { Animatable(0f) }
     var stage by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
@@ -267,6 +270,7 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, re
                         }
                     }
                     Spacer(Modifier.weight(1f))
+                    com.fleetinggleam.android.ui.components.GlassIconBtn(Icons.EXIF, t("android.exif.info"), { exif = !exif }, on = exif)
                     if (!readOnly) {
                         com.fleetinggleam.android.ui.components.GlassIconBtn(Icons.ROTATE, t("viewer.rotate"), { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); scope.launch { runCatching { Session.rotate(photo.path) } } })
                         com.fleetinggleam.android.ui.components.GlassIconBtn(Icons.INSPECTOR, t("cull.inspector"), { info = true })
@@ -284,6 +288,13 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, re
                             }
                         }
                     }
+                }
+            }
+
+            // ---- 右上角的 EXIF 小卡：顶栏下面，窄一点；太长时自己滚
+            AnimatedVisibility(chrome && chromeIn && exif, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.TopEnd)) {
+                Box(Modifier.statusBarsPadding().padding(top = 60.dp, end = 12.dp, start = 12.dp)) {
+                    ExifCard(photo, Modifier.width(280.dp).heightIn(max = 460.dp).verticalScroll(rememberScrollState()), compact = true)
                 }
             }
 

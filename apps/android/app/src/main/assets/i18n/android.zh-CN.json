@@ -180,6 +180,21 @@
   },
   "a11y": {
    "photo": "{{name}}，{{state}}"
+  },
+  "exif": {
+   "info": "信息",
+   "shutter": "快门",
+   "aperture": "光圈",
+   "focal": "焦距",
+   "focal35": "等效焦距",
+   "bias": "曝光补偿",
+   "wb": "白平衡",
+   "flash": "闪光",
+   "metering": "测光",
+   "program": "曝光程序",
+   "only": "仅 {{fmt}}",
+   "rawPlus": "RAW + {{fmt}}",
+   "rawOnly": "仅 RAW"
   }
  },
  "models": {

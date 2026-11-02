@@ -88,9 +88,9 @@ fun InspectorBody(photo: Photo, decision: Decision?, mates: List<Photo>, onDecid
                     if (photo.faceCount > 0) add(t("inspector.faces") to t("inspector.faceValue", "count" to photo.faceCount, "q" to (photo.faceMin?.let { "%.2f".format(it) } ?: "—")))
                 }, mono = true)
             }
-            Box(Modifier.fillMaxWidth().height(0.5.dp).background(c.line))
-            FileSection(photo)
         }
+        // 完整 EXIF：拍摄四格、机身镜头与各项参数、包含的文件（LensLink 那张卡的样子，调研 2026-11）
+        ExifCard(photo)
     }
 }
 
@@ -241,7 +241,7 @@ fun Kv(rows: List<Pair<String, Any>>, mono: Boolean = false) {
 private val infoCache = ConcurrentHashMap<String, FileInfo>()
 
 @Composable
-private fun rememberInfo(path: String): FileInfo? {
+internal fun rememberInfo(path: String): FileInfo? {
     var info by remember(path) { mutableStateOf(infoCache[path]) }
     LaunchedEffect(path) {
         if (info != null) return@LaunchedEffect
@@ -251,35 +251,11 @@ private fun rememberInfo(path: String): FileInfo? {
 }
 
 /** EXIF 的日期写成 "2026:06:13 14:31:17"；按人写的样子显示，不要秒。 */
-private fun niceTime(v: String) = v.replace(Regex("^(\\d{4}):(\\d{2}):(\\d{2})"), "$1-$2-$3").replace(Regex(":\\d{2}$"), "")
+internal fun niceTime(v: String) = v.replace(Regex("^(\\d{4}):(\\d{2}):(\\d{2})"), "$1-$2-$3").replace(Regex(":\\d{2}$"), "")
 
 /** 曝光时间可能是很长的分数（"1/813.2157314956827 s"）：按人写的样子显示（"1/813 s"）。 */
-private fun niceShutter(v: String): String {
+internal fun niceShutter(v: String): String {
     Regex("^1/(\\d+(?:\\.\\d+)?)\\s*s?$").find(v)?.let { return "1/${Math.round(it.groupValues[1].toDouble())} s" }
     Regex("^(\\d+(?:\\.\\d+)?)\\s*s?$").find(v)?.let { return "${"%.2f".format(it.groupValues[1].toDouble()).trimEnd('0').trimEnd('.')} s" }
     return v
-}
-
-/** 文件信息（桌面端 FileFacts / FileSection）：收起时右边写着格式和大小。 */
-@Composable
-fun FileSection(photo: Photo) {
-    val info = rememberInfo(photo.path)
-    val hint = info?.let { listOfNotNull(it.format, fmtBytes(it.bytes)).joinToString(" · ") }
-    Accordion("M4 1.8h5l3 3V13a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1zM9 1.8V5h3", t("file.title"), hint) {
-        val mp = photo.width.toFloat() * photo.height / 1e6f
-        val color = info?.colorSpace?.takeIf { it != "Uncalibrated" }
-        val depth = info?.bitDepth?.let { "${it.split(",")[0].trim()} bit" }
-        val tags = listOfNotNull(info?.focal, info?.aperture, info?.shutter?.let { niceShutter(it) }, info?.iso?.let { "ISO $it" })
-        val rows = buildList<Pair<String, Any>> {
-            listOfNotNull(info?.format, info?.let { fmtBytes(it.bytes) }).joinToString(" · ").takeIf { it.isNotEmpty() }?.let { add(t("file.format") to it) }
-            add(t("file.pixels") to "${photo.width} × ${photo.height} · ${"%.1f".format(mp)} MP")
-            listOfNotNull(color, depth).joinToString(" · ").takeIf { it.isNotEmpty() }?.let { add(t("file.color") to it) }
-            (info?.camera ?: info?.lens)?.let { add(t("file.camera") to (it to info?.lens?.takeIf { _ -> info.camera != null })) }
-            if (tags.isNotEmpty()) add(t("file.exposure") to tags)
-            info?.taken?.let { add(t("file.taken") to niceTime(it)) }
-            // RAW + JPG 配对：这张实际由哪几个文件组成
-            if (photo.companions.isNotEmpty()) add(t("file.files") to (listOf(photo.path) + photo.companions).map { it.substringAfterLast('/') })
-        }
-        Kv(rows)
-    }
 }
