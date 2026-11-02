@@ -4,6 +4,8 @@
 
 **A local-first photo culling app for macOS and Android.** It groups the bursts in thousands of photos, picks the best frame in each group and shows you why. Your photos never leave your own devices.
 
+**Website:** [fleetinggleam.fleetinggleam-web.workers.dev](https://fleetinggleam.fleetinggleam-web.workers.dev) · **Download:** [latest release](https://github.com/aiwren/FleetingGleam/releases/latest)
+
 <p align="center">
   <img src="apps/web/public/shots/wall-dark-1200.webp" alt="The FleetingGleam photo wall: frames of one moment sit together and the best one carries a gold star" width="880">
 </p>

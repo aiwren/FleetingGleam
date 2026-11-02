@@ -4,6 +4,8 @@
 
 **一款在你自己的 Mac 和安卓手机上运行的照片筛选软件。** 把几千张照片里同一瞬间的连拍分好组，挑出每组最好的一张，并告诉你为什么。照片不会离开你自己的设备。
 
+**官网：**[fleetinggleam.fleetinggleam-web.workers.dev/zh](https://fleetinggleam.fleetinggleam-web.workers.dev/zh/) · **下载：**[最新版本](https://github.com/aiwren/FleetingGleam/releases/latest)
+
 <p align="center">
   <img src="apps/web/public/shots/wall-dark-1200.webp" alt="FleetingGleam 的照片墙：同一瞬间的连拍排在一起，最好的一张带金色星标" width="880">
 </p>
