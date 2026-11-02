@@ -216,6 +216,11 @@ fn jpeg_xmp(p: &Path) -> Result<Option<(usize, Vec<u8>)>, String> {
     Ok(None)
 }
 
+/// JPEG 改写用的临时文件：同目录、隐藏、仍以 .jpg 结尾——安卓的 DCIM / Pictures 只许应用建图片文件，别的扩展名直接拒绝。
+fn jpeg_tmp(p: &Path) -> PathBuf {
+    p.with_file_name(format!(".{}.fgtmp.jpg", p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()))
+}
+
 /// 把 XMP 段写进 JPEG：有就原地换，没有就插在 APP0 / Exif 之后、其它段之前。写到临时文件再换名，修改时间设回原值。
 fn jpeg_write(p: &Path, packet: &[u8], original_mtime: i64) -> Result<(), String> {
     if packet.len() > JPEG_PACKET_MAX {
@@ -254,7 +259,7 @@ fn jpeg_write(p: &Path, packet: &[u8], original_mtime: i64) -> Result<(), String
     }
     let last = segs.last().map(|&(s, l, _)| s + l).unwrap_or(2);
     out.extend_from_slice(&bytes[last..]);
-    let tmp = p.with_file_name(format!(".{}.xmp.tmp", p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
+    let tmp = jpeg_tmp(p);
     crate::files::write_synced(&tmp, &out).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, p).map_err(|e| e.to_string())?;
     set_mtime(p, original_mtime);
@@ -326,7 +331,7 @@ fn jpeg_strip(p: &Path, original_mtime: i64) -> Result<(), String> {
     }
     let last = segs.last().map(|&(s, l, _)| s + l).unwrap_or(2);
     out.extend_from_slice(&bytes[last..]);
-    let tmp = p.with_file_name(format!(".{}.xmp.tmp", p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
+    let tmp = jpeg_tmp(p);
     crate::files::write_synced(&tmp, &out).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, p).map_err(|e| e.to_string())?;
     set_mtime(p, original_mtime);

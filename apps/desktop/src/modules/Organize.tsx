@@ -297,13 +297,13 @@ export default function Organize({ project, photos, decisions, stars, offline = 
         {phase === "done" && markUndone ? (
           <>
             <p>{t("organize.marksUndone", { count: markUndone.ok })}</p>
-            {markUndone.bad > 0 && <p className="ash small">{t("organize.marksUndoFailed", { n: markUndone.bad })}</p>}
+            {markUndone.bad > 0 && <p className="ash small">{t("organize.marksUndoFailed", { count: markUndone.bad })}</p>}
           </>
         ) : phase === "done" && markResult ? (
           "error" in markResult ? <p>{t("organize.marksFailed", { error: errText(t, i18n.language, markResult.error) })}</p> : (
             <>
               <p>{t("organize.marksWritten", { sidecars: markResult.sidecars, embedded: markResult.embedded })}</p>
-              {markResult.skipped.length > 0 && <p className="ash small">{t("organize.marksSkipped", { n: markResult.skipped.length })}</p>}
+              {markResult.skipped.length > 0 && <p className="ash small">{t("organize.marksSkipped", { count: markResult.skipped.length })}</p>}
               {markResult.failed.length > 0 && (
                 <ul className="mlist export-failed">
                   {markResult.failed.slice(0, 5).map((f) => <li key={f.path}><span className="mono">{baseName(f.path)}</span><span className="ash">{errText(t, i18n.language, f.error)}</span></li>)}
@@ -317,9 +317,9 @@ export default function Organize({ project, photos, decisions, stars, offline = 
           <>
             <p>{t("organize.marksBody", { count: decided.length })}</p>
             <ul className="mark-plan">
-              {markCounts.sidecar > 0 && <li>{t("organize.marksSidecars", { n: markCounts.sidecar })}</li>}
-              {markCounts.jpeg > 0 && <li>{t("organize.marksEmbedded", { n: markCounts.jpeg })}</li>}
-              {markCounts.none > 0 && <li className="ash">{t("organize.marksUnsupported", { n: markCounts.none })}</li>}
+              {markCounts.sidecar > 0 && <li>{t("organize.marksSidecars", { count: markCounts.sidecar })}</li>}
+              {markCounts.jpeg > 0 && <li>{t("organize.marksEmbedded", { count: markCounts.jpeg })}</li>}
+              {markCounts.none > 0 && <li className="ash">{t("organize.marksUnsupported", { count: markCounts.none })}</li>}
             </ul>
             <label className="nas-remember export-raw"><input type="checkbox" checked={markStars} onChange={(e) => setMarkStars(e.target.checked)} /><span>{t("organize.marksStars")}</span></label>
             <label className="nas-remember export-raw"><input type="checkbox" checked={markLabels} onChange={(e) => setMarkLabels(e.target.checked)} /><span>{t("organize.marksLabels")}</span></label>
