@@ -360,6 +360,34 @@ pub struct FileInfo {
     pub iso: Option<String>,
     pub software: Option<String>,
     pub taken: Option<String>,
+    /// 曝光补偿，如 "+0.3 EV"
+    #[serde(default)]
+    pub exposure_bias: Option<String>,
+    /// 白平衡："Auto" / "Manual"
+    #[serde(default)]
+    pub white_balance: Option<String>,
+    /// 闪光："Fired" / "No flash" / "Off" / "None"
+    #[serde(default)]
+    pub flash: Option<String>,
+    /// 测光方式，如 "Spot" / "Multi"
+    #[serde(default)]
+    pub metering: Option<String>,
+    /// 曝光程序，如 "P" / "A" / "S" / "M"
+    #[serde(default)]
+    pub exposure_program: Option<String>,
+    /// 等效 35mm 焦距，如 "52 mm"
+    #[serde(default)]
+    pub focal_35: Option<String>,
+    /// 这张照片由哪几个文件组成：自己 + 同名伴随 RAW，各自大小
+    #[serde(default)]
+    pub files: Vec<FileEntry>,
+}
+
+/// 组成一张照片的一个文件（RAW + JPG 配对时有两个）。
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+pub struct FileEntry {
+    pub path: String,
+    pub bytes: u64,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -2079,47 +2107,25 @@ impl Engine {
         Ok(out.to_string_lossy().into_owned())
     }
 
-    /// Basic file facts for the inspector: container format, size, colour space and the shooting parameters stored in EXIF.
+    /// 检查器的文件信息：容器格式、大小、色彩空间，以及 EXIF 里的拍摄参数（都已整理成人读的短字符串）。
+    /// JPG 自己没有的字段，试着从同名伴随 RAW 里补（kamadak-exif 读得了 TIFF 系 RAW 与 HEIF；读不了就算了）。
     pub fn photo_info(&self, path: &str) -> FileInfo {
         let p = Path::new(path);
-        let mut info = FileInfo { bytes: std::fs::metadata(p).map(|m| m.len()).unwrap_or(0), ..Default::default() };
+        let size = |q: &Path| std::fs::metadata(q).map(|m| m.len()).unwrap_or(0);
+        let companions = crate::files::companions_of(p);
+        let mut info = FileInfo { bytes: size(p), ..Default::default() };
+        info.files = std::iter::once(p.to_path_buf()).chain(companions.iter().cloned()).map(|q| FileEntry { bytes: size(&q), path: q.to_string_lossy().into_owned() }).collect();
         info.format = image::ImageReader::open(p)
             .ok()
             .and_then(|r| r.with_guessed_format().ok())
             .and_then(|r| r.format())
             .map(|f| format!("{f:?}").to_uppercase())
             .or_else(|| p.extension().map(|e| e.to_string_lossy().to_uppercase()));
-        let Ok(file) = std::fs::File::open(p) else { return info };
-        let Ok(ex) = exif::Reader::new().read_from_container(&mut std::io::BufReader::new(file)) else { return info };
-        let get = |tag: exif::Tag| {
-            ex.get_field(tag, exif::In::PRIMARY)
-                .map(|f| match &f.value {
-                    // Text tags may carry several (often empty) strings; take the first real one.
-                    exif::Value::Ascii(parts) => parts.iter().map(|p| String::from_utf8_lossy(p).trim_matches(|c: char| c == '\0' || c.is_whitespace()).to_string()).find(|p| !p.is_empty()).unwrap_or_default(),
-                    _ => f.display_value().with_unit(&ex).to_string().trim().to_string(),
-                })
-                .filter(|v| !v.is_empty())
-        };
-        let make = get(exif::Tag::Make);
-        let model = get(exif::Tag::Model);
-        info.camera = match (make, model) {
-            (Some(a), Some(b)) => Some(if b.starts_with(&a) { b } else { format!("{a} {b}") }),
-            (a, b) => a.or(b),
-        };
-        info.lens = get(exif::Tag::LensModel);
-        info.focal = get(exif::Tag::FocalLength);
-        info.aperture = get(exif::Tag::FNumber);
-        info.shutter = get(exif::Tag::ExposureTime);
-        info.iso = get(exif::Tag::PhotographicSensitivity);
-        info.software = get(exif::Tag::Software);
-        info.taken = get(exif::Tag::DateTimeOriginal).or_else(|| get(exif::Tag::DateTime));
-        info.color_space = ex.get_field(exif::Tag::ColorSpace, exif::In::PRIMARY).and_then(|f| f.value.get_uint(0)).map(|v| match v {
-            1 => "sRGB".to_string(),
-            2 => "Adobe RGB".to_string(),
-            0xFFFF => "Uncalibrated".to_string(),
-            n => n.to_string(),
-        });
-        info.bit_depth = get(exif::Tag::BitsPerSample);
+        for q in std::iter::once(p).chain(companions.iter().map(PathBuf::as_path)) {
+            if let Some(ex) = exif_of(q) {
+                fill_exif(&mut info, &ex);
+            }
+        }
         info
     }
 
@@ -2881,6 +2887,129 @@ fn now_secs() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
+/// 读一个文件的 EXIF（JPEG / TIFF 系 RAW / HEIF 都走 kamadak-exif 的容器探测）；读不到就是 None。
+fn exif_of(p: &Path) -> Option<exif::Exif> {
+    let file = std::fs::File::open(p).ok()?;
+    exif::Reader::new().read_from_container(&mut std::io::BufReader::new(file)).ok()
+}
+
+/// 把 EXIF 里有、`info` 里还空着的字段填上（JPG 自己的优先，伴随 RAW 只补空缺）。
+fn fill_exif(info: &mut FileInfo, ex: &exif::Exif) {
+    let field = |tag: exif::Tag| ex.get_field(tag, exif::In::PRIMARY);
+    let text = |tag: exif::Tag| {
+        field(tag)
+            .map(|f| match &f.value {
+                // 文本标签可能带好几段（常常是空的）字符串，取第一段有内容的
+                exif::Value::Ascii(parts) => parts.iter().map(|p| String::from_utf8_lossy(p).trim_matches(|c: char| c == '\0' || c.is_whitespace()).to_string()).find(|p| !p.is_empty()).unwrap_or_default(),
+                _ => f.display_value().with_unit(ex).to_string().trim().to_string(),
+            })
+            .filter(|v| !v.is_empty())
+    };
+    let uint = |tag: exif::Tag| field(tag).and_then(|f| f.value.get_uint(0));
+    let rational = |tag: exif::Tag| {
+        field(tag).and_then(|f| match &f.value {
+            exif::Value::Rational(v) => v.first().filter(|r| r.denom != 0).map(|r| r.to_f64()),
+            exif::Value::SRational(v) => v.first().filter(|r| r.denom != 0).map(|r| r.to_f64()),
+            exif::Value::Short(v) => v.first().map(|&n| n as f64),
+            exif::Value::Long(v) => v.first().map(|&n| n as f64),
+            _ => None,
+        })
+    };
+    let put = |slot: &mut Option<String>, v: Option<String>| {
+        if slot.is_none() {
+            *slot = v;
+        }
+    };
+    let camera = {
+        let make = text(exif::Tag::Make);
+        let model = text(exif::Tag::Model);
+        match (make, model) {
+            (Some(a), Some(b)) => Some(if b.starts_with(&a) { b } else { format!("{a} {b}") }),
+            (a, b) => a.or(b),
+        }
+    };
+    put(&mut info.camera, camera);
+    put(&mut info.lens, text(exif::Tag::LensModel));
+    put(&mut info.focal, rational(exif::Tag::FocalLength).filter(|v| *v > 0.0).map(|v| format!("{} mm", trim_num(v, 1))));
+    put(&mut info.focal_35, uint(exif::Tag::FocalLengthIn35mmFilm).filter(|v| *v > 0).map(|v| format!("{v} mm")));
+    put(&mut info.aperture, rational(exif::Tag::FNumber).filter(|v| *v > 0.0).map(|v| format!("f/{}", trim_num(v, 1))));
+    put(&mut info.shutter, rational(exif::Tag::ExposureTime).filter(|v| *v > 0.0).map(nice_shutter));
+    put(&mut info.iso, uint(exif::Tag::PhotographicSensitivity).filter(|v| *v > 0).map(|v| v.to_string()));
+    put(&mut info.exposure_bias, rational(exif::Tag::ExposureBiasValue).map(|v| {
+        let r = (v * 10.0).round() / 10.0;
+        if r == 0.0 { "0 EV".to_string() } else { format!("{}{} EV", if r > 0.0 { "+" } else { "" }, trim_num(r, 1)) }
+    }));
+    put(&mut info.white_balance, uint(exif::Tag::WhiteBalance).map(|v| match v {
+        0 => "Auto".to_string(),
+        1 => "Manual".to_string(),
+        n => n.to_string(),
+    }));
+    put(&mut info.flash, uint(exif::Tag::Flash).map(|v| {
+        // 位 5：没有闪光灯；位 0：闪了；位 3–4 = 2：强制关闭
+        if v & 0x20 != 0 { "None".to_string() } else if v & 1 != 0 { "Fired".to_string() } else if (v >> 3) & 3 == 2 { "Off".to_string() } else { "No flash".to_string() }
+    }));
+    put(&mut info.metering, uint(exif::Tag::MeteringMode).and_then(|v| match v {
+        1 => Some("Average"),
+        2 => Some("Center-weighted"),
+        3 => Some("Spot"),
+        4 => Some("Multi-spot"),
+        5 => Some("Multi"),
+        6 => Some("Partial"),
+        _ => None,
+    }).map(str::to_string));
+    put(&mut info.exposure_program, uint(exif::Tag::ExposureProgram).and_then(|v| match v {
+        1 => Some("M"),
+        2 => Some("P"),
+        3 => Some("A"),
+        4 => Some("S"),
+        5 => Some("Creative"),
+        6 => Some("Action"),
+        7 => Some("Portrait"),
+        8 => Some("Landscape"),
+        _ => None,
+    }).map(str::to_string));
+    put(&mut info.software, text(exif::Tag::Software));
+    put(&mut info.taken, text(exif::Tag::DateTimeOriginal).or_else(|| text(exif::Tag::DateTime)).map(nice_time));
+    put(&mut info.color_space, uint(exif::Tag::ColorSpace).map(|v| match v {
+        1 => "sRGB".to_string(),
+        2 => "Adobe RGB".to_string(),
+        0xFFFF => "Uncalibrated".to_string(),
+        n => n.to_string(),
+    }));
+    put(&mut info.bit_depth, text(exif::Tag::BitsPerSample));
+}
+
+/// 数字去掉多余的零：2.0 → "2"，2.80 → "2.8"。
+fn trim_num(v: f64, decimals: usize) -> String {
+    let s = format!("{v:.decimals$}");
+    if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.').to_string() } else { s }
+}
+
+/// 曝光时间按人写的样子：1/250 s、0.5 s、2 s；相机常存成 1/813.2157 这种长分数，取整。
+fn nice_shutter(secs: f64) -> String {
+    if secs < 1.0 {
+        let inv = 1.0 / secs;
+        if inv >= 10.0 || (inv - inv.round()).abs() < 0.05 { format!("1/{} s", inv.round() as u32) } else { format!("{} s", trim_num(secs, 2)) }
+    } else {
+        format!("{} s", trim_num(secs, 2))
+    }
+}
+
+/// EXIF 的时间 "2026:06:13 14:31:17" → "2026-06-13 14:31"：按人写的样子，不带秒。
+fn nice_time(v: String) -> String {
+    let mut s = v;
+    let b = s.as_bytes();
+    if b.len() >= 10 && b[4] == b':' && b[7] == b':' && b[..4].iter().all(u8::is_ascii_digit) {
+        s.replace_range(4..5, "-");
+        s.replace_range(7..8, "-");
+    }
+    let b = s.as_bytes();
+    if b.len() == 19 && b[13] == b':' && b[16] == b':' && b[17..19].iter().all(u8::is_ascii_digit) {
+        s.truncate(16);
+    }
+    s
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3577,6 +3706,159 @@ mod tests {
         assert!(e.cache_size() > 0);
         e.clear_cache().unwrap();
         assert_eq!(e.cache_size(), 0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 一段最小的 TIFF（大端）：IFD0 放机身与 ExifIFD 指针，Exif 子 IFD 放拍摄参数。`entries` 是 (标签, 类型, 个数, 值字节)，
+    /// 超过 4 字节的值放到各自 IFD 后面的数据区。
+    fn tiny_tiff(ifd0: &[(u16, u16, u32, Vec<u8>)], exif: &[(u16, u16, u32, Vec<u8>)]) -> Vec<u8> {
+        fn ifd(entries: &[(u16, u16, u32, Vec<u8>)], at: u32) -> Vec<u8> {
+            let mut head = Vec::new();
+            let mut data = Vec::new();
+            let data_start = at + 2 + 12 * entries.len() as u32 + 4;
+            head.extend_from_slice(&(entries.len() as u16).to_be_bytes());
+            for (tag, ty, n, v) in entries {
+                head.extend_from_slice(&tag.to_be_bytes());
+                head.extend_from_slice(&ty.to_be_bytes());
+                // 文本标签的个数直接按字节数算，免得手写数错让整段 EXIF 被当成截断
+                let n = if *ty == 2 { v.len() as u32 } else { *n };
+                head.extend_from_slice(&n.to_be_bytes());
+                if v.len() <= 4 {
+                    let mut inline = v.clone();
+                    inline.resize(4, 0);
+                    head.extend_from_slice(&inline);
+                } else {
+                    head.extend_from_slice(&(data_start + data.len() as u32).to_be_bytes());
+                    data.extend_from_slice(v);
+                    if data.len() % 2 == 1 {
+                        data.push(0);
+                    }
+                }
+            }
+            head.extend_from_slice(&0u32.to_be_bytes());
+            head.extend(data);
+            head
+        }
+        // IFD0 的字节数不随 ExifIFD 指针的值变，先用 0 占位算出子 IFD 的位置
+        let mut first: Vec<(u16, u16, u32, Vec<u8>)> = ifd0.to_vec();
+        first.push((0x8769, 4, 1, 0u32.to_be_bytes().to_vec()));
+        let exif_at = 8 + ifd(&first, 8).len() as u32;
+        first.last_mut().unwrap().3 = exif_at.to_be_bytes().to_vec();
+        let mut out = vec![b'M', b'M', 0, 42, 0, 0, 0, 8];
+        out.extend(ifd(&first, 8));
+        out.extend(ifd(exif, exif_at));
+        out
+    }
+
+    fn ascii(s: &str) -> Vec<u8> {
+        let mut v = s.as_bytes().to_vec();
+        v.push(0);
+        v
+    }
+    fn short(n: u16) -> Vec<u8> {
+        n.to_be_bytes().to_vec()
+    }
+    fn rational(a: u32, b: u32) -> Vec<u8> {
+        [a.to_be_bytes(), b.to_be_bytes()].concat()
+    }
+    fn srational(a: i32, b: i32) -> Vec<u8> {
+        [a.to_be_bytes(), b.to_be_bytes()].concat()
+    }
+
+    /// 把 TIFF 塞进 JPEG 的 APP1 段。
+    fn jpeg_with_exif(jpeg: &[u8], tiff: &[u8]) -> Vec<u8> {
+        let mut app1 = b"Exif\0\0".to_vec();
+        app1.extend_from_slice(tiff);
+        let mut out = vec![0xFF, 0xD8, 0xFF, 0xE1];
+        out.extend_from_slice(&((app1.len() + 2) as u16).to_be_bytes());
+        out.extend_from_slice(&app1);
+        out.extend_from_slice(&jpeg[2..]);
+        out
+    }
+
+    /// 检查器的 EXIF 卡：数值都整理成人读的短字符串，单位在核心里处理好，前端不再二次格式化。
+    #[test]
+    fn photo_info_reads_exif_into_short_strings() {
+        let (e, root, _) = engine("exif");
+        let dir = root.join("photos");
+        photos(&dir, 1);
+        let plain = std::fs::read(dir.join("p0.jpg")).unwrap();
+        let tiff = tiny_tiff(
+            &[(0x010F, 2, 10, ascii("FUJIFILM\0")), (0x0110, 2, 5, ascii("X-T5")), (0x0131, 2, 7, ascii("Capture"))],
+            &[
+                (0x829A, 5, 1, rational(10, 8132)),       // 曝光时间 1/813.2
+                (0x829D, 5, 1, rational(28, 10)),         // f/2.8
+                (0x8822, 3, 1, short(3)),                 // 光圈优先
+                (0x8827, 3, 1, short(400)),               // ISO
+                (0x9003, 2, 20, ascii("2026:06:13 14:31:17")),
+                (0x9204, 10, 1, srational(1, 3)),         // +0.3 EV
+                (0x9207, 3, 1, short(5)),                 // 评价测光
+                (0x9209, 3, 1, short(0x10)),              // 强制关闭、没闪
+                (0x920A, 5, 1, rational(350, 10)),        // 35 mm
+                (0xA001, 3, 1, short(1)),                 // sRGB
+                (0xA403, 3, 1, short(0)),                 // 自动白平衡
+                (0xA405, 3, 1, short(52)),                // 等效 52 mm
+                (0xA434, 2, 15, ascii("XF35mmF1.4 R")),
+            ],
+        );
+        let path = dir.join("shot.jpg");
+        std::fs::write(&path, jpeg_with_exif(&plain, &tiff)).unwrap();
+        let info = e.photo_info(&path.to_string_lossy());
+        assert_eq!(info.format.as_deref(), Some("JPEG"));
+        assert_eq!(info.camera.as_deref(), Some("FUJIFILM X-T5"));
+        assert_eq!(info.lens.as_deref(), Some("XF35mmF1.4 R"));
+        assert_eq!(info.shutter.as_deref(), Some("1/813 s"));
+        assert_eq!(info.aperture.as_deref(), Some("f/2.8"));
+        assert_eq!(info.iso.as_deref(), Some("400"));
+        assert_eq!(info.focal.as_deref(), Some("35 mm"));
+        assert_eq!(info.focal_35.as_deref(), Some("52 mm"));
+        assert_eq!(info.exposure_bias.as_deref(), Some("+0.3 EV"));
+        assert_eq!(info.exposure_program.as_deref(), Some("A"));
+        assert_eq!(info.metering.as_deref(), Some("Multi"));
+        assert_eq!(info.flash.as_deref(), Some("Off"));
+        assert_eq!(info.white_balance.as_deref(), Some("Auto"));
+        assert_eq!(info.color_space.as_deref(), Some("sRGB"));
+        assert_eq!(info.taken.as_deref(), Some("2026-06-13 14:31"));
+        assert_eq!(info.software.as_deref(), Some("Capture"));
+        assert_eq!(info.files, vec![FileEntry { path: path.to_string_lossy().into_owned(), bytes: info.bytes }]);
+        // 没有 EXIF 的 JPEG：拍摄参数全空，不报错
+        let bare = e.photo_info(&dir.join("p0.jpg").to_string_lossy());
+        assert_eq!(bare.format.as_deref(), Some("JPEG"));
+        assert!(bare.shutter.is_none() && bare.camera.is_none() && bare.flash.is_none());
+        assert_eq!(bare.files.len(), 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// RAW + JPG 配对：JPG 自己没有的字段从同名 RAW 补；"包含文件"列出两个文件和各自大小。
+    #[test]
+    fn photo_info_fills_from_the_companion_raw_and_lists_both_files() {
+        let (e, root, _) = engine("exif-raw");
+        let dir = root.join("photos");
+        photos(&dir, 1);
+        // JPG 只带机身；"RAW" 是一个 TIFF 结构的文件（kamadak-exif 认 TIFF 系 RAW），带镜头与快门
+        let plain = std::fs::read(dir.join("p0.jpg")).unwrap();
+        let jpg_tiff = tiny_tiff(&[(0x0110, 2, 6, ascii("X-T5 "))], &[(0x829D, 5, 1, rational(2, 1))]);
+        let jpg = dir.join("IMG_1.jpg");
+        std::fs::write(&jpg, jpeg_with_exif(&plain, &jpg_tiff)).unwrap();
+        let raw_tiff = tiny_tiff(&[(0x010F, 2, 5, ascii("SONY")), (0x0110, 2, 7, ascii("ILCE-7"))], &[(0x829A, 5, 1, rational(1, 250)), (0x829D, 5, 1, rational(4, 1)), (0xA434, 2, 6, ascii("FE 35"))]);
+        let raw = dir.join("IMG_1.ARW");
+        std::fs::write(&raw, &raw_tiff).unwrap();
+        let info = e.photo_info(&jpg.to_string_lossy());
+        assert_eq!(info.camera.as_deref(), Some("X-T5"), "JPG 自己有的不被 RAW 覆盖");
+        assert_eq!(info.aperture.as_deref(), Some("f/2"));
+        assert_eq!(info.shutter.as_deref(), Some("1/250 s"), "JPG 缺的从 RAW 补");
+        assert_eq!(info.lens.as_deref(), Some("FE 35"));
+        assert_eq!(
+            info.files,
+            vec![
+                FileEntry { path: jpg.to_string_lossy().into_owned(), bytes: std::fs::metadata(&jpg).unwrap().len() },
+                FileEntry { path: raw.to_string_lossy().into_owned(), bytes: raw_tiff.len() as u64 },
+            ]
+        );
+        assert_eq!(nice_shutter(0.5), "1/2 s");
+        assert_eq!(nice_shutter(0.7), "0.7 s");
+        assert_eq!(nice_shutter(2.0), "2 s");
+        assert_eq!(nice_shutter(1.0 / 60.0), "1/60 s");
         let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -67,7 +67,8 @@ const en = {
     pickModeBestDesc: "Go by score alone and keep the best.", pickModeDiverseDesc: "Keep a bit of every scene, for a fuller record.",
     filters: "Filters", status: "Status", scenes: "Scenes", people: "People", clearFilter: "Clear", sceneCount: "{{count}}", personCount: "{{count}} photos", allScenes: "See all {{count}} scenes", describe: "Describe the rest", describing: "Describing scenes {{done}}/{{total}}", resizeHint: "Drag to resize, double-click to reset", backToPhotos: "Back to photos", morePeople: "Show all {{count}}", fewer: "Show fewer", noPeopleHere: "No recognised people in this selection",
   },
-  file: { title: "File info", format: "Format", size: "File size", pixels: "Pixels", color: "Color space", depth: "Bit depth", camera: "Camera", lens: "Lens", exposure: "Exposure", taken: "Taken", files: "Files" },
+  file: { title: "File info", format: "Format", size: "File size", pixels: "Pixels", color: "Color space", depth: "Bit depth", camera: "Camera", lens: "Lens", exposure: "Exposure", taken: "Taken", files: "Files",
+    shutter: "Shutter", aperture: "Aperture", focal: "Focal", bias: "Exposure bias", wb: "White balance", flash: "Flash", metering: "Metering", program: "Program", jpgOnly: "JPG ONLY", rawJpg: "RAW + JPG", rawOnly: "RAW ONLY" },
   single: { pagePrev: "Previous page", pageNext: "Next page", prev: "Previous photo", next: "Next photo" },
   search: { label: "Search photos", placeholder: "Search photos: fireworks, two people, umbrella…", globalPlaceholder: "Search photos in every project", clear: "Clear", indexing: "Building the search index {{pct}}%", none: "Nothing found for \u201c{{q}}\u201d", noneHint: "Try describing what is in the picture in other words.", inProject: "In \u201c{{name}}\u201d", results: "{{count}}" },
   models: {
@@ -156,9 +157,9 @@ const en = {
   },
   tag: { raw: "RAW", format: "", hdr: "HDR", motion: "Live", long: "Long", rawTip: "Camera RAW file, shown from the data as shot", hdrTip: "High dynamic range: shown with the brightness and colour it was shot with", motionTip: "Live photo: a short video is inside; open it large and use the Live menu to play", longTip: "A panorama or a tall strip", formatTip: "" },
   viewer: { navigator: "Area being viewed", navigatorHint: "Drag the frame to move the view", liveOff: "Turn Live off", liveOn: "Turn Live on", replayMotion: "Replay", playMotion: "Play Live", stopMotion: "Stop", strip: "All photos",
-    close: "Close", overall: "Overall", ai: "AI look", sharp: "Sharpness", expo: "Exposure", help: "Shortcuts",
+    close: "Close", overall: "Overall", ai: "AI look", sharp: "Sharpness", expo: "Exposure", help: "Shortcuts", info: "Shooting info",
     rotate: "Rotate", rotateTip: "Turn 90° clockwise (⌘]; ⌘[ the other way). Only how it is shown changes; the file is untouched.",
-    hint: "Scroll to zoom · Drag to pan · Double-click to magnify · ← → to navigate · {{keep}} / {{review}} / {{reject}} to mark · 1–5 to rate · {{motion}} plays Live · ⌘] rotate",
+    hint: "Scroll to zoom · Drag to pan · Double-click to magnify · ← → to navigate · {{keep}} / {{review}} / {{reject}} to mark · 1–5 to rate · {{motion}} plays Live · I shooting info · ⌘] rotate",
   },
   reason: {
     blur: "Subject isn't sharp enough — likely missed focus or camera shake",
