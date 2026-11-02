@@ -19,7 +19,7 @@ use walkdir::WalkDir;
 use crate::analyze::{self, EyeMethod, Photo};
 use crate::platform::SystemVision;
 use crate::scorer::{self, AiScorer, ClipScorer, Quality};
-use crate::{cache, colorsig, decide, faces, florence, imageio, media, mediapipe, modelpacks, nas, prefs, r2, scene_vocab, scratch, taste, textsearch, translate};
+use crate::{cache, colorsig, decide, faces, florence, imageio, media, mediapipe, modelpacks, nas, prefs, r2, scene_vocab, scratch, taste, textsearch, translate, xmp};
 use crate::{list_images, oriented_dims, quarantine_name, unique_path, write_synced};
 
 // ---------------------------------------------------------------- 宿主给的东西
@@ -322,6 +322,25 @@ pub struct Trashed {
 pub struct UntrashResult {
     pub restored: Vec<String>,
     pub failed: Vec<String>,
+}
+
+/// 写回 Lightroom / Bridge 的一张：路径、它的判定（keep / review / reject）和应用打的分（0..1，算星级用）。
+#[derive(Deserialize, Clone, Debug)]
+pub struct MarkArgs {
+    pub path: String,
+    pub state: String,
+    #[serde(default)]
+    pub score: f32,
+}
+
+/// 写回的结果：写了几个旁车、几个 JPEG，哪些格式不支持而跳过，哪些失败；`undo` 原样交回 `undo_marks` 可整体回滚。
+#[derive(Serialize, Default, Clone)]
+pub struct MarkResult {
+    pub sidecars: usize,
+    pub embedded: usize,
+    pub skipped: Vec<String>,
+    pub failed: Vec<ExportFailure>,
+    pub undo: Vec<xmp::Before>,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
@@ -1853,6 +1872,71 @@ impl Engine {
                     Err(_) => r.failed.push(path.to_string_lossy().into_owned()),
                 },
                 None => r.deferred.push(path.to_string_lossy().into_owned()),
+            }
+        }
+        r
+    }
+
+    /// 写回 Lightroom / Bridge：保留 → 星级（按应用的分）+ 标签 "Green"，待复查 → "Yellow"，淘汰 → Rating -1（Lightroom 的"拒绝"）+ "Red"。
+    /// 同名的 RAW 伴随文件也写（Lightroom 把 RAW+JPG 当一张，读的是 RAW 的旁车）。`stars` 为假时不写星级，`labels` 为假时不写标签。
+    /// JPEG 改完大小变了但修改时间不变：缓存换成新键，不用重新分析。
+    pub fn write_marks(&self, items: Vec<MarkArgs>, stars: bool, labels: bool) -> MarkResult {
+        let mut r = MarkResult::default();
+        for it in items {
+            let (rating, label) = match it.state.as_str() {
+                "keep" => (stars.then(|| (it.score * 5.0).ceil().clamp(1.0, 5.0) as i32), labels.then(|| "Green".to_string())),
+                "review" => (None, labels.then(|| "Yellow".to_string())),
+                "reject" => (stars.then_some(-1), labels.then(|| "Red".to_string())),
+                _ => (None, None),
+            };
+            if rating.is_none() && label.is_none() {
+                continue;
+            }
+            let m = xmp::Mark { rating, label };
+            let targets = crate::files::with_companions(vec![it.path.clone()]);
+            for t in targets {
+                let p = Path::new(&t);
+                if !p.is_file() {
+                    r.failed.push(ExportFailure { path: t.clone(), error: "missing".to_string() });
+                    continue;
+                }
+                match xmp::write(p, &m) {
+                    Ok(Some(before)) => {
+                        if before.carrier == "jpeg" {
+                            r.embedded += 1;
+                            if let Some((sz, mt)) = cache::file_key(p) {
+                                self.with_cache(|c| c.rekey(&t, sz, mt));
+                            }
+                        } else {
+                            r.sidecars += 1;
+                        }
+                        r.undo.push(before);
+                    }
+                    Ok(None) => r.skipped.push(t),
+                    Err(e) => r.failed.push(ExportFailure { path: t, error: e }),
+                }
+            }
+        }
+        r
+    }
+
+    /// 回滚最近一次写回：把 `write_marks` 交回的 `undo` 原样传回来。
+    pub fn undo_marks(&self, before: Vec<xmp::Before>) -> UntrashResult {
+        let mut r = UntrashResult::default();
+        for b in before {
+            match xmp::restore(&b) {
+                Ok(()) => {
+                    if b.carrier == "jpeg" {
+                        if let Some((sz, mt)) = cache::file_key(Path::new(&b.file)) {
+                            self.with_cache(|c| c.rekey(&b.file, sz, mt));
+                        }
+                    }
+                    r.restored.push(b.path);
+                }
+                Err(e) => {
+                    crate::platform::log(&format!("undo marks {}: {e}", b.file));
+                    r.failed.push(b.path);
+                }
             }
         }
         r

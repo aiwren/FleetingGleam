@@ -1538,3 +1538,7 @@ img { -webkit-user-drag: none; }
 .btn, .fp-row, .settings-nav button, .sidebar li button, .vmgrid button, .vmlist button, .orgitem, .picker-src, .tipbtn, .switch, .sthumb, .vcell { transition-duration: .16s; }
 .kv .files { display: flex; flex-wrap: wrap; gap: 4px 8px; }
 .export-raw { margin-top: 8px; }
+/* 写回 Lightroom / Bridge：执行前的文件清单 */
+.mark-plan { margin: 6px 0 10px; padding-left: 18px; font-size: 13px; line-height: 1.7; }
+.mark-plan li.ash { list-style: "– "; }
+

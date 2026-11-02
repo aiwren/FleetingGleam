@@ -533,6 +533,16 @@ impl Cache {
         Some(p)
     }
 
+    /// 文件内容变了但照片没变（往 JPEG 里写了元数据）：换成新的大小和修改时间，分析结果和缩略图接着用。
+    pub fn rekey(&mut self, key: &str, size: u64, mtime: i64) {
+        if let Some(e) = self.entries.get_mut(key) {
+            let e = Arc::make_mut(e);
+            e.size = size;
+            e.mtime = mtime;
+            self.dirty.insert(key.to_string());
+        }
+    }
+
     pub fn put(&mut self, size: u64, mtime: i64, tag: &str, p: &Photo) {
         // a re-analysis of an unchanged file keeps the search embedding it already has
         let (sem, color) = self.entries.get(&p.path).filter(|e| e.size == size && e.mtime == mtime).map(|e| (e.sem.clone(), e.color.clone())).unwrap_or_default();

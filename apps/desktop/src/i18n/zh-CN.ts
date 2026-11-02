@@ -303,6 +303,12 @@ const zh = {
     trashedToShare: "这些照片在 NAS 上，已移到共享里的回收站文件夹：{{where}}。需要时可以手动放回。",
     trashGo: "移到废纸篓（{{count}} 张）", trashing: "正在移动…", trashed: "已移到废纸篓 {{count}} 张",
     trashFailed: "有 {{n}} 张没能移动（可能已被移走，或没有权限）。", trashRecover: "想找回的话，打开访达的废纸篓，右键照片选择“放回原处”。", putBack: "放回原处（{{count}} 张）", puttingBack: "正在放回…", putBackDone: "已放回原处 {{count}} 张", putBackFailed: "有 {{n}} 张没能放回（原处已有同名文件，或废纸篓已清空）。",
+    marksItem: "写入评分与标记", marksDesc: "{{count}} 张的星级和颜色标签写进照片，Lightroom / Bridge 直接能看", marksTitle: "写入评分与标记",
+    marksBody: "把 {{count}} 张照片的筛选结果写成 Lightroom / Bridge 认的元数据：保留 → 星级 + 绿色标签，待复查 → 黄色标签，淘汰 → 标为拒绝 + 红色标签。",
+    marksSidecars: "{{n}} 个 RAW / TIFF：写到旁边的同名 .xmp 文件", marksEmbedded: "{{n}} 个 JPEG：写进文件自己的元数据，像素不动", marksUnsupported: "{{n}} 个 HEIC / PNG 等格式写不了，会跳过",
+    marksStars: "写星级（按应用的评分，1–5 星）", marksLabels: "写颜色标签（绿 / 黄 / 红）", marksSafe: "照片上已有的别的元数据原样保留；写完可以整体撤销。",
+    marksGo: "开始写入", marksWriting: "正在写入…", marksWritten: "已写入 {{sidecars}} 个 .xmp 文件、{{embedded}} 个 JPEG", marksSkipped: "{{n}} 个格式不支持，跳过了", marksFailed: "写入没有完成：{{error}}",
+    marksNext: "在 Lightroom 里选中这些照片，用“元数据 › 从文件读取元数据”就能看到。", marksUndo: "撤销写入", marksUndoing: "正在撤销…", marksUndone: "已撤销 {{count}} 张的写入", marksUndoFailed: "有 {{n}} 张没能撤销（文件可能已被移动）。",
   },
   pset: {
     note: "备注", notePh: "这次拍了什么、想留下什么(仅自己看,不参与评分)",

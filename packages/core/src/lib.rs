@@ -37,6 +37,7 @@ pub mod secrets;
 pub mod taste;
 pub mod textsearch;
 pub mod translate;
+pub mod xmp;
 
 pub use files::{is_junk, list_all, list_all_with, list_images, oriented_dims, quarantine_name, unique_path, write_synced, MIN_PHOTO_BYTES};
 

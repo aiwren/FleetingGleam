@@ -14,7 +14,18 @@ type Trashed = { path: string; at: string; nas?: string | null; from?: string | 
 import { getEnabledShares, nasLabel, openPicker } from "../nas";
 import { errText } from "../errors";
 
-type Dlg = null | { kind: "export"; dest: string } | { kind: "trash" };
+type Dlg = null | { kind: "export"; dest: string } | { kind: "trash" } | { kind: "marks" };
+/** 写回前照片上元数据的原样（核心的 `Before`），原样交回 `undo_marks` 就能整体回滚。 */
+type MarkBefore = { path: string; carrier: string; file: string; was: string | null; mtime: number };
+type MarkResult = { sidecars: number; embedded: number; skipped: string[]; failed: { path: string; error: string }[]; undo: MarkBefore[] };
+
+/** 这张照片的评分 / 标签会写到哪里：JPEG 写进文件，RAW / TIFF 写旁边的 .xmp，其它格式写不了。和核心的 `xmp::carrier_of` 一致。 */
+const carrierOf = (path: string): "jpeg" | "sidecar" | "none" => {
+  const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
+  if (["jpg", "jpeg", "jpe"].includes(ext)) return "jpeg";
+  if (["heic", "heif", "png", "webp", "gif", "bmp", "avif", "jxl"].includes(ext)) return "none";
+  return "sidecar";
+};
 type Phase = "confirm" | "running" | "done";
 
 /**
@@ -43,6 +54,11 @@ export default function Organize({ project, photos, decisions, offline = false, 
   const [putBack, setPutBack] = useState<{ ok: number; bad: number } | null>(null);
   const [putting, setPutting] = useState(false);
   const [stopping, setStopping] = useState(false);
+  /** 写回 Lightroom / Bridge：是否写星级、是否写颜色标签；写完后的结果和可回滚的原样。 */
+  const [markStars, setMarkStars] = useState(true);
+  const [markLabels, setMarkLabels] = useState(true);
+  const [markResult, setMarkResult] = useState<MarkResult | { error: string } | null>(null);
+  const [markUndone, setMarkUndone] = useState<{ ok: number; bad: number } | null>(null);
 
   const keep = photos.filter((p) => decisions.get(p.path)?.state === "keep");
   const rejectAll = photos.filter((p) => decisions.get(p.path)?.state === "reject");
@@ -56,7 +72,7 @@ export default function Organize({ project, photos, decisions, offline = false, 
     return () => window.removeEventListener("mousedown", close);
   }, [menu]);
 
-  const open = (d: Dlg) => { setResult(null); setUndo(null); setPutBack(null); setStopping(false); setPhase("confirm"); setProgress({ done: 0, total: 0 }); setDlg(d); setMenu(false); };
+  const open = (d: Dlg) => { setResult(null); setUndo(null); setPutBack(null); setMarkResult(null); setMarkUndone(null); setStopping(false); setPhase("confirm"); setProgress({ done: 0, total: 0 }); setDlg(d); setMenu(false); };
   const close = () => { setDlg(null); if (phase === "done") onChanged(); };
 
   // 保留的照片里有带同名 RAW 的：导出时可以把 RAW 一起带上
@@ -110,6 +126,29 @@ export default function Organize({ project, photos, decisions, offline = false, 
     setPutting(false);
   };
 
+  // 写回 Lightroom / Bridge：有判定的照片都写；先数一数会写几个旁车、几个 JPEG、几张写不了
+  const decided = photos.filter((p) => decisions.has(p.path));
+  const markTargets = decided.flatMap((p) => [p.path, ...(p.companions ?? [])]);
+  const markCounts = markTargets.reduce((acc, p) => { acc[carrierOf(p)] += 1; return acc; }, { jpeg: 0, sidecar: 0, none: 0 });
+  const startMarks = async () => {
+    setPhase("running");
+    try {
+      const items = decided.map((p) => ({ path: p.path, state: decisions.get(p.path)!.state, score: p.score }));
+      const r = await invoke<MarkResult>("write_marks", { items, stars: markStars, labels: markLabels });
+      setMarkResult(r);
+    } catch (e) { setMarkResult({ error: String(e) }); }
+    setPhase("done");
+  };
+  const undoMarks = async () => {
+    if (!markResult || "error" in markResult || putting) return;
+    setPutting(true);
+    try {
+      const r = await invoke<{ restored: string[]; failed: string[] }>("undo_marks", { before: markResult.undo });
+      setMarkUndone({ ok: r.restored.length, bad: r.failed.length });
+    } catch { setMarkUndone({ ok: 0, bad: markResult.undo.length }); }
+    setPutting(false);
+  };
+
   const chooseDest = async () => {
     const dir = await pickLocalFolder();
     if (dir) open({ kind: "export", dest: dir });
@@ -128,6 +167,7 @@ export default function Organize({ project, photos, decisions, offline = false, 
   const items = [
     { key: "export", count: keep.length, title: t("organize.exportItem"), desc: t("organize.exportDesc", { count: keep.length }), run: chooseDest },
     ...(nasShares.length > 0 ? [{ key: "nas", count: keep.length, blocked: offline, title: t("organize.exportNasItem"), desc: t("organize.exportNasDesc", { count: keep.length }), run: chooseNas }] : []),
+    { key: "marks", count: decided.length, blocked: offline && decided.some(onNas), title: t("organize.marksItem"), desc: t("organize.marksDesc", { count: decided.length }), run: () => open({ kind: "marks" }) },
     { key: "trash", count: rejectAll.length, blocked: trashBlocked, title: t("organize.trashItem"), desc: t("organize.trashDesc", { count: rejectAll.length }), run: () => { setScope(rejectManual.length > 0 ? "manual" : "all"); open({ kind: "trash" }); } },
   ];
 
@@ -234,6 +274,54 @@ export default function Organize({ project, photos, decisions, offline = false, 
               {trashList.slice(0, 8).map((p) => <img key={p.path} src={convertFileSrc(p.thumb)} alt="" draggable={false} title={baseName(p.path)} />)}
               {trashList.length > 8 && <span className="mono ash">+{trashList.length - 8}</span>}
             </div>
+          </>
+        )}
+      </Modal>
+
+      <Modal open={dlg?.kind === "marks"} onClose={close} locked={phase === "running" || putting} title={t("organize.marksTitle")}
+        footer={phase === "done" ? (
+          <>
+            {markResult && !("error" in markResult) && markResult.undo.length > 0 && !markUndone && <button className="btn" onClick={undoMarks} disabled={putting}>{putting ? t("organize.marksUndoing") : t("organize.marksUndo")}</button>}
+            <button className="btn primary sm" onClick={close} disabled={putting}>{t("organize.done")}</button>
+          </>
+        ) : (
+          <>
+            <button className="btn" onClick={close} disabled={phase === "running"}>{t("organize.cancel")}</button>
+            <button className="btn primary sm" onClick={startMarks} disabled={phase === "running" || decided.length === 0 || (!markStars && !markLabels) || markCounts.jpeg + markCounts.sidecar === 0}>
+              {phase === "running" ? t("organize.marksWriting") : t("organize.marksGo")}
+            </button>
+          </>
+        )}>
+        {phase === "done" && markUndone ? (
+          <>
+            <p>{t("organize.marksUndone", { count: markUndone.ok })}</p>
+            {markUndone.bad > 0 && <p className="ash small">{t("organize.marksUndoFailed", { n: markUndone.bad })}</p>}
+          </>
+        ) : phase === "done" && markResult ? (
+          "error" in markResult ? <p>{t("organize.marksFailed", { error: errText(t, i18n.language, markResult.error) })}</p> : (
+            <>
+              <p>{t("organize.marksWritten", { sidecars: markResult.sidecars, embedded: markResult.embedded })}</p>
+              {markResult.skipped.length > 0 && <p className="ash small">{t("organize.marksSkipped", { n: markResult.skipped.length })}</p>}
+              {markResult.failed.length > 0 && (
+                <ul className="mlist export-failed">
+                  {markResult.failed.slice(0, 5).map((f) => <li key={f.path}><span className="mono">{baseName(f.path)}</span><span className="ash">{errText(t, i18n.language, f.error)}</span></li>)}
+                  {markResult.failed.length > 5 && <li><span className="ash">{t("organize.exportFailedMore", { n: markResult.failed.length - 5 })}</span></li>}
+                </ul>
+              )}
+              <p className="ash small">{t("organize.marksNext")}</p>
+            </>
+          )
+        ) : (
+          <>
+            <p>{t("organize.marksBody", { count: decided.length })}</p>
+            <ul className="mark-plan">
+              {markCounts.sidecar > 0 && <li>{t("organize.marksSidecars", { n: markCounts.sidecar })}</li>}
+              {markCounts.jpeg > 0 && <li>{t("organize.marksEmbedded", { n: markCounts.jpeg })}</li>}
+              {markCounts.none > 0 && <li className="ash">{t("organize.marksUnsupported", { n: markCounts.none })}</li>}
+            </ul>
+            <label className="nas-remember export-raw"><input type="checkbox" checked={markStars} onChange={(e) => setMarkStars(e.target.checked)} /><span>{t("organize.marksStars")}</span></label>
+            <label className="nas-remember export-raw"><input type="checkbox" checked={markLabels} onChange={(e) => setMarkLabels(e.target.checked)} /><span>{t("organize.marksLabels")}</span></label>
+            <p className="ash small">{t("organize.marksSafe")}</p>
           </>
         )}
       </Modal>

@@ -326,6 +326,8 @@ fn dispatch(e: &Arc<Engine>, method: &str, a: &Value) -> Result<Value, String> {
             Ok(Value::Null)
         }
         "trash_photos" => out(e.trash_photos(strings(a, "paths"))),
+        "write_marks" => out(e.write_marks(parse(a, "items")?, b(a, "stars"), b(a, "labels"))),
+        "undo_marks" => out(e.undo_marks(parse(a, "before")?)),
         // 查看器
         "preview_thumbs" => out(e.preview_thumbs(&strings(a, "paths"))),
         "photo_info" => out(e.photo_info(&s(a, "path")?)),
