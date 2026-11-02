@@ -305,7 +305,8 @@ pub fn analyze(
 pub fn quick_thumb(src: &Path, out: &Path) -> Result<(), String> {
     // 大 RAW 秒开（A7）：分析前的预览缩略图先从 RAW 内嵌的 JPEG 预览缩出来（几十毫秒），不等几秒钟的完整解码；
     // 正式分析时会用完整解码的那张把它换掉
-    if crate::imageio::is_raw(src) {
+    // （Android 的进程内解码器自己会读内嵌预览，不走这条）
+    if crate::imageio::is_raw(src) && !crate::platform::images().map_or(false, |s| s.prefers_native()) {
         if let Some(e) = crate::rawpreview::embedded_jpeg(src, None) {
             if let Ok(img) = image::load_from_memory_with_format(&e.bytes, image::ImageFormat::Jpeg) {
                 return fast_resize(&rotate_image(img, e.rotation), THUMB_SIZE).into_rgb8().save(out).map_err(|e| e.to_string());

@@ -2048,7 +2048,9 @@ impl Engine {
             // 放大看细节走 `photo_detail`，解的仍是真正的 RAW
             let (_, dw, dh) = self.rotation_of(path);
             let limit = crate::platform::images().map_or(u32::MAX, |s| s.preview_max());
-            let quick = imageio::is_raw(src) && crate::rawpreview::write_preview(src, &tmp, (dw > 0 && dh > 0).then_some((dw, dh)), limit).is_ok();
+            // 进程内解码器（Android）自己就会读 RAW 里的预览，还顺手缩到上限，比这里解一遍再缩快：那边不走这条
+            let native = crate::platform::images().map_or(false, |s| s.prefers_native());
+            let quick = imageio::is_raw(src) && !native && crate::rawpreview::write_preview(src, &tmp, (dw > 0 && dh > 0).then_some((dw, dh)), limit).is_ok();
             if !quick {
                 analyze::large_preview(src, &tmp)?;
             }
