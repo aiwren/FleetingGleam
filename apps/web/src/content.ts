@@ -66,7 +66,17 @@ export const copy = {
       eyebrow: "Compare and decide", title: "Zoom in, then decide.", lead: "Compare frames of one moment up close, and see where each score comes from.",
       aria: "The score of the selected photo, sample data", selected: "Selected photo", sample: "Sample data",
       metrics: [["Overall", 76], ["Subject sharpness", 92], ["Exposure", 84]],
-      keys: [["P", "Keep"], ["R", "Review"], ["X", "Reject"], ["⌘Z", "Undo"]],
+      keys: [["P", "Keep"], ["R", "Review"], ["X", "Reject"], ["1–5", "Stars"], ["⌘Z", "Undo"]],
+    },
+    pro: {
+      eyebrow: "For working photographers",
+      title: "It fits the workflow you already have.",
+      lead: "Shoot RAW + JPG, rate from the keyboard, and carry the result into Lightroom or Bridge. Nothing here is hidden from everyone else; it only shows up when a shoot needs it.",
+      items: [
+        ["pair", "RAW + JPG as one", "Same-name pairs count as one photo. The JPG is analysed, the RAW follows it: kept together, exported together, moved together."],
+        ["xmp", "Written back for Lightroom", "Stars and colour labels go into the RAW's .xmp sidecar or the JPEG's own metadata. Pixels untouched, and the whole write can be undone."],
+        ["star", "Your own stars", "Press 1 to 5 on any photo. Filter by stars, and they travel with the write-back ahead of the app's score."],
+      ],
     },
     honest: { title: ["A score is a hint,", "not a verdict."], body: "It can tell you which frame is technically stronger. A good photograph is sometimes imperfect, like a sleeping child with closed eyes, so the decision stays yours." },
     flow: {
@@ -76,7 +86,7 @@ export const copy = {
       steps: [
         ["Pick a folder", "On your Mac or phone, or a share on your NAS. Thumbnails appear first and scores fill in as the analysis runs in the background."],
         ["Review each group", "Zoom to compare frames of one moment, or on a Mac decide from the keyboard with {keys}."],
-        ["Organise what you kept", "Copy the keepers into a new folder or your photo album. On a Mac the rest can go to the Trash, where they can be recovered."],
+        ["Organise what you kept", "Copy the keepers into a new folder or your photo album, or write stars and labels back for Lightroom. On a Mac the rest can go to the Trash, where they can be recovered."],
       ],
       aria: "The steps in motion: 8 sample photos, 4 kept, 3 rejected, 1 to review",
       folder: "Sample folder", ready: "Ready", analysing: "Analysing", photo: "Photo", of: "of", unit: "", keptN: "Kept", trashN: "Trash",
@@ -148,7 +158,17 @@ export const copy = {
       eyebrow: "对比与决定", title: "放大，再决定。", lead: "放大对比同一瞬间的照片，分数从哪来一目了然。",
       aria: "所选照片的评分，示例数据", selected: "所选照片", sample: "示例数据",
       metrics: [["总分", 76], ["主体清晰度", 92], ["曝光", 84]],
-      keys: [["P", "保留"], ["R", "待复查"], ["X", "淘汰"], ["⌘Z", "撤销"]],
+      keys: [["P", "保留"], ["R", "待复查"], ["X", "淘汰"], ["1–5", "打星"], ["⌘Z", "撤销"]],
+    },
+    pro: {
+      eyebrow: "给专业摄影师",
+      title: "接上你已有的工作流。",
+      lead: "RAW + JPG 双格式拍摄、键盘打星、结果带进 Lightroom 或 Bridge。这些不会打扰普通用户：只有这批照片需要时才出现。",
+      items: [
+        ["pair", "RAW + JPG 当一张", "同名的一对算一张照片。分析 JPG，RAW 跟着走：一起保留、一起导出、一起移走。"],
+        ["xmp", "写回 Lightroom", "星级和颜色标签写进 RAW 旁边的 .xmp，或 JPEG 自己的元数据。像素一个字节不动，整次写入可以撤销。"],
+        ["star", "你自己的星", "任何一张照片上按 1 到 5。可以按星筛选，写回时也优先于应用的评分。"],
+      ],
     },
     honest: { title: ["评分是参考，", "不是裁判。"], body: "它能告诉你哪一张技术上更好。好照片有时并不完美，比如闭着眼睛睡着的孩子，所以决定始终在你手里。" },
     flow: {
@@ -157,7 +177,7 @@ export const copy = {
       steps: [
         ["选一个文件夹", "Mac 或手机上的文件夹，或者 NAS 上的共享都行。缩略图先出现，评分在后台分析时陆续补上。"],
         ["看每一组的推荐", "放大对比同一瞬间的照片，在 Mac 上也可以用键盘 {keys} 决定。"],
-        ["整理你保留的照片", "把留下的复制到新文件夹或手机相册。在 Mac 上，其余的可以移进废纸篓，随时找回。"],
+        ["整理你保留的照片", "把留下的复制到新文件夹或手机相册，或把星级和标签写回给 Lightroom。在 Mac 上，其余的可以移进废纸篓，随时找回。"],
       ],
       aria: "使用过程演示：8 张示例照片，保留 4 张，淘汰 3 张，1 张待复查",
       folder: "示例文件夹", ready: "准备", analysing: "分析中", photo: "第", of: "/", unit: " 张", keptN: "已保留", trashN: "废纸篓",

@@ -394,6 +394,16 @@ body {
 .how-pin { display: flex; align-items: center; padding-top: var(--header-h); }
 .how-inner { display: grid; gap: var(--s-6); align-items: center; }
 @media (min-width: 1024px) { .how-inner { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: var(--s-8); } }
+/* 给专业摄影师：三张卡 */
+.pro { padding-block: var(--s-10); border-top: 1px solid var(--line); }
+.pro .lead { margin-top: var(--s-4); max-width: 34em; }
+.pro-cards { margin-top: var(--s-7); display: grid; gap: var(--s-4); grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pro-cards li { padding: var(--s-5); border: 1px solid var(--line); border-radius: 16px; background: var(--panel); }
+.pro-cards svg.ic { --ic: 24px; color: var(--ash); }
+.pro-cards h3 { margin-top: var(--s-4); font-size: var(--fs-h3); font-weight: 600; }
+.pro-cards p { margin-top: var(--s-2); color: var(--ash); }
+@media (max-width: 760px) { .pro-cards { grid-template-columns: 1fr; } }
+
 .how-steps { margin-top: var(--s-6); display: grid; }
 .how-step { display: grid; grid-template-columns: 3em minmax(0, 1fr); gap: var(--s-3); padding-block: var(--s-4); border-top: 1px solid var(--line); opacity: .38; transition: opacity var(--t-base) var(--ld-out); }
 .how-step:last-child { border-bottom: 1px solid var(--line); }

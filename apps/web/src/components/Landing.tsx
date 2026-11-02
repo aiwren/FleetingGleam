@@ -7,6 +7,7 @@ import Privacy from "./Privacy";
 import Features from "./Features";
 import Zoom from "./Zoom";
 import Honest from "./Honest";
+import Pro from "./Pro";
 import How from "./How";
 import Closing from "./Closing";
 import Lightbox from "./Lightbox";
@@ -25,6 +26,7 @@ export default function Landing({ lang }: { lang: Lang }) {
           <Features lang={lang} />
           <Zoom lang={lang} />
           <Honest lang={lang} />
+          <Pro lang={lang} />
           <How lang={lang} />
           <Closing lang={lang} />
           <Lightbox lang={lang} />
