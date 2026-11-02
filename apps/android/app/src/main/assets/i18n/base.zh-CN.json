@@ -70,7 +70,7 @@
   "trySamples": "试试示例照片",
   "sampleName": "示例照片",
   "emptyFolder": "这个项目里没有找到 JPG、PNG 或 WebP 照片。",
-  "hint": "提示：鼠标停在照片上，点 ★ 留下、点 ✕ 淘汰。也可以按 P / X 键，⌘Z 撤销。",
+  "hint": "提示：鼠标停在照片上，点 ★ 留下、点 ✕ 淘汰。也可以按 {{keep}} / {{reject}} 键，⌘Z 撤销。",
   "hintDismiss": "知道了",
   "open": "打开文件夹",
   "change": "更换文件夹",
@@ -158,7 +158,18 @@
   "lens": "镜头",
   "exposure": "拍摄参数",
   "taken": "拍摄时间",
-  "files": "包含文件"
+  "files": "包含文件",
+  "shutter": "快门",
+  "aperture": "光圈",
+  "focal": "焦距",
+  "bias": "曝光补偿",
+  "wb": "白平衡",
+  "flash": "闪光",
+  "metering": "测光",
+  "program": "曝光程序",
+  "jpgOnly": "JPG ONLY",
+  "rawJpg": "RAW + JPG",
+  "rawOnly": "RAW ONLY"
  },
  "single": {
   "pagePrev": "上一页",
@@ -359,7 +370,7 @@
   "best": "推荐",
   "kept": "已保留",
   "rejected": "已淘汰",
-  "hint": "滚轮缩放 · 拖动平移 · 双击放大到 2.5 倍（同步） · 悬停一张，按 P 保留 · X 淘汰 · ↑↓ 换对手 · ← → 换组",
+  "hint": "滚轮缩放 · 拖动平移 · 双击放大到 2.5 倍（同步） · 悬停一张，按 {{keep}} 保留 · {{reject}} 淘汰 · ↑↓ 换对手 · ← → 换组",
   "emptyTitle": "这张没有相似的照片可以对比",
   "emptyBody": "对比用来在同一瞬间连拍的几张里挑出最好的一张。",
   "jump": "跳到下一组相似照片"
@@ -383,7 +394,7 @@
   "hintMove": "切换",
   "hintZoom": "放大",
   "space": "空格",
-  "multi": "已选 {{count}} 张：P / R / X 一起改，⌘Z 一次撤回",
+  "multi": "已选 {{count}} 张：{{keep}} / {{review}} / {{reject}} 一起改，⌘Z 一次撤回",
   "pref": "个人偏好",
   "look": "画面",
   "sharpLevel": {
@@ -427,9 +438,10 @@
   "sharp": "清晰度",
   "expo": "曝光",
   "help": "快捷键",
+  "info": "拍摄信息",
   "rotate": "旋转",
   "rotateTip": "顺时针转 90°（⌘]；⌘[ 反向）。只改显示，原文件不动。",
-  "hint": "滚轮缩放 · 拖动平移 · 双击放大 · ← → 切换 · P / R / X 判定 · 1–5 打星 · ⌘] 旋转"
+  "hint": "滚轮缩放 · 拖动平移 · 双击放大 · ← → 切换 · {{keep}} / {{review}} / {{reject}} 判定 · 1–5 打星 · {{motion}} 播放实况 · I 拍摄信息 · ⌘] 旋转"
  },
  "reason": {
   "blur": "主体清晰度不足，疑似虚焦或手抖",
@@ -479,6 +491,18 @@
   "themeDesc": "浅色、深色，或跟随系统",
   "light": "浅色",
   "dark": "深色",
+  "keys": "快捷键",
+  "keysPreset": "键位预设",
+  "keysPresetDesc": "默认用 P / R / X 判定；左手预设把判定键放到键盘左侧，右手留在方向键上。",
+  "keysChange": "改",
+  "keysRecording": "按一个键…",
+  "keysRecordingDesc": "按一个字母键设为新快捷键；Esc 取消，⌫ 恢复预设的键。",
+  "keysCustom": "已改（预设是 {{key}}）",
+  "keysFixed": "{{key}} 有固定用途，不能用来判定。",
+  "keysConflict": "{{key}} 已经是「{{action}}」的键。",
+  "keysReset": "恢复默认",
+  "keysResetDesc": "回到默认预设（P / R / X），并清掉逐个改过的键。",
+  "keysFixedHint": "固定不变的键：1–5 打星、0 清除星级或复位缩放、空格看大图、方向键移动、Esc 关闭、? 快捷键帮助。",
   "performance": "性能",
   "analysis": "分析",
   "analysisAuto": "分析方式",
@@ -661,7 +685,7 @@
   "learnStatus": "已从 {{n}} 次手动选择中学习（其中保留 {{k}} 张）",
   "learnActive": "偏好模型已生效",
   "learnWarm": "还需要更多选择才会生效（保留和淘汰各至少 3 张）",
-  "learnNone": "还没有学习记录。在检查器里对照片按 P、R、X 就会开始积累。",
+  "learnNone": "还没有学习记录。在检查器里对照片按 {{keep}}、{{review}}、{{reject}} 就会开始积累。",
   "learnReset": "重置已学习的偏好",
   "learnResetDone": "已重置",
   "learnResetTitle": "重置已学习的偏好？",
@@ -739,6 +763,17 @@
   "keepAct": "留下",
   "rejectAct": "淘汰",
   "clear": "取消我的标记"
+ },
+ "keys": {
+  "keep": "保留",
+  "review": "待复查",
+  "reject": "淘汰",
+  "motion": "播放实况",
+  "motionDesc": "只在查看器里有效。",
+  "preset": {
+   "default": "默认",
+   "left": "左手"
+  }
  },
  "organize": {
   "button": "整理",

@@ -75,7 +75,7 @@
   "trySamples": "Try the sample photos",
   "sampleName": "Sample photos",
   "emptyFolder": "No JPG, PNG or WebP photos were found in this project.",
-  "hint": "Tip: hover a photo, then click ★ to keep or ✕ to reject. You can also press P / X, and ⌘Z to undo.",
+  "hint": "Tip: hover a photo, then click ★ to keep or ✕ to reject. You can also press {{keep}} / {{reject}}, and ⌘Z to undo.",
   "hintDismiss": "Got it",
   "open": "Open folder",
   "change": "Change folder",
@@ -164,7 +164,18 @@
   "lens": "Lens",
   "exposure": "Exposure",
   "taken": "Taken",
-  "files": "Files"
+  "files": "Files",
+  "shutter": "Shutter",
+  "aperture": "Aperture",
+  "focal": "Focal",
+  "bias": "Exposure bias",
+  "wb": "White balance",
+  "flash": "Flash",
+  "metering": "Metering",
+  "program": "Program",
+  "jpgOnly": "JPG ONLY",
+  "rawJpg": "RAW + JPG",
+  "rawOnly": "RAW ONLY"
  },
  "single": {
   "pagePrev": "Previous page",
@@ -367,7 +378,7 @@
   "best": "Suggested",
   "kept": "Kept",
   "rejected": "Rejected",
-  "hint": "Wheel to zoom · drag to pan · double-click 2.5× (in sync) · hover a photo, P keeps · X rejects · ↑↓ next challenger · ← → next group",
+  "hint": "Wheel to zoom · drag to pan · double-click 2.5× (in sync) · hover a photo, {{keep}} keeps · {{reject}} rejects · ↑↓ next challenger · ← → next group",
   "emptyTitle": "No similar shots to compare",
   "emptyBody": "Compare is for picking the best of a burst taken at the same moment.",
   "jump": "Jump to the next group of similar shots"
@@ -391,7 +402,7 @@
   "hintMove": "Navigate",
   "hintZoom": "Zoom",
   "space": "Space",
-  "multi": "{{count}} selected: P / R / X mark them all, ⌘Z undoes the batch",
+  "multi": "{{count}} selected: {{keep}} / {{review}} / {{reject}} mark them all, ⌘Z undoes the batch",
   "pref": "Personal taste",
   "look": "Picture",
   "sharpLevel": {
@@ -435,9 +446,10 @@
   "sharp": "Sharpness",
   "expo": "Exposure",
   "help": "Shortcuts",
+  "info": "Shooting info",
   "rotate": "Rotate",
   "rotateTip": "Turn 90° clockwise (⌘]; ⌘[ the other way). Only how it is shown changes; the file is untouched.",
-  "hint": "Scroll to zoom · Drag to pan · Double-click to magnify · ← → to navigate · P / R / X to mark · 1–5 to rate · ⌘] rotate"
+  "hint": "Scroll to zoom · Drag to pan · Double-click to magnify · ← → to navigate · {{keep}} / {{review}} / {{reject}} to mark · 1–5 to rate · {{motion}} plays Live · I shooting info · ⌘] rotate"
  },
  "reason": {
   "blur": "Subject isn't sharp enough — likely missed focus or camera shake",
@@ -488,6 +500,18 @@
   "themeDesc": "Light, dark, or follow the system",
   "light": "Light",
   "dark": "Dark",
+  "keys": "Shortcuts",
+  "keysPreset": "Key preset",
+  "keysPresetDesc": "The default marks with P / R / X; the left-hand preset moves the marking keys to the left of the keyboard so the right hand stays on the arrows.",
+  "keysChange": "Change",
+  "keysRecording": "Press a key…",
+  "keysRecordingDesc": "Press a letter to make it the new shortcut; Esc cancels, ⌫ restores the preset's key.",
+  "keysCustom": "Changed (the preset uses {{key}})",
+  "keysFixed": "{{key}} has a fixed meaning and can't mark photos.",
+  "keysConflict": "{{key}} is already the key for “{{action}}”.",
+  "keysReset": "Restore defaults",
+  "keysResetDesc": "Back to the default preset (P / R / X), dropping every key changed one by one.",
+  "keysFixedHint": "Keys that never change: 1–5 rate, 0 clears the rating or resets zoom, Space opens the viewer, arrows move, Esc closes, ? shows the shortcuts.",
   "performance": "Performance",
   "analysis": "Analysis",
   "analysisAuto": "How photos are analysed",
@@ -672,7 +696,7 @@
   "learnStatus": "Learned from {{n}} manual choices ({{k}} kept)",
   "learnActive": "Taste model is active",
   "learnWarm": "Needs a few more choices before it kicks in (at least 3 kept and 3 rejected)",
-  "learnNone": "Nothing learned yet. Press P, R or X on photos in the inspector to start.",
+  "learnNone": "Nothing learned yet. Press {{keep}}, {{review}} or {{reject}} on photos in the inspector to start.",
   "learnReset": "Reset learned taste",
   "learnResetDone": "Reset",
   "learnResetTitle": "Reset the learned taste?",
@@ -753,6 +777,17 @@
   "keepAct": "Keep",
   "rejectAct": "Reject",
   "clear": "Clear my mark"
+ },
+ "keys": {
+  "keep": "Keep",
+  "review": "Review",
+  "reject": "Reject",
+  "motion": "Play Live",
+  "motionDesc": "Only in the viewer.",
+  "preset": {
+   "default": "Default",
+   "left": "Left hand"
+  }
  },
  "organize": {
   "button": "Organize",

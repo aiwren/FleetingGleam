@@ -132,8 +132,8 @@ data class Decision(val state: String, val manual: Boolean = false, val reasons:
     val focal: String? = null, val aperture: String? = null, val shutter: String? = null, val iso: String? = null, val software: String? = null, val taken: String? = null,
     // 完整 EXIF 面板（路线图 A7）：核心给的是人读的短字符串（"+0.3 EV"、"52 mm"）；老核心没有这些字段，都是 null
     val exposureBias: String? = null, val whiteBalance: String? = null, val flash: String? = null, val metering: String? = null, val exposureProgram: String? = null,
-    /** 等效 35mm 焦距。 */
-    val focal35: String? = null,
+    /** 等效 35mm 焦距。核心的键是 `focal_35`：蛇形命名不会在数字前加下划线，得写明。 */
+    @kotlinx.serialization.SerialName("focal_35") val focal35: String? = null,
     /** 这张照片由哪些文件组成：照片本身 + 同名伴随 RAW，各自的大小。 */
     val files: List<InfoFile> = emptyList(),
 )

@@ -72,7 +72,8 @@ fun ExifCard(photo: Photo, modifier: Modifier = Modifier, compact: Boolean = fal
 @Composable
 private fun ShotGrid(info: FileInfo?, compact: Boolean) {
     val cells = listOf(
-        t("android.exif.shutter") to info?.shutter?.let { niceShutter(it) },
+        // 快门、光圈等核心已经给成人读的短字符串（"1/250 s"、"f/2.8"），原样显示
+        t("android.exif.shutter") to info?.shutter,
         t("android.exif.aperture") to info?.aperture,
         "ISO" to info?.iso?.removePrefix("ISO")?.trim(),
         t("android.exif.focal") to info?.focal,

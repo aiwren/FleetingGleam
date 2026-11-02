@@ -250,12 +250,5 @@ internal fun rememberInfo(path: String): FileInfo? {
     return info
 }
 
-/** EXIF 的日期写成 "2026:06:13 14:31:17"；按人写的样子显示，不要秒。 */
-internal fun niceTime(v: String) = v.replace(Regex("^(\\d{4}):(\\d{2}):(\\d{2})"), "$1-$2-$3").replace(Regex(":\\d{2}$"), "")
-
-/** 曝光时间可能是很长的分数（"1/813.2157314956827 s"）：按人写的样子显示（"1/813 s"）。 */
-internal fun niceShutter(v: String): String {
-    Regex("^1/(\\d+(?:\\.\\d+)?)\\s*s?$").find(v)?.let { return "1/${Math.round(it.groupValues[1].toDouble())} s" }
-    Regex("^(\\d+(?:\\.\\d+)?)\\s*s?$").find(v)?.let { return "${"%.2f".format(it.groupValues[1].toDouble()).trimEnd('0').trimEnd('.')} s" }
-    return v
-}
+/** EXIF 的日期写成 "2026:06:13 14:31:17"；按人写的样子显示，不要秒。新核心已经给成 "2026-06-13 14:31"，只在还带秒时去掉秒。 */
+internal fun niceTime(v: String) = v.replace(Regex("^(\\d{4}):(\\d{2}):(\\d{2})"), "$1-$2-$3").replace(Regex("(\\d{2}:\\d{2}):\\d{2}$"), "$1")
