@@ -13,10 +13,10 @@
   "license": "AGPL-3.0-or-later",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/lcopilot/FleetingGleam.git"
+    "url": "git+https://github.com/aiwren/FleetingGleam.git"
   },
   "bugs": {
-    "url": "https://github.com/lcopilot/FleetingGleam/issues"
+    "url": "https://github.com/aiwren/FleetingGleam/issues"
   },
-  "homepage": "https://github.com/lcopilot/FleetingGleam#readme"
+  "homepage": "https://github.com/aiwren/FleetingGleam#readme"
 }

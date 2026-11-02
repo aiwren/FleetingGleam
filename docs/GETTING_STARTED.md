@@ -10,7 +10,7 @@
 
 ## 1. 安装
 
-1. 打开 [Releases](https://github.com/lcopilot/FleetingGleam/releases)，下载最新版本的 `.dmg`（文件名里带 `aarch64`）。
+1. 打开 [Releases](https://github.com/aiwren/FleetingGleam/releases)，下载最新版本的 `.dmg`（文件名里带 `aarch64`）。
 2. 打开 `.dmg`，把 FleetingGleam 拖进“应用程序”。
 3. **第一次打开前，在“终端”里执行一次下面这条命令。** 这个版本没有经过苹果公证（需要付费的开发者账号），macOS 会给网上下载的应用打上隔离标记，直接打开会提示“已损坏”或“无法验证开发者”。这条命令只是去掉这个标记，只需要做一次：
 
@@ -113,4 +113,4 @@
 
 **打不开，提示“已损坏”或“无法验证开发者”？** 见上面“安装”的第 3 步。应用并没有损坏，只是没有经过苹果公证。
 
-**想反馈问题或提建议？** 欢迎到 [Issues](https://github.com/lcopilot/FleetingGleam/issues) 告诉我们。
+**想反馈问题或提建议？** 欢迎到 [Issues](https://github.com/aiwren/FleetingGleam/issues) 告诉我们。

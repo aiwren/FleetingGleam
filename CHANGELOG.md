@@ -255,5 +255,5 @@
 - 落地页（中英双语）。
 - 以 AGPL-3.0-or-later 开源。
 
-[未发布]: https://github.com/lcopilot/FleetingGleam/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/lcopilot/FleetingGleam/releases/tag/v0.1.0
+[未发布]: https://github.com/aiwren/FleetingGleam/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/aiwren/FleetingGleam/releases/tag/v0.1.0

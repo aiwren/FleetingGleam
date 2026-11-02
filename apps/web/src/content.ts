@@ -9,10 +9,10 @@ export const SITE = "https://fleetinggleam.fleetinggleam-web.workers.dev";
  */
 export const release = {
   available: false,
-  repo: "https://github.com/lcopilot/FleetingGleam",
-  download: "https://github.com/lcopilot/FleetingGleam/releases/latest",
+  repo: "https://github.com/aiwren/FleetingGleam",
+  download: "https://github.com/aiwren/FleetingGleam/releases/latest",
   /** The APK is uploaded to every Release under this fixed name (docs/RELEASING.md), so the link always gets the latest one. */
-  android: "https://github.com/lcopilot/FleetingGleam/releases/latest/download/FleetingGleam-android.apk",
+  android: "https://github.com/aiwren/FleetingGleam/releases/latest/download/FleetingGleam-android.apk",
 };
 
 /** Everything the page says. Nothing here claims more than the app does today. */

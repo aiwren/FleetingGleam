@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         感谢反馈。**请不要在这里上传你的个人照片。** 如果需要说明某张照片的问题，描述一下它的特征就好（比如“逆光的人像”“夜景”）。
-        如果是**安全问题**，请不要在这里公开，见 [SECURITY.md](https://github.com/lcopilot/FleetingGleam/blob/main/SECURITY.md)。
+        如果是**安全问题**，请不要在这里公开，见 [SECURITY.md](https://github.com/aiwren/FleetingGleam/blob/main/SECURITY.md)。
   - type: textarea
     id: what
     attributes:

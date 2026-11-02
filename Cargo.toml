@@ -9,7 +9,7 @@ default-members = ["packages/core", "apps/desktop/src-tauri"]
 version = "0.1.0"
 authors = ["FleetingGleam contributors"]
 license = "AGPL-3.0-or-later"
-repository = "https://github.com/lcopilot/FleetingGleam"
+repository = "https://github.com/aiwren/FleetingGleam"
 edition = "2021"
 
 # 几个 crate 共用的依赖版本，各自在 Cargo.toml 里写 `xxx.workspace = true`。

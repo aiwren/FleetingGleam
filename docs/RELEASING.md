@@ -67,7 +67,7 @@ git tag -d v0.1.0 && git push --delete origin v0.1.0   # 删除标签，同时�
 # 在放着这三个文件的机器上，进入 apps/desktop/models/
 gh release create models-v1 \
   siglip_so400m_vision_fp16.onnx face_landmarks.onnx face_blendshapes.onnx \
-  --repo lcopilot/FleetingGleam \
+  --repo aiwren/FleetingGleam \
   --title "模型文件（models-v1）" \
   --notes "FleetingGleam 的应用在第一次用到“极致分析”和“MediaPipe 眼睛检测”时会从这里下载这几个文件，不需要手动下载。来源和转换方式见 docs/MODELS.md。"
 ```
@@ -100,7 +100,7 @@ sh scripts/release.sh
 必须用和本机同一把密钥（证书 SHA-256 以 `0d258392c804` 开头），手机上已装的正式版才能直接覆盖升级。在**你自己的终端**里跑下面这段（从本机的密钥库和 `~/.gradle/gradle.properties` 读，屏幕上不显示任何值）：
 
 ```bash
-P=~/.gradle/gradle.properties; R=lcopilot/FleetingGleam
+P=~/.gradle/gradle.properties; R=aiwren/FleetingGleam
 base64 -i "$(grep -E '^FG_KEYSTORE=' $P | cut -d= -f2-)" | tr -d '\n' | gh secret set FG_KEYSTORE_BASE64 --repo $R
 for n in FG_KEYSTORE_PASSWORD FG_KEY_ALIAS FG_KEY_PASSWORD; do grep -E "^$n=" $P | head -1 | cut -d= -f2- | tr -d '\r\n' | gh secret set $n --repo $R; done
 gh secret list --repo $R

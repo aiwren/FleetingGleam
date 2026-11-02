@@ -34,7 +34,7 @@
       "license": "Apache-2.0"
     },
     "siglip_so400m_vision_fp16.onnx": {
-      "url": "https://github.com/lcopilot/FleetingGleam/releases/download/models-v1/siglip_so400m_vision_fp16.onnx",
+      "url": "https://github.com/aiwren/FleetingGleam/releases/download/models-v1/siglip_so400m_vision_fp16.onnx",
       "size": 857201964,
       "sha256": "637a65ed8c1ec1b61a06004f4deebc50ecc15d76ffc991e1bdd47202721f31d6",
       "source": "onnx-community/siglip-so400m-patch14-384-ONNX · onnx/model.onnx（抽出视觉部分并转为 fp16）",

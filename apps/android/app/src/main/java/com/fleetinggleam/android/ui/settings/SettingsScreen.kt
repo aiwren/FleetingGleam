@@ -464,7 +464,7 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
         if (section == "about") item {
             // 关于：应用介绍、几条链接（官网、源代码、隐私、条款、反馈、第三方许可）、版本（作者 2026-10-22 要求）
             val zh = I18n.isZh
-            val site = "https://fleetinggleam.fleetinggleam-web.workers.dev"; val repo = "https://github.com/lcopilot/FleetingGleam"
+            val site = "https://fleetinggleam.fleetinggleam-web.workers.dev"; val repo = "https://github.com/aiwren/FleetingGleam"
             val openUrl = { url: String -> runCatching { ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) } }
             // 隐私政策、使用条款：在应用里从底部推上来的半屏浏览器（Custom Tabs 的局部高度）里看，不跳出去；没有支持的浏览器就照常打开
             LaunchedEffect(Unit) { WebSheet.warm(ctx) }

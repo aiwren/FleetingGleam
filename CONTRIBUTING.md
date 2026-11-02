@@ -19,7 +19,7 @@
 | pnpm 11 | 版本由根目录 `package.json` 的 `packageManager` 指定，用 `corepack enable` 即可 |
 
 ```bash
-git clone https://github.com/lcopilot/FleetingGleam.git
+git clone https://github.com/aiwren/FleetingGleam.git
 cd FleetingGleam
 pnpm install
 ```
