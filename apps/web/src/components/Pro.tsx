@@ -3,7 +3,7 @@ import { copy, type Lang } from "../content";
 import { Ic } from "./Icons";
 import { reveal } from "./scroll";
 
-/** 给专业摄影师：三张卡（RAW + JPG 配对、写回 Lightroom、手动星级），滚到视野里依次升起。 */
+/** 给专业摄影师：六张卡（RAW + JPG 配对、写回 Lightroom、手动星级、键位、RAW 秒开、进度），滚到视野里依次升起。 */
 export default function Pro({ lang }: { lang: Lang }) {
   const c = copy[lang].pro;
   const body = useRef<HTMLDivElement>(null);
