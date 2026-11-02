@@ -8,6 +8,8 @@ export type Project = {
   name: string;
   folders: string[];
   overrides: Record<string, State>;
+  /** 手动打的星级（1–5），按照片路径；没打过的不在表里。和保留 / 淘汰互不影响，写回 Lightroom 时优先于应用的评分。 */
+  stars?: Record<string, number>;
   /** Legacy: the old keep quota. Ignored now; see `keepCap`. */
   keepRatio: number;
   /** At most this share of the photos is kept (a ceiling for when you want fewer). Unset = keep every good photo. */

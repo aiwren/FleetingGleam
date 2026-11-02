@@ -46,10 +46,12 @@ export function FaceAvatar({ photo, box, size }: { photo: Photo; box: [number, n
  * who is in it and which scene it belongs to. They combine, and every number is what the wall would show if you picked
  * that entry now, so a filter never promises photos the others have already ruled out.
  */
-function FilterPanel({ counts, mode, onMode, scenes, sceneFilter, onScene, people, personFilter, onPerson, onBrowseScenes, width }: {
+function FilterPanel({ counts, mode, onMode, scenes, sceneFilter, onScene, people, personFilter, onPerson, onBrowseScenes, width, starFilter = null, onStar, starCounts, starExact }: {
   counts: Record<ViewMode, number>; mode: ViewMode; onMode: (m: ViewMode) => void;
   scenes: SceneItem[]; sceneFilter: number | null; onScene: (s: number | null) => void;
   people: PersonItem[]; personFilter: number | null; onPerson: (p: number | null) => void; onBrowseScenes: () => void; width: number;
+  /** 手动星级筛选：只看 n 星及以上；`starCounts[n]` 是别的筛选都算上 n 星及以上有几张。没打过星的项目不显示这一栏。 */
+  starFilter?: number | null; onStar?: (n: number | null) => void; starCounts?: number[]; starExact?: number[];
 }) {
   const { t } = useTranslation();
   const [allPeople, setAllPeople] = useState(false);
@@ -87,6 +89,21 @@ function FilterPanel({ counts, mode, onMode, scenes, sceneFilter, onScene, peopl
           ))}
         </div>
       </section>
+
+      {onStar && starCounts && (starCounts[1] > 0 || starFilter !== null) && (
+        <section>
+          <h4>{t("stars.label")}{starFilter !== null && <button className="fp-clear" onClick={() => onStar(null)}>{t("cull.clearFilter")}</button>}</h4>
+          <div className="fp-rows" role="tablist">
+            {[5, 4, 3, 2, 1].filter((n) => (starExact ?? starCounts)[n] > 0 || starFilter === n).map((n) => (
+              <button key={n} role="tab" aria-selected={starFilter === n} className={`fp-row ${starFilter === n ? "on" : ""}`} onClick={() => onStar(starFilter === n ? null : n)}>
+                <span className="fp-stars">{"★".repeat(n)}</span>
+                <span>{t("stars.atLeast", { count: n })}</span>
+                <em className="mono"><Ticker value={starCounts[n]} /></em>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       {people.length > 0 && (
         <section>

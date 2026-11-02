@@ -12,6 +12,7 @@ const en = {
     language: "Language", systemLang: "System",
   },
   state: { all: "All", keep: "Keep", review: "Review", reject: "Reject" },
+  stars: { label: "Stars", set_one: "{{count}} star", set_other: "{{count}} stars", clear: "Clear stars", tile_one: "{{count}} star (yours)", tile_other: "{{count}} stars (yours)", atLeast_one: "{{count}} star and up", atLeast_other: "{{count}} stars and up" },
   cull: {
     photoCount_one: "{{count}} photo",
     photoCount_other: "{{count}} photos",
@@ -157,7 +158,7 @@ const en = {
   viewer: { navigator: "Area being viewed", navigatorHint: "Drag the frame to move the view", liveOff: "Turn Live off", liveOn: "Turn Live on", replayMotion: "Replay", playMotion: "Play Live", stopMotion: "Stop", strip: "All photos",
     close: "Close", overall: "Overall", ai: "AI look", sharp: "Sharpness", expo: "Exposure", help: "Shortcuts",
     rotate: "Rotate", rotateTip: "Turn 90° clockwise (⌘]; ⌘[ the other way). Only how it is shown changes; the file is untouched.",
-    hint: "Scroll to zoom · Drag to pan · Double-click to magnify · ← → to navigate · ⌘] rotate",
+    hint: "Scroll to zoom · Drag to pan · Double-click to magnify · ← → to navigate · P / R / X to mark · 1–5 to rate · ⌘] rotate",
   },
   reason: {
     blur: "Subject isn't sharp enough — likely missed focus or camera shake",
@@ -308,7 +309,7 @@ const en = {
     marksItem: "Write ratings & labels", marksDesc_one: "Write {{count}} photo's stars and colour label so Lightroom / Bridge show them", marksDesc_other: "Write {{count}} photos' stars and colour labels so Lightroom / Bridge show them", marksTitle: "Write ratings & labels",
     marksBody_one: "Write the result for {{count}} photo as metadata Lightroom / Bridge understand: keep → stars + green label, review → yellow label, reject → rejected flag + red label.", marksBody_other: "Write the result for {{count}} photos as metadata Lightroom / Bridge understand: keep → stars + green label, review → yellow label, reject → rejected flag + red label.",
     marksSidecars_one: "{{n}} RAW / TIFF: written to a .xmp file next to it", marksSidecars_other: "{{n}} RAW / TIFF: written to .xmp files next to them", marksEmbedded_one: "{{n}} JPEG: written into the file's own metadata, pixels untouched", marksEmbedded_other: "{{n}} JPEGs: written into each file's own metadata, pixels untouched", marksUnsupported_one: "{{n}} HEIC / PNG or similar can't take it and will be skipped", marksUnsupported_other: "{{n}} HEIC / PNG or similar can't take it and will be skipped",
-    marksStars: "Write stars (1–5, from the app's score)", marksLabels: "Write colour labels (green / yellow / red)", marksSafe: "Other metadata already on the photos stays as it is; the whole write can be undone.",
+    marksStars: "Write stars (yours where you rated, else 1–5 from the app's score)", marksLabels: "Write colour labels (green / yellow / red)", marksSafe: "Other metadata already on the photos stays as it is; the whole write can be undone.",
     marksGo: "Write", marksWriting: "Writing…", marksWritten: "Wrote {{sidecars}} .xmp files and {{embedded}} JPEGs", marksSkipped_one: "{{n}} unsupported format skipped", marksSkipped_other: "{{n}} unsupported formats skipped", marksFailed: "The write did not finish: {{error}}",
     marksNext: "In Lightroom, select these photos and use Metadata › Read Metadata from Files to see them.", marksUndo: "Undo write", marksUndoing: "Undoing…", marksUndone_one: "Undid the write on {{count}} photo", marksUndone_other: "Undid the write on {{count}} photos", marksUndoFailed_one: "{{n}} could not be undone (the file may have moved).", marksUndoFailed_other: "{{n}} could not be undone (the files may have moved).",
   },

@@ -8,6 +8,7 @@ import { DUR, EASE_OUT, SPRING } from "../motion";
 import { useLarge } from "../largeSrc";
 import { Decision, Photo, State, pct, thumbSrc } from "../types";
 import PhotoTags from "../components/PhotoTags";
+import Stars from "../components/Stars";
 
 type Props = {
   /** false while another page is in front: the keys belong to it then */
@@ -19,6 +20,9 @@ type Props = {
   onClose: () => void;
   onStep: (d: number) => void;
   onDecide: (s: State) => void;
+  /** 手动星级（1–5）与改它的回调（null = 清除）。 */
+  stars?: number;
+  onRate: (n: number | null) => void;
   /** 顺时针（1）或逆时针（-1）转 90°。 */
   onRotate: (dir: 1 | -1) => void;
   /** Every photo in the current view, in order, for the strip along the bottom, and what has been decided about each. */
@@ -44,7 +48,7 @@ const isBig = (p: Photo) => p.width * p.height >= BIG_PIXELS;
 const maybeHdr = (p: Photo) => p.hdr || !SDR_EXT.has((p.path.split(".").pop() ?? "").toLowerCase());
 const hdrSupported = () => (hdrSupport ??= invoke<boolean>("hdr_overlay_supported").catch(() => false));
 
-export default function Viewer({ photo, decision, index, total, onClose, onStep, onDecide, onRotate, photos, decisions, onJump, from, active = true }: Props) {
+export default function Viewer({ photo, decision, index, total, onClose, onStep, onDecide, stars, onRate, onRotate, photos, decisions, onJump, from, active = true }: Props) {
   const { t } = useTranslation();
   const large = useLarge(photo.path, true, true);
   // The view that is on screen lives in `view` and is painted straight onto the elements once per frame, so zooming and panning never wait for a
@@ -367,6 +371,8 @@ export default function Viewer({ photo, decision, index, total, onClose, onStep,
     else if (k === "p") onDecide("keep");
     else if (k === "r") onDecide("review");
     else if (k === "x") onDecide("reject");
+    // 数字键 1–5 打星，再按一次取消（0 在这里是复位缩放）
+    else if (/^[1-5]$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey) { const n = Number(e.key); onRate(stars === n ? null : n); }
   };
   useEffect(() => {
     if (!active) return;
@@ -451,6 +457,8 @@ export default function Viewer({ photo, decision, index, total, onClose, onStep,
         <span className="mono ash">{index + 1} / {total} · <span ref={pctRef}>100%</span></span>
         <div className="viewer-actions">
           {btn("keep", "P")}{btn("review", "R")}{btn("reject", "X")}
+          <i className="tb-sep" aria-hidden />
+          <Stars value={stars} onChange={onRate} size={15} dark />
           <i className="tb-sep" aria-hidden />
           <button className="vbtn icon" onClick={() => onRotate(1)} aria-label={t("viewer.rotate")} data-tip={`${t("viewer.rotate")} · ⌘]`}>
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12.9 9.6A5 5 0 1 1 11.5 4.5M13.5 2.5v3.5H10" /></svg>

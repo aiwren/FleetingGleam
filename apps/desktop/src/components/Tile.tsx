@@ -23,6 +23,8 @@ type Props = {
   box: { left: number; top: number; width: number; height: number };
   /** True when the current mark was set by the user (clicking it again clears it). */
   manual: boolean;
+  /** 手动打的星级（1–5），没打过就没有。 */
+  stars?: number;
   /** Last photo of a group of similar shots: leaves a little extra room after it. */
   groupEnd: boolean;
   showScore: boolean;
@@ -58,7 +60,7 @@ const Cross = () => <svg width="12" height="12" viewBox="0 0 12 12" fill="none" 
  * Marks are made of light rather than badges: a kept photo is *lit* (gold gleam, warm halo), a maybe is a hollow
  * gleam, a reject simply lets the light fall away. A glass dock under the cursor marks a photo in one click.
  */
-function Tile({ path, ratio, photo, stage, state, reveal, dim, box, manual, groupEnd, showScore, index, interactive, stamp = false, onSelect, onOpen, onDecide }: Props) {
+function Tile({ path, ratio, photo, stage, state, reveal, dim, box, manual, stars, groupEnd, showScore, index, interactive, stamp = false, onSelect, onOpen, onDecide }: Props) {
   const { t } = useTranslation();
   const ref = useRef<HTMLDivElement>(null);
   const prev = useRef<State | "">(state);
@@ -156,6 +158,8 @@ function Tile({ path, ratio, photo, stage, state, reveal, dim, box, manual, grou
         {/* 格子上的覆盖层最多两个（R10）：格式标签只在 ≥ 180px 宽的格子上 */}
         {photo && box.width >= 180 && <PhotoTags photo={photo} className="ontile" />}
         {photo && <span className="chip mono" data-tip={t("inspector.scoreChip", { score: pct(photo.score) })}>{pct(photo.score)}</span>}
+        {/* 手动星级：右下角一个小标，和保留 / 淘汰的标记无关 */}
+        {photo && stars ? <span className="mstars mono" title={t("stars.tile", { count: stars })}>{"★".repeat(stars)}</span> : null}
 
         {interactive && (
           <span className="dock" onClick={stop} onDoubleClick={stop} onPointerMove={stop}>

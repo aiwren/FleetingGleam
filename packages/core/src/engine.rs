@@ -331,6 +331,9 @@ pub struct MarkArgs {
     pub state: String,
     #[serde(default)]
     pub score: f32,
+    /// 手动打的星级（1–5）：有就写它，不按分算。
+    #[serde(default)]
+    pub stars: Option<i32>,
 }
 
 /// 写回的结果：写了几个旁车、几个 JPEG，哪些格式不支持而跳过，哪些失败；`undo` 原样交回 `undo_marks` 可整体回滚。
@@ -1884,8 +1887,8 @@ impl Engine {
         let mut r = MarkResult::default();
         for it in items {
             let (rating, label) = match it.state.as_str() {
-                "keep" => (stars.then(|| (it.score * 5.0).ceil().clamp(1.0, 5.0) as i32), labels.then(|| "Green".to_string())),
-                "review" => (None, labels.then(|| "Yellow".to_string())),
+                "keep" => (stars.then(|| it.stars.unwrap_or_else(|| (it.score * 5.0).ceil() as i32).clamp(1, 5)), labels.then(|| "Green".to_string())),
+                "review" => (stars.then(|| it.stars).flatten().map(|s| s.clamp(1, 5)), labels.then(|| "Yellow".to_string())),
                 "reject" => (stars.then_some(-1), labels.then(|| "Red".to_string())),
                 _ => (None, None),
             };

@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { SPRING } from "../motion";
 import { Decision, Photo, Reason, State, pct } from "../types";
 import { Star } from "./Tile";
+import Stars from "./Stars";
 
 const STATES: State[] = ["keep", "review", "reject"];
 
@@ -21,8 +22,10 @@ function Bar({ label, value }: { label: string; value: number }) {
  * The verdict for one photo, in one compact block: the score, the three marks, why, and the numbers behind it as bars.
  * It lives in the inspector and is the only place these are shown.
  */
-export default function PhotoVerdict({ photo, decision, onDecide, reasonText, scoreTip, onZoom }: {
+export default function PhotoVerdict({ photo, decision, onDecide, stars, onRate, reasonText, scoreTip, onZoom }: {
   photo: Photo; decision?: Decision; onDecide: (s: State | null) => void; reasonText: (r: Reason) => string; scoreTip?: ReactNode;
+  /** 手动星级（1–5）与改它的回调（null = 清除）。 */
+  stars?: number; onRate: (n: number | null) => void;
   /** 名字行右边的"放大"（检查器里没有预览图了，这是打开大图的入口）。 */
   onZoom?: () => void;
 }) {
@@ -54,6 +57,7 @@ export default function PhotoVerdict({ photo, decision, onDecide, reasonText, sc
           </button>
         ))}
       </div>
+      <div className="srate"><span className="ash small">{t("stars.label")}</span><Stars value={stars} onChange={onRate} size={15} /></div>
       {reasons && <p className="sreasons">{reasons}</p>}
       <div className="mbars">
         <Bar label={t("inspector.sharp")} value={pct(photo.sharp_score)} />

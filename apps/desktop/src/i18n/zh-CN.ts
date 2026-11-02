@@ -12,6 +12,7 @@ const zh = {
     language: "语言", systemLang: "跟随系统",
   },
   state: { all: "全部", keep: "保留", review: "待复查", reject: "淘汰" },
+  stars: { label: "星级", set: "打 {{count}} 星", clear: "取消星级", tile: "{{count}} 星（手动）", atLeast: "{{count}} 星及以上" },
   cull: {
     photoCount_other: "{{count}} 张",
     keepShare: "保留", keepShareAria: "保留比例",
@@ -155,7 +156,7 @@ const zh = {
   viewer: { navigator: "当前查看的区域", navigatorHint: "拖动方框移动视野", liveOff: "关闭实况", liveOn: "开启实况", replayMotion: "重新播放", playMotion: "播放实况", stopMotion: "停止播放", strip: "所有照片",
     close: "关闭", overall: "综合", ai: "AI 观感", sharp: "清晰度", expo: "曝光", help: "快捷键",
     rotate: "旋转", rotateTip: "顺时针转 90°（⌘]；⌘[ 反向）。只改显示，原文件不动。",
-    hint: "滚轮缩放 · 拖动平移 · 双击放大 · ← → 切换 · ⌘] 旋转",
+    hint: "滚轮缩放 · 拖动平移 · 双击放大 · ← → 切换 · P / R / X 判定 · 1–5 打星 · ⌘] 旋转",
   },
   reason: {
     blur: "主体清晰度不足，疑似虚焦或手抖",
@@ -306,7 +307,7 @@ const zh = {
     marksItem: "写入评分与标记", marksDesc: "{{count}} 张的星级和颜色标签写进照片，Lightroom / Bridge 直接能看", marksTitle: "写入评分与标记",
     marksBody: "把 {{count}} 张照片的筛选结果写成 Lightroom / Bridge 认的元数据：保留 → 星级 + 绿色标签，待复查 → 黄色标签，淘汰 → 标为拒绝 + 红色标签。",
     marksSidecars: "{{n}} 个 RAW / TIFF：写到旁边的同名 .xmp 文件", marksEmbedded: "{{n}} 个 JPEG：写进文件自己的元数据，像素不动", marksUnsupported: "{{n}} 个 HEIC / PNG 等格式写不了，会跳过",
-    marksStars: "写星级（按应用的评分，1–5 星）", marksLabels: "写颜色标签（绿 / 黄 / 红）", marksSafe: "照片上已有的别的元数据原样保留；写完可以整体撤销。",
+    marksStars: "写星级（手动打过的用手动的，其余按应用的评分，1–5 星）", marksLabels: "写颜色标签（绿 / 黄 / 红）", marksSafe: "照片上已有的别的元数据原样保留；写完可以整体撤销。",
     marksGo: "开始写入", marksWriting: "正在写入…", marksWritten: "已写入 {{sidecars}} 个 .xmp 文件、{{embedded}} 个 JPEG", marksSkipped: "{{n}} 个格式不支持，跳过了", marksFailed: "写入没有完成：{{error}}",
     marksNext: "在 Lightroom 里选中这些照片，用“元数据 › 从文件读取元数据”就能看到。", marksUndo: "撤销写入", marksUndoing: "正在撤销…", marksUndone: "已撤销 {{count}} 张的写入", marksUndoFailed: "有 {{n}} 张没能撤销（文件可能已被移动）。",
   },

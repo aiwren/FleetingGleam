@@ -32,10 +32,12 @@ type Phase = "confirm" | "running" | "done";
  * "整理": what to do with the result. Export copies the keepers somewhere new (originals untouched).
  * Trash moves rejects to the *system* trash, so anything can be put back from Finder.
  */
-export default function Organize({ project, photos, decisions, offline = false, onChanged }: {
+export default function Organize({ project, photos, decisions, stars, offline = false, onChanged }: {
   project: Project;
   photos: Photo[];
   decisions: Map<string, Decision>;
+  /** 手动星级，按路径；写回时优先于应用的评分。 */
+  stars?: Record<string, number>;
   /** 项目所在的 NAS 现在连不上（照片来自本机镜像）：传到 NAS、在 NAS 上移到回收站都做不了，置灰。 */
   offline?: boolean;
   onChanged: () => void;
@@ -133,7 +135,7 @@ export default function Organize({ project, photos, decisions, offline = false, 
   const startMarks = async () => {
     setPhase("running");
     try {
-      const items = decided.map((p) => ({ path: p.path, state: decisions.get(p.path)!.state, score: p.score }));
+      const items = decided.map((p) => ({ path: p.path, state: decisions.get(p.path)!.state, score: p.score, stars: stars?.[p.path] ?? null }));
       const r = await invoke<MarkResult>("write_marks", { items, stars: markStars, labels: markLabels });
       setMarkResult(r);
     } catch (e) { setMarkResult({ error: String(e) }); }

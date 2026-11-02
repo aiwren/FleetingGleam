@@ -47,12 +47,14 @@ type CompactDecisions = { rev: number; paths?: string[]; states: string; manual:
 const STATE_OF: Record<string, State> = { k: "keep", r: "review", x: "reject" };
 const manualReason = (st: State): Reason => ({ k: "reason.manual", p: { stateKey: `state.${st}` } });
 /** 撤销栈的一步：一批改判（每张改前改后的手动标记，undefined = 系统建议），或转了一张照片。 */
-type HistoryStep = { kind: "mark"; items: { path: string; prev: State | undefined; next: State | undefined }[] } | { kind: "rotate"; path: string; dir: 1 | -1 };
+type HistoryStep = { kind: "mark"; items: { path: string; prev: State | undefined; next: State | undefined }[] } | { kind: "rotate"; path: string; dir: 1 | -1 } | { kind: "stars"; items: { path: string; prev: number | undefined; next: number | undefined }[] };
+const NO_STARS: Record<string, number> = {};
+const NO_STARN = [0, 0, 0, 0, 0, 0];
 /**
  * 离开项目时这一屏的样子（审查第二批：以前离开再回来一切归零）：筛选、选中、滚动位置和撤销栈，按项目记在这次运行里。
  * 回到项目、照片出来以后原样放回去。
  */
-type ViewMemo = { mode: ViewMode; sceneFilter: number | null; personFilter: number | null; selected: string | null; scroll: number; undo: HistoryStep[]; redo: HistoryStep[] };
+type ViewMemo = { mode: ViewMode; sceneFilter: number | null; personFilter: number | null; starFilter?: number | null; selected: string | null; scroll: number; undo: HistoryStep[]; redo: HistoryStep[] };
 const viewMemo = new Map<string, ViewMemo>();
 const NONE: ReadonlySet<string> = new Set();
 /** 分析中筛选栏没有场景和人物：给同一个空数组，别让 FilterPanel 的 memo 每帧被新的 [] 打穿。 */
@@ -107,6 +109,8 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const [mode, setMode] = useState<ViewMode>("all");
   const [sceneFilter, setSceneFilter] = useState<number | null>(null);
   const [personFilter, setPersonFilter] = useState<number | null>(null);
+  /** 只看 n 星及以上（null = 不按星筛）。 */
+  const [starFilter, setStarFilter] = useState<number | null>(null);
   const filterW = usePanelWidth("fg.w.filter", 236, 190, 460);
   const inspectorW = usePanelWidth("fg.w.inspector", 300, 240, 560);
   const [resizing, setResizing] = useState(false);
@@ -185,6 +189,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const setSortBy = (v: SortBy) => { if (project) updateProject(project.id, { sort: v }); };
   const overrides = useMemo(() => new Map(Object.entries(project?.overrides ?? {})) as Map<string, State>, [project?.overrides]);
   const overridesRef = useRef(overrides);
+  const starsOf = project?.stars ?? NO_STARS;
   overridesRef.current = overrides;
 
   // Live scan data lives in refs and is flushed once per frame, so thousands of events stay cheap.
@@ -321,7 +326,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     undoStack.current = memo?.undo ?? [];
     redoStack.current = memo?.redo ?? [];
     restoreView.current = memo && (memo.selected || memo.scroll) ? { selected: memo.selected, scroll: memo.scroll } : null;
-    setSelected(null); setMulti(NONE); anchor.current = null; setQuery(""); setZoomed(false); setError(null); setMode(memo?.mode ?? "all"); setSceneFilter(memo?.sceneFilter ?? null); setPersonFilter(memo?.personFilter ?? null); setSceneView(false); setCelebrate(false); setDirty(0); setNasProg(null); setOffline(null);
+    setSelected(null); setMulti(NONE); anchor.current = null; setQuery(""); setZoomed(false); setError(null); setMode(memo?.mode ?? "all"); setSceneFilter(memo?.sceneFilter ?? null); setPersonFilter(memo?.personFilter ?? null); setStarFilter(memo?.starFilter ?? null); setSceneView(false); setCelebrate(false); setDirty(0); setNasProg(null); setOffline(null);
     setBgDone((d) => (d && project && d.id === project.id ? null : d));
     // 回到正在分析的那个项目（文件夹没变）：接上，照片墙和进度都还在，不重来
     if (project && run && run.id === project.id && run.folders.join("|") === project.folders.join("|")) {
@@ -550,16 +555,21 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     const inScene = (p: Photo) => sceneFilter === null || p.scene === sceneFilter;
     const inPerson = (p: Photo) => personFilter === null || p.people.includes(personFilter);
     const inMode = (p: Photo) => mode === "all" || st(p) === mode;
+    const inStar = (p: Photo) => starFilter === null || (starsOf[p.path] ?? 0) >= starFilter;
     const status = { all: 0, keep: 0, review: 0, reject: 0 };
     const sceneN = new Map<number, number>();
     const personN = new Map<number, number>();
+    // starN[n]：别的筛选都算上，n 星及以上有几张；starX[n]：正好 n 星有几张（面板只列真打过的星数）
+    const starN = [0, 0, 0, 0, 0, 0];
+    const starX = [0, 0, 0, 0, 0, 0];
     for (const p of photos) {
-      if (inScene(p) && inPerson(p)) { status.all++; const s = st(p); if (s) status[s]++; }
-      if (inMode(p) && inPerson(p)) sceneN.set(p.scene, (sceneN.get(p.scene) ?? 0) + 1);
-      if (inMode(p) && inScene(p)) new Set(p.people.filter((id) => id >= 0)).forEach((id) => personN.set(id, (personN.get(id) ?? 0) + 1));
+      if (inScene(p) && inPerson(p) && inStar(p)) { status.all++; const s = st(p); if (s) status[s]++; }
+      if (inMode(p) && inPerson(p) && inStar(p)) sceneN.set(p.scene, (sceneN.get(p.scene) ?? 0) + 1);
+      if (inMode(p) && inScene(p) && inStar(p)) new Set(p.people.filter((id) => id >= 0)).forEach((id) => personN.set(id, (personN.get(id) ?? 0) + 1));
+      if (inMode(p) && inScene(p) && inPerson(p)) { const n = starsOf[p.path] ?? 0; if (n >= 1 && n <= 5) starX[n]++; for (let k = 1; k <= n; k++) starN[k]++; }
     }
-    return { status, sceneN, personN };
-  }, [photos, decisions, mode, sceneFilter, personFilter]);
+    return { status, sceneN, personN, starN, starX };
+  }, [photos, decisions, mode, sceneFilter, personFilter, starFilter, starsOf]);
   // Ask the backend to name each scene (biggest first) once the photos are final: from a large vocabulary of places straight away, and for
   // the scenes it cannot name, in a sentence from the captioning model when that is installed. The names arrive one at a time. Scene numbers change whenever photos are regrouped, so it starts over then; sentences already written are remembered.
   const describeScenes = useCallback((caption: boolean) => {
@@ -604,19 +614,19 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     if (!sceneView) return [];   // only the scene page needs these, and building them for every photo is not free
     const by = new Map<number, Photo[]>();
     for (const p of photos) {
-      if ((mode !== "all" && decisions.get(p.path)?.state !== mode) || (personFilter !== null && !p.people.includes(personFilter))) continue;
+      if ((mode !== "all" && decisions.get(p.path)?.state !== mode) || (personFilter !== null && !p.people.includes(personFilter)) || (starFilter !== null && (starsOf[p.path] ?? 0) < starFilter)) continue;
       const l = by.get(p.scene);
       if (l) l.push(p); else by.set(p.scene, [p]);
     }
     return [...by.entries()].map(([scene, ps]) => ({ scene, photos: ps.sort((a, b) => b.score - a.score), text: sceneText.get(scene) ?? "" })).sort((a, b) => b.photos.length - a.photos.length);
-  }, [photos, decisions, mode, personFilter, sceneText, sceneView]);
+  }, [photos, decisions, mode, personFilter, starFilter, starsOf, sceneText, sceneView]);
   // Compare works inside the filters: with a person picked only their photos are put side by side, and with a scene picked the scene as a whole is compared, not just one burst.
   const compareAll = useMemo(() => (personFilter === null ? photos : photos.filter((p) => p.people.includes(personFilter))), [photos, personFilter]);
   const sceneItems = useMemo(() => scenes.map((s) => ({ ...s, count: facets.sceneN.get(s.scene) ?? 0, text: sceneText.get(s.scene) ?? "" })), [scenes, facets, sceneText]);
   const peopleItems = useMemo(() => people.map((p) => ({ person: p.person, photo: p.photo, box: p.box, total: p.total, count: facets.personN.get(p.person) ?? 0 })), [people, facets]);
 
   // The selected photo stays visible until you move on, even if the change you just made means it no longer matches this view.
-  const matchesView = useCallback((p: Photo) => (mode === "all" || decisions.get(p.path)?.state === mode) && (sceneFilter === null || p.scene === sceneFilter) && (personFilter === null || p.people.includes(personFilter)), [mode, decisions, sceneFilter, personFilter]);
+  const matchesView = useCallback((p: Photo) => (mode === "all" || decisions.get(p.path)?.state === mode) && (sceneFilter === null || p.scene === sceneFilter) && (personFilter === null || p.people.includes(personFilter)) && (starFilter === null || (starsOf[p.path] ?? 0) >= starFilter), [mode, decisions, sceneFilter, personFilter, starFilter, starsOf]);
   const byPath = useMemo(() => new Map(photos.map((p) => [p.path, p])), [photos]);
   // Only when the selected photo really no longer matches is it carried along. In every other case this is null, so selecting a photo leaves the
   // list of photos in view (and with it every tile's position) exactly as it was.
@@ -806,6 +816,19 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     }
     return true;
   }, [project, photos, byPath, phase, pushHistory]);
+  /** 手动星级：`changes` 里每张各自的新星数（null = 清除）；撤销 / 重做时不进撤销栈。和保留 / 淘汰无关。返回是不是真改了。 */
+  const rate = useCallback((changes: { path: string; n: number | null }[], fromHistory = false): boolean => {
+    if (!project) return false;
+    const cur = project.stars ?? NO_STARS;
+    const list = changes.filter((c) => (byPath.has(c.path) || results.current.has(c.path)) && (cur[c.path] ?? null) !== c.n);
+    if (!list.length) return false;
+    const next = { ...cur };
+    for (const c of list) { if (c.n === null) delete next[c.path]; else next[c.path] = c.n; }
+    updateProject(project.id, { stars: next });
+    setDirty((d) => d + 1);
+    if (!fromHistory) pushHistory({ kind: "stars", items: list.map((c) => ({ path: c.path, prev: cur[c.path], next: c.n ?? undefined })) });
+    return true;
+  }, [project, byPath, pushHistory]);
   /** 把一张或一批照片标成 `st`。 */
   const decide = useCallback((target: string | string[], st: State | null) => {
     const paths = Array.isArray(target) ? target : [target];
@@ -828,6 +851,14 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     return selected && pickable.some((p) => p.path === selected) ? [selected] : [];
   }, [multi, pickable, selected]);
   const decideSel = useCallback((st: State | null) => { const s = selection(); if (s.length) decide(s, st); }, [selection, decide]);
+  /** 数字键 1–5：选着的照片打 n 星；全都已经是 n 星就清掉（再按一次取消）。0 = 清除。 */
+  const rateSel = useCallback((n: number | null) => {
+    const s = selection();
+    if (!s.length) return;
+    const cur = project?.stars ?? NO_STARS;
+    const target = n !== null && s.every((p) => cur[p] === n) ? null : n;
+    rate(s.map((path) => ({ path, n: target })));
+  }, [selection, rate, project?.stars]);
   const decideRef = useRef(decide);
   decideRef.current = decide;
   const selectionRef = useRef(selection);
@@ -852,8 +883,9 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   /** 把一步撤回（`undo`）或重做（`redo`）。返回是不是落下了（照片都不在了就落不下）。 */
   const applyStep = useCallback((s: HistoryStep, how: "undo" | "redo"): boolean => {
     if (s.kind === "rotate") return rotate(s.path, how === "undo" ? (s.dir === 1 ? -1 : 1) : s.dir, true);
+    if (s.kind === "stars") return rate(s.items.map((x) => ({ path: x.path, n: (how === "undo" ? x.prev : x.next) ?? null })), true);
     return mark(s.items.map((x) => ({ path: x.path, state: (how === "undo" ? x.prev : x.next) ?? null })), true);
-  }, [rotate, mark]);
+  }, [rotate, mark, rate]);
   // 一条撤销可能一张都落不下（分析失败、没出结果的照片）：不算一次，接着弹下一条，而不是按一下什么都没发生（审查第 60 条）。
   // 撤回的那步进重做栈；新的操作会清掉重做栈
   const undoLast = useCallback(() => {
@@ -912,10 +944,11 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
       else if (k === "p") decideSel("keep");
       else if (k === "r") decideSel("review");
       else if (k === "x") decideSel("reject");
+      else if (/^[0-5]$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey) rateSel(e.key === "0" ? null : Number(e.key));
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, zoomed, phase, layout, move, moveRow, sel, multi, decideSel, rotate, openViewer]);
+  }, [active, zoomed, phase, layout, move, moveRow, sel, multi, decideSel, rateSel, rotate, openViewer]);
 
   // Single and Compare always show a photo: fall back to the first one when nothing (or something filtered out) is selected.
   useEffect(() => {
@@ -1017,7 +1050,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const showWall = scanning || phase === "done";
   // 只认属于眼下这个项目的渲染：离开那一刻（项目已经换了、进项目的 effect 还没跑）这一帧不算，墙底下换内容引起的滚动也不记
   const viewLive = showWall && !!project && project.id === enteredId.current;
-  if (viewLive) viewNow.current = { shown: true, memo: { mode, sceneFilter, personFilter, selected, scroll: viewNow.current.memo.scroll } };
+  if (viewLive) viewNow.current = { shown: true, memo: { mode, sceneFilter, personFilter, starFilter, selected, scroll: viewNow.current.memo.scroll } };
   else if (project && project.id === enteredId.current) viewNow.current.shown = false;
   const viewLiveRef = useRef(viewLive);
   viewLiveRef.current = viewLive;
@@ -1102,7 +1135,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
                 sorts={[]} />
             )}
             {project && phase === "done" && <i className="tb-sep" aria-hidden />}
-            {project && phase === "done" && <Organize project={project} photos={photos} decisions={decisions} offline={!!offline} onChanged={() => setReloadKey((k) => k + 1)} />}
+            {project && phase === "done" && <Organize project={project} photos={photos} decisions={decisions} stars={starsOf} offline={!!offline} onChanged={() => setReloadKey((k) => k + 1)} />}
             {project && phase === "done" && <i className="tb-sep" aria-hidden />}
             {project && (
               <button className="btn icon plain" onClick={() => setSettingsOpen(true)} disabled={scanning} aria-label={t("pset.settings")} title={t("pset.settings")}>
@@ -1151,7 +1184,8 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
         {panelShown && (
           <FilterPanel counts={scanning ? liveCounts : facets.status}
             mode={mode} onMode={setMode} scenes={scanning ? NO_SCENES : sceneItems} sceneFilter={sceneFilter} onScene={setSceneFilter} onBrowseScenes={openSceneView} width={filterW.width}
-            people={scanning ? NO_PEOPLE : peopleItems} personFilter={personFilter} onPerson={setPersonFilter} />
+            people={scanning ? NO_PEOPLE : peopleItems} personFilter={personFilter} onPerson={setPersonFilter}
+            starFilter={starFilter} onStar={setStarFilter} starCounts={scanning ? NO_STARN : facets.starN} starExact={scanning ? NO_STARN : facets.starX} />
         )}
         {panelShown && <Resizer panel={filterW} edge="right" label={t("cull.filters")} />}
         <div className="scroll" ref={scrollRef}>
@@ -1236,7 +1270,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
               return (
                 <Tile key={it.path} path={it.path} ratio={it.ratio} photo={photo} stage={stages.current.get(it.path)}
                   state={state} reveal={celebrate && phase === "done"} dim={state === "reject" && mode === "all"} stamp={scanning}
-                  manual={!!d?.manual} groupEnd={groupEnds.has(it.path)} showScore={sortBy === "score"} index={i}
+                  manual={!!d?.manual} stars={starsOf[it.path]} groupEnd={groupEnds.has(it.path)} showScore={sortBy === "score"} index={i}
                   interactive={!!photo} box={box}
                   onSelect={tileSelect} onOpen={openViewer} onDecide={tileDecide} />
               );
@@ -1265,7 +1299,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
                     <motion.div key="body" className="inspector-body" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.2, ease: EASE_OUT }}>
                       {/* 没有预览缩略图：它就是墙上带焦点框的那一张（M8.1）；名字行右边一个"放大" */}
                       {multi.size > 1 && <p className="ash multi-note">{t("inspector.multi", { count: selection().length })}</p>}
-                      <PhotoVerdict photo={sel} decision={decision} onDecide={decideSel} reasonText={reasonText}
+                      <PhotoVerdict photo={sel} decision={decision} onDecide={decideSel} stars={starsOf[sel.path]} onRate={(n) => rate([{ path: sel.path, n }])} reasonText={reasonText}
                         scoreTip={<InfoPop title={t("inspector.overall")} width={280}><p className="ash">{t("inspector.scoreTip")}</p></InfoPop>}
                         onZoom={() => openViewer(sel.path)} />
                       {groupMates.length > 1 && (
@@ -1331,7 +1365,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
       <AnimatePresence>
         {zoomed && sel && (
           <Viewer key="viewer" photo={sel} decision={decision} index={selIndex} total={pickable.length}
-            onClose={() => setZoomed(false)} onStep={move} onDecide={(st) => decide(sel.path, st)} onRotate={(d) => rotate(sel.path, d)} photos={pickable} decisions={pickDecisions} onJump={select} from={from} active={active} />
+            onClose={() => setZoomed(false)} onStep={move} onDecide={(st) => decide(sel.path, st)} stars={starsOf[sel.path]} onRate={(n) => rate([{ path: sel.path, n }])} onRotate={(d) => rotate(sel.path, d)} photos={pickable} decisions={pickDecisions} onJump={select} from={from} active={active} />
         )}
       </AnimatePresence>
     </div>
