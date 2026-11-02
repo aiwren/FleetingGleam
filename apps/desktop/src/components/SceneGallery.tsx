@@ -1,7 +1,8 @@
 import { useTranslation } from "react-i18next";
 import { Photo, thumbSrc } from "../types";
 
-export type SceneGroup = { scene: number; photos: Photo[]; text: string };
+/** `handled`：这组里已处理（手动判定或打过星）的几张。 */
+export type SceneGroup = { scene: number; photos: Photo[]; handled: number; text: string };
 
 /**
  * Every scene at a size you can actually recognise: the best shot large, a few more of the scene beneath it.
@@ -29,7 +30,7 @@ export default function SceneGallery({ groups, chosen, describing, canDescribe, 
             <span className="sg-cover">
               <img src={thumbSrc(g.photos[0])} alt="" loading="lazy" draggable={false} />
               {g.text && <span className="sg-words">{g.text}</span>}
-              <span className="sg-count mono">{t("cull.sceneCount", { count: g.photos.length })}</span>
+              <span className={`sg-count mono ${g.handled >= g.photos.length ? "done" : ""}`}>{t("cull.sceneHandled", { count: g.photos.length, handled: g.handled })}</span>
             </span>
             {g.photos.length > 1 && (
               <span className="sg-strip">

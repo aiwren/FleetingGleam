@@ -69,6 +69,10 @@ for (const [dir, { count, seedOffset }] of Object.entries(FOLDERS)) {
     SRC.push({ path: `${dir}/IMG_${String(4100 + i)}.jpg`, seed, shift: (i % 3) * 14, w, h });
   }
 }
+// 一张纯 RAW（没有同名 JPG）：筛选面板"缺配对"用；Lisbon 里每隔几张的 JPG 带一个同名 RAF（见 makePhotos 的 companions）
+SRC.push({ path: "/mock/Lisbon/IMG_4199.dng", seed: 4, shift: 0, w: 960, h: 640 });
+/** 缩略图的假路径（RAW 也一样按扩展名换）。 */
+const thumbOf = (path: string) => path.replace(/\.\w+$/, ".thumb");
 const inDirs = (dirs: string[]) => SRC.filter((s) => dirs.some((d) => s.path.startsWith(d + "/")));
 const cached = new Set<string>(SRC.filter((s) => s.path.startsWith("/mock/Big/") || s.path.startsWith("/mock/Huge/") || s.path.startsWith("/mock/nas/")).map((s) => s.path));
 
@@ -81,7 +85,9 @@ function makePhotos(list: Src[]): Photo[] {
     if (i === 17) flags.push("utility");
     const score = Math.max(0, Math.min(1, 0.45 * ai + 0.35 * sharp + 0.2 * expo)) * (flags.includes("utility") ? 0.3 : flags.includes("blur") ? 0.6 : 1);
     return {
-      path: s.path, name: s.path.split("/").pop()!, thumb: s.path.replace(".jpg", ".thumb"), width: s.w, height: s.h,
+      path: s.path, name: s.path.split("/").pop()!, thumb: thumbOf(s.path), width: s.w, height: s.h,
+      // Lisbon 里每 5 张有 1 张 JPG 带同名 RAW（RAW + JPG 成对），其余都是单张
+      companions: s.path.startsWith("/mock/Lisbon/") && s.path.endsWith(".jpg") && i % 5 === 2 ? [s.path.replace(/\.jpg$/, ".RAF")] : undefined,
       sharpness: sharp * 200, brightness: 0.45, clipped_high: 0.02, clipped_low: 0.01,
       sharp_score: sharp, expo_score: expo, tech_score: 0.65 * sharp + 0.35 * expo,
       clip_score: ai, sys_score: ai - 0.2, ai_score: ai, pref_score: null, face_count: i % 4 === 0 ? 2 : 0, face_min: i % 4 === 0 ? 0.3 : null,
@@ -429,9 +435,9 @@ w.__TAURI_INTERNALS__ = {
       case "search_index": return 0;
       case "search_photos": {
         const words = String(args.query).toLowerCase();
-        return inDirs(args.dirs as string[]).filter((_, i) => (i + words.length) % 3 === 0).map((s, i) => ({ path: s.path, name: s.path.split("/").pop(), thumb: s.path.replace(".jpg", ".thumb"), width: s.w, height: s.h, score: 0.3 - i * 0.001 }));
+        return inDirs(args.dirs as string[]).filter((_, i) => (i + words.length) % 3 === 0).map((s, i) => ({ path: s.path, name: s.path.split("/").pop(), thumb: thumbOf(s.path), width: s.w, height: s.h, score: 0.3 - i * 0.001 }));
       }
-      case "preview_thumbs": return (args.paths as string[]).map((p) => p.replace(".jpg", ".thumb"));
+      case "preview_thumbs": return (args.paths as string[]).map(thumbOf);
       case "prefs_info": return prefsInfo();
       case "prefs_reset": {
         const s = mockStyles.find((x) => x.id === args.style);
@@ -489,5 +495,5 @@ for (const s of SRC) {
   const url = painted.get(key) ?? (await photo(s.seed, s.w, s.h, s.shift)) ?? paint(s.seed, s.w, s.h, s.shift);
   painted.set(key, url);
   images.set(s.path, url);
-  images.set(s.path.replace(".jpg", ".thumb"), url);
+  images.set(thumbOf(s.path), url);
 }
