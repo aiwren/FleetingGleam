@@ -1558,6 +1558,39 @@ img { -webkit-user-drag: none; }
 
 /* ---- 入场错开上限（R6）：写在组件里；这里只收紧悬停与颜色的过渡到 160 ms */
 .btn, .fp-row, .settings-nav button, .sidebar li button, .vmgrid button, .vmlist button, .orgitem, .picker-src, .tipbtn, .switch, .sthumb, .vcell { transition-duration: .16s; }
+
+/* =====================================================================
+   A7.6：处理进度、常驻按键条、快捷键总表、界面动效可关
+   ===================================================================== */
+/* 标题栏"已处理 x / N"与场景角标：全部处理完变琥珀色 */
+.toolbar-title .handled.done, .fp-count.done, .fp-scene .fp-count.done, .sg-count.done { color: var(--gleam); }
+/* 照片区一列：滚动区在上，按键条贴在底部 */
+.body-split > .main-col { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+.main-col > .scroll { flex: 1; min-height: 0; }
+.keybar { flex: none; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 0 8px; padding: 5px 16px 7px; font-size: 11px; line-height: 1.4; color: var(--ash); border-top: 1px solid var(--line); background: var(--canvas); user-select: none; transition: opacity .2s var(--ease-out); }
+.keybar span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.keybar kbd { margin: 0; padding: 0 5px; min-width: 16px; border-radius: 4px; font-size: 10px; line-height: 16px; text-align: center; opacity: 1; color: var(--ink); background: var(--line); }
+.keybar-dot { font-style: normal; opacity: .5; }
+/* 快捷键总表（按 ?）：工作区中央一张卡，背后一层薄纱 */
+.keyhelp-back { position: absolute; inset: 0; z-index: 30; display: grid; place-items: center; padding: 24px; background: color-mix(in srgb, var(--canvas) 55%, transparent); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+.keyhelp { width: min(720px, 100%); max-height: 100%; overflow: auto; padding: 18px 22px 20px; border-radius: 14px; background: var(--surface); color: var(--ink); box-shadow: 0 24px 60px -16px rgba(0, 0, 0, .4), inset 0 0 0 1px var(--line); }
+.keyhelp-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.keyhelp-head b { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.keyhelp-head span { font-size: 11px; }
+.keyhelp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 16px 24px; }
+.keyhelp section { display: grid; gap: 4px; align-content: start; }
+.keyhelp h4 { margin: 0 0 4px; font-size: 11px; font-weight: 500; letter-spacing: .05em; text-transform: uppercase; color: var(--ash); }
+.keyhelp-row { display: grid; grid-template-columns: 92px 1fr; gap: 8px; align-items: center; font-size: 12.5px; }
+.keyhelp-keys { display: flex; flex-wrap: wrap; gap: 3px; }
+.keyhelp kbd { margin: 0; padding: 0 6px; min-width: 20px; border-radius: 5px; font-size: 11px; line-height: 20px; text-align: center; opacity: 1; color: var(--ink); background: var(--line); }
+/* 界面动效"克制"：判定时不播光圈、闪光、扫光等动效（标记本身照样立刻出现）；提示浮层与按键条更淡，悬停回到 1 */
+:root[data-effects="calm"] .iris, :root[data-effects="calm"] .flare .streak, :root[data-effects="calm"] .flare .bloom, :root[data-effects="calm"] .mote, :root[data-effects="calm"] .glint::before,
+:root[data-effects="calm"] .mark svg path, :root[data-effects="calm"] .reviewmark .star path, :root[data-effects="calm"] .gmark, :root[data-effects="calm"] .badge.keep { animation: none; }
+:root[data-effects="calm"] .reviewmark .star path { stroke-dasharray: none; }
+:root[data-effects="calm"] .mark svg path { stroke-dasharray: none; stroke-dashoffset: 0; }
+:root[data-effects="calm"] .flare, :root[data-effects="calm"] .iris { display: none; }
+:root[data-effects="calm"] .hintcard, :root[data-effects="calm"] .keybar { opacity: .6; transition: opacity .2s var(--ease-out); }
+:root[data-effects="calm"] .hintcard:hover, :root[data-effects="calm"] .keybar:hover { opacity: 1; }
 .kv .files { display: flex; flex-wrap: wrap; gap: 4px 8px; }
 .export-raw { margin-top: 8px; }
 /* 写回 Lightroom / Bridge：执行前的文件清单 */

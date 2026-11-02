@@ -23,7 +23,7 @@ import InfoPop from "../components/InfoPop";
 import Segmented from "../components/Segmented";
 import Select from "../components/Select";
 import { LANGS, Pref, setPref, storedPref } from "../i18n";
-import { type Settings as AppSettings, Theme, bumpCacheRev, setSettings, useScanInfo, useSettings } from "../settings";
+import { type Settings as AppSettings, Effects, Theme, bumpCacheRev, setSettings, useScanInfo, useSettings } from "../settings";
 import { ACTIONS, Action, PRESETS, Preset, checkBinding, conflicts, isBindable, keyFor, keyVars, resetKeymap, setBinding, setPreset, useKeymap } from "../keymap";
 
 
@@ -452,6 +452,15 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
                   options={[{ value: "system", label: t("nav.systemLang") }, { value: "light", label: t("settings.light") }, { value: "dark", label: t("settings.dark") }]}
                   onChange={(v) => setSettings({ theme: v })} />
               </Row>
+              {/* A7.6：判定后自动前进（可关）；界面动效可切到克制（判定不播光圈 / 闪光，浮层更淡） */}
+              <Row label={t("settings.autoAdvance")} desc={t("settings.autoAdvanceDesc")}>
+                <button className="switch" role="switch" aria-checked={s.autoAdvance} aria-label={t("settings.autoAdvance")} onClick={() => setSettings({ autoAdvance: !s.autoAdvance })} />
+              </Row>
+              <Row label={t("settings.effects")} desc={t("settings.effectsDesc")}>
+                <Segmented<Effects> id="effects" value={s.effects}
+                  options={[{ value: "full", label: t("settings.effectsFull") }, { value: "calm", label: t("settings.effectsCalm") }]}
+                  onChange={(v) => setSettings({ effects: v })} />
+              </Row>
             </Group>
 
             <Group id="sec-keys" title={t("settings.keys")} index={1}>
@@ -466,6 +475,9 @@ export default function Settings({ active, onOpenStyles }: { active: boolean; on
                   <button className="btn" aria-pressed={recording === a} onClick={() => { setKeyErr(null); setRecording(recording === a ? null : a); }}>{recording === a ? t("settings.keysRecording") : t("settings.keysChange")}</button>
                 </Row>
               ))}
+              <Row label={t("settings.keyHints")} desc={t("settings.keyHintsDesc")}>
+                <button className="switch" role="switch" aria-checked={s.keyHints} aria-label={t("settings.keyHints")} onClick={() => setSettings({ keyHints: !s.keyHints })} />
+              </Row>
               <Row label={t("settings.keysReset")} desc={t("settings.keysResetDesc")}>
                 <button className="btn" disabled={keysDefault} onClick={() => { resetKeymap(); setRecording(null); setKeyErr(null); }}>{t("settings.keysReset")}</button>
               </Row>
