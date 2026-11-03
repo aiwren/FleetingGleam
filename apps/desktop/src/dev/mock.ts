@@ -58,6 +58,17 @@ const FOLDERS: Record<string, { count: number; seedOffset: number }> = {
   "/mock/Samples": { count: 10, seedOffset: 7 }, // 起始屏的"试试示例照片"（samples_folder）
   "/mock/nas/n1/photos/Lisbon": { count: 12, seedOffset: 1 }, // NAS「Home NAS」上的项目（本机镜像），离线时照样打开
 };
+/** 预览里的更新说明：直接用仓库里最新一版的图文说明（release-notes/），图片走 Vite 的资源地址，和发布时拼法一样。 */
+const NOTE_MD = import.meta.glob("../../../../release-notes/*/*.md", { eager: true, query: "?raw", import: "default" }) as Record<string, string>;
+const NOTE_IMG = import.meta.glob("../../../../release-notes/*/*.webp", { eager: true, query: "?url", import: "default" }) as Record<string, string>;
+function mockNotes(): string {
+  const dirs = [...new Set(Object.keys(NOTE_MD).map((k) => k.split("/").slice(0, -1).join("/")))].sort();
+  const dir = dirs[dirs.length - 1];
+  if (!dir) return "### 新增\n- 示例说明";
+  const abs = (md: string) => md.replace(/!\[([^\]]*)\]\(([^):]+)\)/g, (_, alt: string, f: string) => `![${alt}](${location.origin}${NOTE_IMG[`${dir}/${f}`] ?? f})`);
+  const zh = NOTE_MD[`${dir}/zh-CN.md`] ?? "", en = NOTE_MD[`${dir}/en.md`];
+  return en ? `${abs(zh)}\n<!-- en -->\n\n${abs(en)}` : abs(zh);
+}
 type Src = { path: string; seed: number; shift: number; w: number; h: number };
 const SRC: Src[] = [];
 /** 移到废纸篓的模拟照片，撤销时放回 SRC。 */
@@ -474,7 +485,7 @@ w.__TAURI_INTERNALS__ = {
         const want = new URLSearchParams(location.search).get("update");
         if (want === null) return null;
         if (want === "fail") throw new Error("mock: GitHub unreachable");
-        return { version: "0.2.0", current: "0.1.0", notes: "## 0.2.0\n\n### 新增\n- 应用内更新：设置 › 关于里检查、下载并安装新版本。\n- **大 RAW 秒开**：查看器先取相机内嵌预览。\n\n### 修复\n- 对比布局的同步放大。", date: new Date().toISOString() };
+        return { version: "0.2.0", current: "0.1.0", notes: mockNotes(), date: new Date().toISOString() };
       }
       case "update_install": {
         const total = 48_000_000;

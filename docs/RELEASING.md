@@ -25,12 +25,13 @@ Release 一律先创建成**草稿**，你检查过安装包再手动点“Publi
    （`git rev-list --count HEAD`），取不到（不在 git 仓库里、浅克隆）就构建失败，不会悄悄退回 1——没有 git 历史时用
    `-PFG_BUILD_NUMBER=<数字>` 明确给出。发布工作流会核对 `versionName` 仍然取自 `Cargo.toml`。
 2. **更新 [CHANGELOG.md](../CHANGELOG.md)**：把“未发布”里的内容挪到新版本下面，写上日期。
+   **写图文版更新说明**：`release-notes/<版本>/zh-CN.md`、`en.md` 加几张截图（写法见 [release-notes/README.md](../release-notes/README.md)）。两端应用"关于"里显示的、Release 正文里"更新内容"一节都是它；没写就退回 CHANGELOG 那一节的纯文字。
 3. **提交并推送**到 `main`，等 CI 变绿。
 4. **打标签并推送**（首个公开版本是 `0.1.1`）：
 
    ```bash
-   git tag v0.1.0
-   git push origin v0.1.0
+   git tag v0.1.1
+   git push origin v0.1.1
    ```
 
    工作流会先检查标签和 `tauri.conf.json` 的版本是否一致，不一致会直接报错并停下。
@@ -51,7 +52,7 @@ git tag -d v0.1.0 && git push --delete origin v0.1.0   # 删除标签，同时�
 
 - **Mac**（Tauri 的 updater 插件）：读 `https://github.com/aiwren/FleetingGleam/releases/latest/download/latest.json`，里面写着新版本号、更新说明、`.app.tar.gz` 的地址和 minisign 签名。应用只接受用仓库里那把**公钥**（`tauri.conf.json` 的 `plugins.updater.pubkey`）验得过的更新包，然后下载、原地替换 `.app`、提示重启。
 - **Android**：读 GitHub 的公开接口 `releases/latest`，拿 `tag_name` 和已装的 `versionName` 比，新的就把 Release 里固定名字的 `FleetingGleam-android.apk` 下到应用私有目录，交给系统安装器（Android 会再确认一次，第一次要允许"安装未知应用"）。覆盖安装要求同一把签名密钥——所以 CI 必须用正式密钥签（见下面"Android 安装包"）。
-- 启动后几秒静默检查一次（设置里可关），离线或 GitHub 不通就当没有，不会弹错。**限流**：GitHub 对匿名请求每小时只给 60 次，所以手动"检查更新"之后 60 秒内按钮置灰（"刚检查过"）、不联网；启动时的自动检查 10 分钟内查过就跳过。上次检查时间存在本机，重开应用也绕不过去。更新说明来自 `CHANGELOG.md` 里这个版本的那一节（`.github/scripts/changelog-section.sh`），所以发版前务必把那一节写好。
+- 启动后几秒静默检查一次（设置里可关），离线或 GitHub 不通就当没有，不会弹错。**限流**：GitHub 对匿名请求每小时只给 60 次，所以手动"检查更新"之后 60 秒内按钮置灰（"刚检查过"）、不联网；启动时的自动检查 10 分钟内查过就跳过。上次检查时间存在本机，重开应用也绕不过去。更新说明来自 `release-notes/<版本>/`（`.github/scripts/release-notes.sh` 把中英文拼成一份、图片换成按标签固定的地址；应用按界面语言只显示一半），没有就退回 `CHANGELOG.md` 里这个版本的那一节。
 
 ### 一次性配置：更新包的签名密钥（必须）
 
@@ -80,7 +81,7 @@ gh secret list --repo $R
 ### 发布时 CI 做了什么
 
 1. `tauri-action` 构建 `.dmg`，同时（`createUpdaterArtifacts: true`）打出 `FleetingGleam.app.tar.gz` 和它的 `.sig`，一起传进草稿 Release，并生成 `latest.json`。
-2. "整理 latest.json 的更新说明"一步把 `latest.json` 的 `notes` 换成 CHANGELOG 那一节，重新上传。
+2. "整理 latest.json 的更新说明"一步把 `latest.json` 的 `notes` 换成上面那份更新说明，重新上传。
 3. Release 正文也带上同一段"更新内容"；Android 端显示的就是正文里 `## 更新内容` 之后的部分。
 
 **草稿期间没有人会收到更新**：`releases/latest` 只指向已发布的版本。你点 Publish 之后，已装的应用下次启动就会看到。

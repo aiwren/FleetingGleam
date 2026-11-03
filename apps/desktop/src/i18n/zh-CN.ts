@@ -295,7 +295,7 @@ const zh = {
     // 应用内更新（updater.ts / Android 的 Updates.kt 共用这组文案）
     updateCheck: "检查更新", updateChecking: "正在检查…", updateJustChecked: "刚检查过", updateCooldown: "刚刚查过，一分钟后可以再查。",
     updateIdle: "新版本发布在 GitHub Releases 上，也可以现在就问一次。", updateLatest: "已是最新版本。", updateFailed: "刚才没查到（离线，或 GitHub 暂时不通），稍后再试。",
-    updateFound: "有新版本 {{version}}（当前 {{current}}）", updateNotes: "更新说明",
+    updateFound: "有新版本 {{version}}（当前 {{current}}）", updateNotes: "更新内容", updateNotesMore: "查看图文说明", updateNotesTitle: "{{version}} 更新了什么", updateNotesClose: "关闭",
     updateInstall: "下载并安装", updateDownloading: "正在下载…", updateInstalling: "正在安装…",
     updateReady: "{{version}} 已装好，重新打开应用后生效。", updateRestart: "现在重启", updateError: "没有装上：{{error}}",
     autoUpdate: "自动检查更新", autoUpdateDesc: "每次启动后几秒在后台问一次有没有新版本；查不到就当没有，不会打扰你。只传版本号，不传任何别的。",

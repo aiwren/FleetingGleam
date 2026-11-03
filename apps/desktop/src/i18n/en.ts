@@ -297,7 +297,7 @@ const en = {
     // In-app updates (shared by updater.ts and Android's Updates.kt)
     updateCheck: "Check for updates", updateChecking: "Checking…", updateJustChecked: "Just checked", updateCooldown: "Checked a moment ago; you can check again in a minute.",
     updateIdle: "New versions are published on GitHub Releases; you can also ask right now.", updateLatest: "You have the latest version.", updateFailed: "Could not check just now (offline, or GitHub is unreachable). Try again later.",
-    updateFound: "Version {{version}} is available (you have {{current}})", updateNotes: "What's new",
+    updateFound: "Version {{version}} is available (you have {{current}})", updateNotes: "What's new", updateNotesMore: "See the full notes", updateNotesTitle: "What's new in {{version}}", updateNotesClose: "Close",
     updateInstall: "Download and install", updateDownloading: "Downloading…", updateInstalling: "Installing…",
     updateReady: "{{version}} is installed and takes effect when the app reopens.", updateRestart: "Restart now", updateError: "Not installed: {{error}}",
     autoUpdate: "Check for updates automatically", autoUpdateDesc: "A few seconds after each launch the app asks once whether a new version is out; if it cannot tell, nothing happens. Only the version number is sent, nothing else.",

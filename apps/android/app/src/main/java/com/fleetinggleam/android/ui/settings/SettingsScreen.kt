@@ -524,12 +524,27 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                         is Updates.State.Ready -> if (canInstall) t("android.settings.updateReadyAndroid", "version" to u.info.version, "size" to fmtBytes(u.file.length())) else t("android.settings.updateAllowDesc")
                         else -> if (updInfo != null) t("settings.updateFound", "version" to updInfo.version, "current" to updInfo.current) else t("settings.updateIdle")
                     }
+                    // 更新说明：这里只列小标题，"查看图文说明"在底部弹层里看完整的图文版（ReleaseNotesView.kt）
+                    val uiLang by I18n.lang.collectAsState()
+                    val notes = remember(updInfo?.notes, uiLang) { updInfo?.notes?.let { com.fleetinggleam.android.core.ReleaseNotes.parse(com.fleetinggleam.android.core.ReleaseNotes.forLang(it, uiLang)) }.orEmpty() }
+                    var notesOpen by remember { mutableStateOf(false) }
+                    if (updInfo != null && notes.isNotEmpty()) com.fleetinggleam.android.ui.components.GlassSheet(notesOpen, { notesOpen = false }) {
+                        ReleaseNotesSheet(t("settings.updateNotesTitle", "version" to updInfo.version), notes) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)) {
+                                FgButton(t("settings.updateNotesClose"), { notesOpen = false })
+                                if (upd is Updates.State.Found || upd is Updates.State.Error) FgButton(t("settings.updateInstall"), { notesOpen = false; Updates.download() }, on = true)
+                            }
+                        }
+                    }
                     val updBelow: (@Composable () -> Unit)? = if (updInfo == null || upd is Updates.State.Ready) null else ({
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            updInfo.notes?.let { notes ->
+                            if (notes.isNotEmpty()) {
                                 Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(c.surface).padding(12.dp)) {
                                     Text(t("settings.updateNotes"), style = Type.overline.copy(color = c.ash))
-                                    Text(plainNotes(notes), style = Type.rowDesc.copy(color = c.ink), maxLines = 14, overflow = com.fleetinggleam.android.ui.theme.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+                                    com.fleetinggleam.android.core.ReleaseNotes.headlines(notes).forEach { h ->
+                                        Text("•  $h", style = Type.rowDesc.copy(color = c.ink), modifier = Modifier.padding(top = 4.dp))
+                                    }
+                                    Box(Modifier.padding(top = 10.dp)) { FgButton(t("settings.updateNotesMore"), { notesOpen = true }, small = true) }
                                 }
                             }
                             when (val u = upd) {
@@ -729,7 +744,3 @@ private fun MirrorLine(name: String, bytes: Long, busy: Boolean, onClear: () -> 
 private data class BkForm(val id: String? = null, val name: String = "", val account: String = "", val bucket: String = "", val accessKey: String = "", val secret: String = "", val hasSecret: Boolean = false)
 private data class NasForm(val id: String? = null, val name: String = "", val host: String = "", val user: String = "", val password: String = "", val remember: Boolean = true, val editingUser: String = "", val editingHost: String = "")
 
-/** 更新说明（Release 正文的 Markdown）压成几行平实的文字：去掉标题的井号、加粗的星号，列表项换成圆点（桌面端 Settings.tsx 的 plainNotes）。 */
-private fun plainNotes(md: String): String = md.replace("\r", "").lines()
-    .map { it.replace(Regex("^#{1,6}\\s*"), "").replace(Regex("^\\s*[-*]\\s+"), "• ").replace("**", "") }
-    .joinToString("\n").replace(Regex("\n{3,}"), "\n\n").trim()

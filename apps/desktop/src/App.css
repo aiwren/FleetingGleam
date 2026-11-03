@@ -1360,7 +1360,18 @@ img { -webkit-user-drag: none; }
 /* 应用内更新：版本行下面展开的更新说明、进度与"下载并安装" */
 .upd-box { display: grid; gap: 10px; padding: 0 16px 14px; max-width: 60ch; }
 .upd-notes b { display: block; font-size: 12px; color: var(--ash); font-weight: 500; margin-bottom: 4px; }
-.upd-notes pre { margin: 0; max-height: 180px; overflow: auto; white-space: pre-wrap; font: inherit; font-size: 12px; line-height: 1.55; color: var(--ink); padding: 8px 10px; border-radius: 8px; background: var(--surface); }
+.upd-notes { display: grid; gap: 6px; justify-items: start; }
+.upd-notes ul { margin: 0; padding-left: 18px; font-size: 12px; line-height: 1.6; color: var(--ink); }
+/* 图文版更新说明（对话框里）：小标题 + 整宽配图 + 段落；对话框加宽，正文自己滚动 */
+.modal:has(.rnotes) { width: min(640px, 94vw); }
+.rnotes { max-height: min(62vh, 620px); overflow: auto; margin: 0 -22px; padding: 0 22px; font-size: 13px; line-height: 1.65; }
+.rnotes h4 { margin: 18px 0 8px; font-size: 14px; font-weight: 600; color: var(--ink); }
+.rnotes h4:first-child { margin-top: 2px; }
+.rnotes img { display: block; max-width: 100%; max-height: 380px; width: auto; height: auto; margin: 4px auto 10px; border-radius: 10px; box-shadow: 0 0 0 1px var(--line); background: var(--surface); }
+.rnotes p { margin: 0 0 8px; color: var(--ink); }
+.rnotes ul { margin: 0 0 8px; padding-left: 18px; }
+.rnotes li { margin: 2px 0; }
+.rnotes strong { font-weight: 600; }
 .upd-progress { display: grid; gap: 6px; font-size: 12px; }
 .upd-progress .bar { height: 5px; border-radius: 3px; margin: 0; }
 .upd-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 12px; }

@@ -31,7 +31,7 @@ jobs:
             exit 0
           fi
           export NOTES
-          NOTES=$(.github/scripts/changelog-section.sh "${GITHUB_REF_NAME#v}" || echo "见 https://github.com/$GITHUB_REPOSITORY/blob/main/CHANGELOG.md")
+          NOTES=$(.github/scripts/release-notes.sh "${GITHUB_REF_NAME#v}" || echo "见 https://github.com/$GITHUB_REPOSITORY/blob/main/CHANGELOG.md")
           # 正文里有反引号，heredoc 要带引号，不让 shell 展开；更新说明和仓库名用占位符事后替换
           cat > "$RUNNER_TEMP/body.md" <<'FG_BODY_EOF'
           ## 安装 / Install
@@ -146,13 +146,13 @@ jobs:
           printf 'TAURI_SIGNING_PRIVATE_KEY=%s\n' "$TAURI_SIGNING_PRIVATE_KEY" >> "$GITHUB_ENV"
           printf 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD=%s\n' "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" >> "$GITHUB_ENV"
 
-      # Release 正文和 latest.json 的 notes 都用 CHANGELOG.md 里这个版本的那一节（两端应用的"更新说明"显示的就是它）
-      - name: 从 CHANGELOG 摘更新说明
+      # latest.json 的 notes 和 Release 正文用同一份更新说明（两端应用"关于"里显示的就是它）
+      - name: 生成更新说明（release-notes/ 下的图文版，没有就摘 CHANGELOG）
         id: notes
         run: |
-          body=$(.github/scripts/changelog-section.sh "${GITHUB_REF_NAME#v}" || true)
+          body=$(.github/scripts/release-notes.sh "${GITHUB_REF_NAME#v}" || true)
           if [ -z "$body" ]; then
-            echo "::warning::CHANGELOG.md 里没有 [${GITHUB_REF_NAME#v}] 这一节，更新说明只放一个链接。"
+            echo "::warning::release-notes/${GITHUB_REF_NAME#v}/ 和 CHANGELOG.md 里都没有这个版本的说明，更新说明只放一个链接。"
             body="见 https://github.com/$GITHUB_REPOSITORY/blob/main/CHANGELOG.md"
           fi
           {
@@ -196,7 +196,7 @@ jobs:
           includeUpdaterJson: true
           prerelease: ${{ contains(github.ref_name, '-') }}
 
-      # tauri-action 生成的 latest.json 把整个 Release 正文当 notes（含安装说明）；Mac 端"更新说明"只要 CHANGELOG 那一节
+      # tauri-action 生成的 latest.json 把整个 Release 正文当 notes（含安装说明）；Mac 端"更新说明"只要更新内容那一段
       - name: 整理 latest.json 的更新说明
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
