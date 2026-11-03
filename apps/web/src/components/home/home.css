@@ -263,11 +263,11 @@ html:has(.home) { scroll-padding-top: 0; }
 .home .v-frame-close { min-height: 86dvh; display: grid; place-items: center; text-align: center; }
 .home .v-close-shade { position: absolute; inset: 0; z-index: 1; background: radial-gradient(62% 56% at 50% 50%, rgba(5,5,5,.78), rgba(5,5,5,.3) 100%); }
 .home .v-close .v-sub { color: rgba(242,240,234,.86); }
-.home .v-close-body { position: relative; z-index: 2; padding: 96px clamp(20px, 5vw, 48px); display: grid; justify-items: center; }
+.home .v-close-body { position: relative; z-index: 2; width: 100%; box-sizing: border-box; padding: 96px clamp(20px, 5vw, 48px); display: grid; justify-items: center; }
 .home .v-close-title { margin-top: 0; font-size: clamp(40px, 6vw, 88px); max-width: 14em; text-shadow: 0 16px 38px rgba(0,0,0,.32); }
 .home .v-close .v-sub { margin-inline: auto; }
 /* 下载：每个平台一张玻璃卡，系统要求和装之前要知道的事都在卡里 */
-.home .v-dl-grid { margin-top: 40px; width: min(880px, 100%); display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); text-align: left; }
+.home .v-dl-grid { margin-top: 40px; width: min(1080px, 100%); display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); text-align: left; }
 .home .v-dl-card { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; padding: 26px; border-radius: 24px; background: rgba(10,10,11,.42); }
 .home .v-dl-card h3 { display: flex; align-items: center; gap: 10px; font-size: 22px; font-weight: 500; letter-spacing: -.01em; }
 .home .v-dl-req { font-size: 15px; color: #f2f0ea; }
@@ -278,7 +278,7 @@ html:has(.home) { scroll-padding-top: 0; }
 .home .v-cmd button { flex: none; min-height: 32px; padding: 0 12px; border-radius: 8px; font-size: 12px; background: rgba(255,255,255,.12); color: #f2f0ea; transition: background-color 200ms var(--ease); }
 .home .v-cmd button:hover { background: rgba(255,255,255,.22); }
 /* 装好之后的三步：一条细线隔开的三格，不配大标题 */
-.home .v-steps { margin-top: 28px; width: min(880px, 100%); text-align: left; }
+.home .v-steps { margin-top: 28px; width: min(1080px, 100%); text-align: left; }
 .home .v-steps-label { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: rgba(242,240,234,.6); }
 .home .v-steps ol { margin-top: 10px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-radius: 18px; background: rgba(10,10,11,.42); box-shadow: inset 0 0 0 1px rgba(255,255,255,.1); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
 .home .v-steps li { display: grid; grid-template-columns: auto 1fr; column-gap: 12px; row-gap: 2px; padding: 16px 18px; font-size: 14px; color: #f2f0ea; }
