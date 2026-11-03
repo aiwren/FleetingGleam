@@ -1,0 +1,47 @@
+import type { Lang } from "../../content";
+
+/** 首页在 content.ts 之外多出来的几句；其余都直接用 content.ts，免得两份说法不一致。 */
+export const home = {
+  en: {
+    other: { id: "zh", label: "中文", to: "/zh/" },
+    chip: "Free", badge: "Open source · Mac & Android · on-device",
+    accent: "freezing.",
+    cta: "Download free", cta2: "See how it picks",
+    story: { t1: "Thousands of frames.", count: "frames from one weekend · sample", t2: "Grouped. Scored.", t2s: "Bursts sit together; every scene is weighed its own way.", t3: "The one." },
+    features: { eyebrow: "What it does", title: "Everything a cull needs.", typing: "Describe the picture" },
+    honestAccent: "not a verdict.",
+    dl: {
+      mac: { name: "macOS", req: "Apple Silicon (M1 or later) · macOS 15 or later", note: "Not notarized by Apple yet. Before the first launch, run this once in Terminal:" },
+      android: { name: "Android", req: "Android 12 or later · 64-bit ARM phone", note: "Not in an app store. After the download, allow your browser to install apps when Android asks." },
+      copy: "Copy", copied: "Copied",
+      steps: { label: "Once it is installed", items: [["Pick a folder", "on your Mac, phone or NAS"], ["Review each group", "on a Mac, decide with {keys}"], ["Keep what you chose", "copy it, or write back to Lightroom"]] },
+      facts: ["No account", "Analysis stays on your device", "Works offline once set up", "Tells you about updates; install from Settings › About"],
+    },
+    pick: { tilt: "Tilted horizon", hint: "Suggested", ref: "Just a hint", low: "Underexposed", kept: "You kept this one" },
+    typer: ["sunrise over a sea of clouds", "a snowy peak under the stars", "a lake below snowy mountains", "a road into the mountains"],
+    close: "Close menu",
+    focus: { seeking: "Focusing", locked: "Locked" },
+    wall: { title: "Every trip comes home as thousands.", sub: "Bursts, near-duplicates, the one you nearly missed. FleetingGleam looks through all of them first." },
+  },
+  zh: {
+    other: { id: "en", label: "EN", to: "/" },
+    chip: "免费", badge: "开源 · Mac 与安卓 · 全在本机",
+    accent: "定格",
+    cta: "免费下载", cta2: "看看怎么挑",
+    story: { t1: "几千张。", count: "张，一个周末拍的 · 示例", t2: "分组，打分。", t2s: "连拍归在一起，每种场景按自己的标准打分。", t3: "那一张。" },
+    features: { eyebrow: "它能做什么", title: "选片要的，它都有。", typing: "描述画面" },
+    honestAccent: "不是裁判。",
+    dl: {
+      mac: { name: "macOS", req: "Apple Silicon（M 系列芯片）· macOS 15 及以上", note: "这个版本还没有经过苹果公证。第一次打开前，在「终端」里执行一次：" },
+      android: { name: "安卓", req: "Android 12 及以上 · 64 位 ARM 手机", note: "它不在应用商店里。下载后按系统提示，允许浏览器安装应用即可。" },
+      copy: "复制", copied: "已复制",
+      steps: { label: "装好之后", items: [["选一个文件夹", "Mac、手机或 NAS 上的都行"], ["看每一组的推荐", "Mac 上按 {keys} 决定"], ["整理留下的", "复制出来，或写回 Lightroom"]] },
+      facts: ["无需账号", "分析全在本机完成", "设置好后可离线使用", "有新版本会提示，在「设置 › 关于」一键更新"],
+    },
+    pick: { tilt: "地平线歪了", hint: "推荐", ref: "仅供参考", low: "曝光偏暗", kept: "你留下了这张" },
+    typer: ["云海上的日出", "星空下的雪山", "雪山脚下的湖", "通往山里的公路"],
+    close: "关闭菜单",
+    focus: { seeking: "对焦中", locked: "已定格" },
+    wall: { title: "每次出门，回来都是几千张。", sub: "连拍、差不多的、差点错过的那张。惊鸿先替你全看一遍。" },
+  },
+} satisfies Record<Lang, unknown>;

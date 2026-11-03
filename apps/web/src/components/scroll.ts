@@ -5,9 +5,6 @@
 export const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 export const smooth = (a: number, b: number, t: number) => { const x = clamp((t - a) / (b - a), 0, 1); return x * x * (3 - 2 * x); };
 export const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
-export const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-export const EASE = "cubic-bezier(.16,1,.3,1)";
-export const EASE_IN = "cubic-bezier(.7,0,.84,0)";
 export const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /** 钉住的一段：从这一段顶到窗口顶，到这一段底到窗口底。 */
@@ -34,7 +31,7 @@ function frame() {
 }
 const kick = () => { for (const s of scenes) s.t = s.prog(s.el); if (!raf) raf = requestAnimationFrame(frame); };
 /** 布局变了（窗口尺寸、断点）：每段都按当前进度重画一次。 */
-export const forceRender = () => { for (const s of scenes) { s.t = s.prog(s.el); s.last = -2; } if (!raf) raf = requestAnimationFrame(frame); };
+const forceRender = () => { for (const s of scenes) { s.t = s.prog(s.el); s.last = -2; } if (!raf) raf = requestAnimationFrame(frame); };
 
 /** 登记一段；返回注销函数。减少动态效果时各段自己画最终状态，不登记。 */
 export function addScene(el: HTMLElement, prog: Scene["prog"], render: Scene["render"]) {
@@ -43,25 +40,6 @@ export function addScene(el: HTMLElement, prog: Scene["prog"], render: Scene["re
   if (!bound) { bound = true; addEventListener("scroll", kick, { passive: true }); addEventListener("resize", forceRender); }
   if (!raf) raf = requestAnimationFrame(frame);
   return () => { scenes.delete(s); };
-}
-
-/** 数字滚动计数，尾段减速。 */
-export function countTo(el: HTMLElement, to: number, ms = 600) {
-  if (reduced()) { el.textContent = String(to); return; }
-  const t0 = performance.now();
-  const step = (t: number) => {
-    const k = clamp((t - t0) / ms, 0, 1), e = 1 - Math.pow(1 - k, 4);
-    el.textContent = String(Math.round(to * e));
-    if (k < 1) requestAnimationFrame(step);
-  };
-  requestAnimationFrame(step);
-}
-
-/** 一道光扫过，只播一次。 */
-export function glint(el: HTMLElement) {
-  if (reduced()) return;
-  el.classList.remove("is-glint"); void el.offsetWidth; el.classList.add("is-glint");
-  el.addEventListener("animationend", () => el.classList.remove("is-glint"), { once: true });
 }
 
 /** 进场：元素进到窗口里一点，就加上 is-in，里面的 .ln / .rise 开始动。 */

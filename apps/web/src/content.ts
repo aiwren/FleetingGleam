@@ -24,7 +24,7 @@ export const copy = {
     name: "FleetingGleam", latin: "",
     title: "FleetingGleam | Local photo culling for Mac and Android",
     description: "FleetingGleam groups your bursts and picks the best frame on your own Mac or Android phone. Nothing is uploaded.",
-    nav: [["Privacy", "#privacy"], ["Features", "#features"], ["Compare", "#zoom"], ["How it works", "#flow"]],
+    nav: [["How it picks", "#story"], ["Privacy", "#privacy"], ["Features", "#features"]],
     cta: { soon: "Coming soon", ready: "Download" },
     menu: "Menu",
     hero: {
@@ -83,22 +83,9 @@ export const copy = {
       ],
     },
     honest: { title: ["A score is a hint,", "not a verdict."], body: "It can tell you which frame is technically stronger. A good photograph is sometimes imperfect, like a sleeping child with closed eyes, so the decision stays yours." },
-    flow: {
-      eyebrow: "How it works",
-      title: "Open a folder. It does the rest.",
-      // {keys} is where the three keys are drawn
-      steps: [
-        ["Pick a folder", "On your Mac or phone, or a share on your NAS. Thumbnails appear first and scores fill in as the analysis runs in the background."],
-        ["Review each group", "Zoom to compare frames of one moment, or on a Mac decide from the keyboard with {keys}."],
-        ["Organise what you kept", "Copy the keepers into a new folder or your photo album, or write stars and labels back for Lightroom. On a Mac the rest can go to the Trash, where they can be recovered."],
-      ],
-      aria: "The steps in motion: 8 sample photos, 4 kept, 3 rejected, 1 to review",
-      folder: "Sample folder", ready: "Ready", analysing: "Analysing", photo: "Photo", of: "of", unit: "", keptN: "Kept", trashN: "Trash",
-      trash: "Trash", kept: "Kept", reject: "Rejected", review: "Review", photoAlt: "Sample photo",
-    },
     final: {
       title: "Be first to try it.", body: "The Mac and Android versions are being polished and the downloads will appear here.", label: "Mac and Android versions coming soon",
-      readyTitle: "Free, open source, yours to keep.", readyBody: "Download it for your Mac or Android phone, or read the source on GitHub. Your photos never leave your devices.",
+      readyTitle: "Free and open source.", readyBody: "Download it for your Mac or Android phone, or read the source on GitHub. Your photos never leave your devices.",
       download: "Download for macOS", downloadAndroid: "Download for Android", source: "Source on GitHub",
       reqs: [
         "Mac: needs Apple Silicon (M-series) and macOS 15 or later.",
@@ -122,7 +109,7 @@ export const copy = {
     name: "惊鸿", latin: "FleetingGleam",
     title: "惊鸿 FleetingGleam | Mac 与安卓上的本地选片",
     description: "惊鸿在你自己的 Mac 或安卓手机上把连拍分好组，挑出最好的一张。照片不上传。",
-    nav: [["隐私", "#privacy"], ["功能", "#features"], ["对比", "#zoom"], ["怎么用", "#flow"]],
+    nav: [["怎么挑", "#story"], ["隐私", "#privacy"], ["功能", "#features"]],
     cta: { soon: "即将发布", ready: "下载" },
     menu: "菜单",
     hero: {
@@ -180,21 +167,9 @@ export const copy = {
       ],
     },
     honest: { title: ["评分是参考，", "不是裁判。"], body: "它能告诉你哪一张技术上更好。好照片有时并不完美，比如闭着眼睛睡着的孩子，所以决定始终在你手里。" },
-    flow: {
-      eyebrow: "怎么用",
-      title: "打开文件夹，剩下的交给它。",
-      steps: [
-        ["选一个文件夹", "Mac 或手机上的文件夹，或者 NAS 上的共享都行。缩略图先出现，评分在后台分析时陆续补上。"],
-        ["看每一组的推荐", "放大对比同一瞬间的照片，在 Mac 上也可以用键盘 {keys} 决定。"],
-        ["整理你保留的照片", "把留下的复制到新文件夹或手机相册，或把星级和标签写回给 Lightroom。在 Mac 上，其余的可以移进废纸篓，随时找回。"],
-      ],
-      aria: "使用过程演示：8 张示例照片，保留 4 张，淘汰 3 张，1 张待复查",
-      folder: "示例文件夹", ready: "准备", analysing: "分析中", photo: "第", of: "/", unit: " 张", keptN: "已保留", trashN: "废纸篓",
-      trash: "废纸篓", kept: "保留", reject: "淘汰", review: "待复查", photoAlt: "示例照片",
-    },
     final: {
       title: "第一时间试用。", body: "Mac 版和安卓版正在打磨，发布后下载链接会放在这里。", label: "Mac 与安卓版即将发布",
-      readyTitle: "免费、开源、随你用。", readyBody: "下载 Mac 版或安卓版，或者去 GitHub 看源码。照片始终不离开你自己的设备。",
+      readyTitle: "免费、开源。", readyBody: "下载 Mac 版或安卓版，或者去 GitHub 看源码。照片始终不离开你自己的设备。",
       download: "下载 macOS 版", downloadAndroid: "下载安卓版", source: "GitHub 源码",
       reqs: [
         "Mac：需要 Apple Silicon（M 系列芯片）和 macOS 15 及以上。",
