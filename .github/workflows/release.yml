@@ -14,6 +14,56 @@ permissions:
   contents: write
 
 jobs:
+  # 先建草稿 Release（带正文），后面的 Mac、安卓任务只往里上传。单独一步、一分钟内跑完：
+  # 建 Release 有问题（权限、标签）时马上就失败，不用白等 Mac 编十几分钟。重跑时草稿已在就沿用。
+  draft:
+    name: 建草稿 Release
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 建草稿
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME 已存在，沿用。"
+            exit 0
+          fi
+          export NOTES
+          NOTES=$(.github/scripts/changelog-section.sh "${GITHUB_REF_NAME#v}" || echo "见 https://github.com/$GITHUB_REPOSITORY/blob/main/CHANGELOG.md")
+          # 正文里有反引号，heredoc 要带引号，不让 shell 展开；更新说明和仓库名用占位符事后替换
+          cat > "$RUNNER_TEMP/body.md" <<'FG_BODY_EOF'
+          ## 安装 / Install
+
+          需要 Apple Silicon（M 系列芯片）的 Mac，macOS 15 及以上。Intel Mac 暂不支持。
+          Requires a Mac with Apple Silicon (M-series) and macOS 15 or later. Intel Macs are not supported yet.
+
+          1. 下载 `.dmg`，把 FleetingGleam 拖进“应用程序”。 / Download the `.dmg` and drag FleetingGleam into Applications.
+          2. 这个版本没有经过苹果公证。第一次打开前，在“终端”里执行一次： / This build is not notarised by Apple. Before opening it for the first time, run this once in Terminal:
+
+             ```
+             xattr -cr /Applications/FleetingGleam.app
+             ```
+
+          **安卓 / Android**：下载 `FleetingGleam-android.apk`，在手机上打开安装。需要 Android 12 及以上的 64 位 ARM 手机；安装时按提示允许浏览器安装应用。 / Download `FleetingGleam-android.apk` and open it on the phone. Needs Android 12 or later on a 64-bit ARM phone; allow your browser to install apps when asked.
+
+          照片只在你自己的设备上处理；应用只为下载模型、连接你自己设置的 NAS 或备份才联网。 / Your photos stay on your own devices; the app only goes online to download models and to reach a NAS or backup you set up yourself.
+
+          装好之后不用再回来：两端的应用都会自己发现新版本，在“设置 › 关于”里一键更新。 / After this you need not come back: both apps notice new versions themselves and update from Settings › About.
+
+          ## 更新内容 / What's new
+
+          __NOTES__
+
+          完整记录 / Full history: [CHANGELOG.md](https://github.com/__REPO__/blob/main/CHANGELOG.md)
+          FG_BODY_EOF
+          perl -0pi -e 's/__REPO__/$ENV{GITHUB_REPOSITORY}/g; s/__NOTES__/$ENV{NOTES}/g' "$RUNNER_TEMP/body.md"
+          pre=""
+          case "$GITHUB_REF_NAME" in *-*) pre="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft $pre --verify-tag \
+            --title "FleetingGleam $GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/body.md"
+
   macos:
     name: macOS（${{ matrix.label }}）
     strategy:
@@ -23,6 +73,7 @@ jobs:
         include:
           - { runner: macos-15, target: aarch64-apple-darwin, label: Apple Silicon }
     runs-on: ${{ matrix.runner }}
+    needs: draft
     # 手动运行只为检查安卓签名，不编 Mac 包
     if: github.event_name == 'push'
     # macOS runner 按 10 倍计费；一次正常构建约 15 分钟，挂死的任务不该烧满默认的 6 小时
@@ -138,31 +189,7 @@ jobs:
           args: --config src-tauri/tauri.release.conf.json --target ${{ matrix.target }}
           tagName: ${{ github.ref_name }}
           releaseName: FleetingGleam ${{ github.ref_name }}
-          releaseBody: |
-            ## 安装 / Install
-
-            需要 Apple Silicon（M 系列芯片）的 Mac，macOS 15 及以上。Intel Mac 暂不支持。
-            Requires a Mac with Apple Silicon (M-series) and macOS 15 or later. Intel Macs are not supported yet.
-
-            1. 下载 `.dmg`，把 FleetingGleam 拖进“应用程序”。 / Download the `.dmg` and drag FleetingGleam into Applications.
-            2. 这个版本没有经过苹果公证。第一次打开前，在“终端”里执行一次： / This build is not notarised by Apple. Before opening it for the first time, run this once in Terminal:
-
-               ```
-               xattr -cr /Applications/FleetingGleam.app
-               ```
-
-            **安卓 / Android**：下载 `FleetingGleam-android.apk`，在手机上打开安装。需要 Android 12 及以上的 64 位 ARM 手机；安装时按提示允许浏览器安装应用。 / Download `FleetingGleam-android.apk` and open it on the phone. Needs Android 12 or later on a 64-bit ARM phone; allow your browser to install apps when asked.
-
-            照片只在你自己的设备上处理；应用只为下载模型、连接你自己设置的 NAS 或备份才联网。 / Your photos stay on your own devices; the app only goes online to download models and to reach a NAS or backup you set up yourself.
-
-            装好之后不用再回来：两端的应用都会自己发现新版本，在“设置 › 关于”里一键更新。 / After this you need not come back: both apps notice new versions themselves and update from Settings › About.
-
-            ## 更新内容 / What's new
-
-            ${{ steps.notes.outputs.body }}
-
-            完整记录 / Full history: [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)
-          # 先作为草稿，维护者检查安装包后再手动发布
+          # 草稿已由上面的 draft 任务建好（含正文），这里只往里面上传安装包
           releaseDraft: true
           # 应用内更新：上传 .app.tar.gz 与 .sig（tauri.conf.json 的 createUpdaterArtifacts），并生成 latest.json 放进 Release；
           # 发布后 Mac 端在 releases/latest/download/latest.json 读到它。下面一步把它的 notes 换成只有更新说明。

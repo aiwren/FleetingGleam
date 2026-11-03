@@ -6,7 +6,7 @@ members = ["packages/core", "apps/desktop/src-tauri", "apps/android/rust"]
 default-members = ["packages/core", "apps/desktop/src-tauri"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 authors = ["FleetingGleam contributors"]
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/aiwren/FleetingGleam"
