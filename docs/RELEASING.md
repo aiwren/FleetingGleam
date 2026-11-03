@@ -5,7 +5,7 @@
 | 什么时候 | 跑什么 | 结果 |
 |---|---|---|
 | 每次推送到 `main`、每个 Pull Request | [`ci.yml`](../.github/workflows/ci.yml) | 只做检查：落地页类型检查与构建；桌面前端构建、`cargo check`、`cargo test`（含 Android 绑定 crate 在宿主上的测试）；Android 目标的 `cargo check` 与 Gradle `assembleRelease`。不发布任何东西 |
-| 推送到 `main` 且 `apps/web/` 有改动 | [`deploy-web.yml`](../.github/workflows/deploy-web.yml) | 构建落地页并部署到 Cloudflare（要先配两个 Cloudflare Secret，见"部署落地页"） |
+| 推送到 `main` 且落地页内容有改动 | [`deploy-web.yml`](../.github/workflows/deploy-web.yml) | 构建落地页并部署到 Cloudflare（要先配两个 Cloudflare Secret，见"部署落地页"） |
 | 推送形如 `v0.1.0` 的**版本标签** | [`release.yml`](../.github/workflows/release.yml) | 在 macOS 上构建 `.dmg`、在 Linux 上构建正式签名的安卓 `.apk`，创建一个**草稿** GitHub Release，两个都传上去。也能在 Actions 页手动运行，那样只编安卓包检查签名，不碰 Release |
 
 **发布是由标签触发的，不是由某个“发布分支”触发的。** 日常提交到 `main` 不会打包；只有你主动打一个版本标签才会。这是开源项目里最常见的做法：标签就是版本的唯一标记，Release 页面上的每个版本都能对应到一个确切的提交。
@@ -180,7 +180,7 @@ gh release upload v<版本号> FleetingGleam-android.apk --clobber
 
 落地页（`apps/web`）构建时会预渲染成静态 HTML，由 Cloudflare 以“静态资源”的方式托管，没有服务端代码。配置在 [`apps/web/wrangler.jsonc`](../apps/web/wrangler.jsonc)。静态资源的请求在 Cloudflare 上免费且不限量。
 
-**自动部署**：[`deploy-web.yml`](../.github/workflows/deploy-web.yml) 在推送到 `main` 且 `apps/web/` 有改动时构建并 `wrangler deploy`，也能在 Actions 页手动运行（"Deploy web" → Run workflow）。只需一次性配两个 Secret（用 aiwren 身份，同上面"应用内更新"的做法）：
+**自动部署**：[`deploy-web.yml`](../.github/workflows/deploy-web.yml) 在推送到 `main` 且落地页内容有改动时构建并 `wrangler deploy`（只看 `apps/web` 下的 `src/`、`public/`、`package.json`、`vite.config.ts`、`wrangler.jsonc`；改应用、文档、根目录锁文件或工作流本身都不触发，连推几次只有最后一次上线），也能在 Actions 页手动运行（"Deploy web" → Run workflow）。只需一次性配两个 Secret（用 aiwren 身份，同上面"应用内更新"的做法）：
 
 | 名称 | 值从哪来 |
 |---|---|
