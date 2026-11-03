@@ -208,6 +208,16 @@ jobs:
           mv "$RUNNER_TEMP/latest.fixed.json" "$RUNNER_TEMP/latest.json"
           gh release upload "$GITHUB_REF_NAME" "$RUNNER_TEMP/latest.json" --clobber --repo "$GITHUB_REPOSITORY"
 
+      # 落地页的"下载 macOS 版"直接指向 releases/latest/download/FleetingGleam-mac.dmg：dmg 本身的名字带版本号，这里再传一份固定名字的
+      - name: 再传一份固定名字的 dmg
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          dmg=$(find . -path "*/bundle/dmg/*.dmg" | head -1)
+          [ -n "$dmg" ] || { echo "::error::没找到这次编出来的 dmg"; exit 1; }
+          cp "$dmg" "$RUNNER_TEMP/FleetingGleam-mac.dmg"
+          gh release upload "$GITHUB_REF_NAME" "$RUNNER_TEMP/FleetingGleam-mac.dmg" --clobber --repo "$GITHUB_REPOSITORY"
+
   # 安卓：和 CI 一样交叉编译核心库、Gradle 出 release 包，但用正式密钥签名（密钥在仓库的 Secrets 里，见 docs/RELEASING.md），
   # 这样它能覆盖安装手机上已有的正式版。和 Mac 包并行编；打标签时由下面的 android-upload 放进 Release。
   android:

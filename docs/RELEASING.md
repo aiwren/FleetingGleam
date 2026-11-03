@@ -35,7 +35,7 @@ Release 一律先创建成**草稿**，你检查过安装包再手动点“Publi
    ```
 
    工作流会先检查标签和 `tauri.conf.json` 的版本是否一致，不一致会直接报错并停下。
-5. 在仓库的 **Actions** 页面看构建。成功后，到 **Releases** 里能看到一个草稿，里面有 Apple Silicon（`aarch64`）的 `.dmg`、更新包 `.app.tar.gz` + `.sig` + `latest.json`，以及安卓的 `FleetingGleam-android.apk`。
+5. 在仓库的 **Actions** 页面看构建。成功后，到 **Releases** 里能看到一个草稿，里面有 Apple Silicon（`aarch64`）的 `.dmg`（另有一份固定名字的 `FleetingGleam-mac.dmg`，落地页的"下载 macOS 版"指向它）、更新包 `.app.tar.gz` + `.sig` + `latest.json`，以及安卓的 `FleetingGleam-android.apk`。
 6. 下载安装包，**自己装一遍、跑一遍**，确认没问题后点 **Publish release**。一发布，已装的应用下次启动就会提示更新（见"应用内更新"）。
 
 带连字符的标签（例如 `v0.2.0-beta.1`）会被标成“预发布”。
