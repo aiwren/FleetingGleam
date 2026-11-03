@@ -117,35 +117,26 @@ function Hero({ lang }: { lang: Lang }) {
   );
 }
 
-/* ---------------- 隐私宣言：一大段话随滚动一个词一个词亮起来，右边的穹顶里照片同步收拢进手机 ---------------- */
+/* ---------------- 隐私：一句大标题，一段正文（关键句琥珀色），右边穹顶里的手机演示本机处理 ---------------- */
 function Manifesto({ lang }: { lang: Lang }) {
-  const p = copy[lang].privacy;
-  const box = useRef<HTMLParagraphElement>(null), body = useRef<HTMLDivElement>(null);
-  const head = pieces(p.title, lang), rest = pieces(p.text, lang);
-  useEffect(() => {
-    const off = reveal(body.current!);
-    if (reduced()) return off;
-    const ws = Array.from(box.current!.querySelectorAll<HTMLElement>(".v-w")), N = ws.length;
-    const stop = addScene(box.current!, (el) => localProg(el, 0.85, 0.55), (q) => {
-      ws.forEach((w, i) => { w.style.opacity = (0.15 + 0.85 * smooth(i / N - 0.08, i / N + 0.05, q)).toFixed(3); });
-    });
-    return () => { off(); stop(); };
-  }, [lang]);
+  const p = copy[lang].privacy, hi = home[lang].privacyHi;
+  const body = useRef<HTMLDivElement>(null);
+  useEffect(() => reveal(body.current!), []);
+  const at = p.text.indexOf(hi);
   return (
     <section className="v-sec v-manifesto" id="privacy" aria-labelledby="v-pv">
       <div className="v-wrap v-manifesto-grid" ref={body}>
         <div>
           <p className="v-eyebrow rv"><span className="v-dot" />{p.eyebrow}</p>
-          <p id="v-pv" ref={box} className="v-big">
-            <span className="v-hi">{head.map((w, i) => <span key={i} className="v-w">{w}</span>)}</span>
-            {lang === "zh" ? "" : " "}
-            {rest.map((w, i) => <span key={i} className="v-w">{w}</span>)}
+          <h2 id="v-pv" className={`v-pv-title${lang === "zh" ? " is-zh" : ""}`}><span className="v-ln"><span>{p.title}</span></span></h2>
+          <p className="v-pv-body rv" style={v({ "--d": "200ms" })}>
+            {at < 0 ? p.text : <>{p.text.slice(0, at)}<em>{hi}</em>{p.text.slice(at + hi.length)}</>}
           </p>
           <ul className="v-points">
-            {p.points.map(([icon, label], i) => <li key={label} className="rv" style={v({ "--d": `${i * 100}ms` })}><Ic id={icon} />{label}</li>)}
+            {p.points.map(([icon, label], i) => <li key={label} className="rv" style={v({ "--d": `${300 + i * 100}ms` })}><Ic id={icon} />{label}</li>)}
           </ul>
         </div>
-        <Vault follow={box} />
+        <Vault lang={lang} />
       </div>
     </section>
   );
