@@ -117,7 +117,7 @@ function Hero({ lang }: { lang: Lang }) {
   );
 }
 
-/* ---------------- 隐私：一句大标题，一段正文（关键句琥珀色），右边穹顶里的手机演示本机处理 ---------------- */
+/* ---------------- 隐私：一句大标题，一段正文（关键句琥珀色），右边轨道中间的手机演示本机处理 ---------------- */
 function Manifesto({ lang }: { lang: Lang }) {
   const p = copy[lang].privacy, hi = home[lang].privacyHi;
   const body = useRef<HTMLDivElement>(null);

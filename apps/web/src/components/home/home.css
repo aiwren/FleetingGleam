@@ -178,16 +178,16 @@ html:has(.home) { scroll-padding-top: 0; }
 .home .is-in .v-ln > span { transform: none; transition: transform 900ms var(--ease) calc(var(--i, 0) * 120ms); }
 
 /* ---------- 隐私宣言 ---------- */
-/* 隐私：左边一句大标题加一段正文，右边穹顶里的手机是这一屏的主体；窄屏装置放到文字下面 */
+/* 隐私：左边一句大标题加一段正文，右边轨道中间的手机是这一屏的主体；窄屏装置放到文字下面 */
 .home .v-manifesto-grid { display: grid; gap: 32px; align-items: center; }
 .home .v-pv-title { margin-top: 20px; font-size: clamp(44px, 6vw, 88px); font-weight: 500; line-height: 1; letter-spacing: -.04em; }
 .home .v-pv-title.is-zh { font-size: clamp(40px, 4.8vw, 72px); letter-spacing: -.02em; line-height: 1.1; white-space: nowrap; }
 .home .v-pv-body { margin-top: 24px; max-width: 30em; font-size: clamp(17px, 1.35vw, 20px); line-height: 1.6; color: var(--muted); }
 .home .v-pv-body em { font-style: normal; color: var(--amber); }
-.home .v-vault { display: block; width: 100%; max-width: 460px; aspect-ratio: 1 / 1.08; justify-self: center; color: var(--fg); }
+.home .v-vault { display: block; width: 100%; max-width: 520px; aspect-ratio: 1 / 1.02; justify-self: center; color: var(--fg); }
 @media (min-width: 1024px) {
   .home .v-manifesto-grid { grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 48px; }
-  .home .v-vault { max-width: 640px; }
+  .home .v-vault { max-width: 680px; }
 }
 .home .v-points { margin-top: 36px; display: flex; flex-wrap: wrap; gap: 10px; }
 .home .v-points li { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 18px; border-radius: 999px; border: 1px solid var(--line); font-size: 14px; }
