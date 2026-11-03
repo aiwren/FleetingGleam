@@ -8,9 +8,10 @@ export const SITE = "https://fleetinggleam.fleetinggleam-web.workers.dev";
  * until then the download section says "coming soon" and no link points at GitHub, where a visitor would only find a 404.
  */
 export const release = {
-  available: false,
+  available: true,
   repo: "https://github.com/aiwren/FleetingGleam",
-  download: "https://github.com/aiwren/FleetingGleam/releases/latest",
+  /** 和安卓一样直接下载：发布工作流给每个 Release 传一份固定名字的 dmg。 */
+  download: "https://github.com/aiwren/FleetingGleam/releases/latest/download/FleetingGleam-mac.dmg",
   /** The APK is uploaded to every Release under this fixed name (docs/RELEASING.md), so the link always gets the latest one. */
   android: "https://github.com/aiwren/FleetingGleam/releases/latest/download/FleetingGleam-android.apk",
 };
