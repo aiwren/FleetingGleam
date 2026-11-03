@@ -8,7 +8,7 @@ import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
 
-private fun locale(): Locale = if (I18n.lang.value.startsWith("zh")) Locale.SIMPLIFIED_CHINESE else Locale.ENGLISH
+private fun locale(): Locale = if (I18n.code.startsWith("zh")) Locale.SIMPLIFIED_CHINESE else Locale.ENGLISH
 
 /** A size in bytes the way the language writes it, through ICU (the same CLDR data as the Mac's `Intl`), not hand-written units. */
 fun fmtBytes(b: Long): String {

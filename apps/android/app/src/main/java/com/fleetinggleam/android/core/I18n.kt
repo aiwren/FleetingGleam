@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.json.Json
@@ -27,6 +28,8 @@ object I18n {
     private val _lang = MutableStateFlow("en")
     /** 当前语言（"zh-CN" / "en"）；界面读它来重组。 */
     val lang: StateFlow<String> = _lang
+    /** 同一个值的快照状态：`t()` 在组合里读它，谁用了文案谁就随语言重组（LazyColumn 的 item、被跳过的子组件也一样）。 */
+    private val current = mutableStateOf("en")
     private lateinit var prefs: android.content.SharedPreferences
 
     fun init(ctx: Context) {
@@ -36,7 +39,7 @@ object I18n {
             val extra = read(ctx, "i18n/android.$l.json")
             tables[l] = merge(base, extra)
         }
-        _lang.value = resolve(pref())
+        switchTo(resolve(pref()))
     }
 
     private fun read(ctx: Context, name: String): JsonObject =
@@ -56,12 +59,20 @@ object I18n {
 
     fun setPref(p: String) {
         prefs.edit().putString("lang", p).apply()
-        _lang.value = resolve(p)
+        switchTo(resolve(p))
     }
+
+    private fun switchTo(l: String) {
+        current.value = l
+        _lang.value = l
+    }
+
+    /** 当前语言；在组合里读会订阅重组。 */
+    val code: String get() = current.value
 
     private fun resolve(p: String): String = if (p == "system") (if (Locale.getDefault().language.startsWith("zh")) "zh-CN" else "en") else p
 
-    val isZh: Boolean get() = _lang.value.startsWith("zh")
+    val isZh: Boolean get() = current.value.startsWith("zh")
 
     private fun lookup(table: JsonObject?, key: String): JsonElement? {
         var cur: JsonElement? = table
@@ -70,7 +81,7 @@ object I18n {
     }
 
     private fun find(key: String, count: Number?): JsonElement? {
-        for (l in listOf(_lang.value, "en")) {
+        for (l in listOf(current.value, "en")) {
             val table = tables[l]
             if (count != null) {
                 val one = count.toDouble() == 1.0 && !l.startsWith("zh")

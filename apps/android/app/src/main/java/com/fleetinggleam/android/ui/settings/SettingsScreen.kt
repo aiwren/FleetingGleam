@@ -200,7 +200,7 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                 // 根页：大标题，下面一张分级列表（像 iOS 设置）
                 Text(t("settings.title"), style = Type.largeTitle.copy(color = c.ink), modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 16.dp))
                 val rows = listOf(
-                    Triple("general", Icons.SETTINGS, t("settings.general")) to (I18n.LANGS.firstOrNull { it.code == I18n.lang.value }?.label ?: t("nav.systemLang")),
+                    Triple("general", Icons.SETTINGS, t("settings.general")) to (I18n.LANGS.firstOrNull { it.code == I18n.code }?.label ?: t("nav.systemLang")),
                     Triple("analysis", "M2 8h2.5l1.5-4 2 8 1.5-4H14", t("settings.analysis")) to (s.tier?.let { t(if (it == "ultra") "settings.qualityUltra" else if (it == "high") "settings.qualityHigh" else "settings.qualityFast") } ?: t("settings.auto")),
                     Triple("personal", Icons.STYLE, t("settings.personal")) to (if (s.learn) t("android.settings.on") else t("android.settings.off")),
                     Triple("data", "M2.5 4.5h11v3h-11zM2.5 8.5h11v3h-11zM4.5 6h.01M4.5 10h.01", t("android.settings.modelsStorage")) to "${packs.count { it.installed }} / ${packs.size}",
