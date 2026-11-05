@@ -1502,7 +1502,7 @@ dependencies = [
 
 [[package]]
 name = "fleetinggleam"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "fleetinggleam-core",
  "image",
@@ -1527,7 +1527,7 @@ dependencies = [
 
 [[package]]
 name = "fleetinggleam-android"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "base64 0.22.1",
  "fleetinggleam-core",
@@ -1539,7 +1539,7 @@ dependencies = [
 
 [[package]]
 name = "fleetinggleam-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",

@@ -331,7 +331,8 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, re
                         }
                     } }
                     // 综合分和一句理由就放在这里（以前要点开检查器才看得到——作者 2026-11-05："综合评分藏得有点深"）；点它打开检查器看细项
-                    val why = decisions[photo.path]?.reasons?.joinToString(if (com.fleetinggleam.android.core.I18n.isZh) "；" else "; ") { reasonText(it) }.orEmpty()
+                    // 分数已经在左边大字显示了，理由里"综合 97，…""…，综合 97"那半句去掉，不然一行里说两遍（检查器里保留原文）
+                    val why = decisions[photo.path]?.reasons?.joinToString(if (com.fleetinggleam.android.core.I18n.isZh) "；" else "; ") { withoutScore(reasonText(it)) }.orEmpty()
                     Row(
                         Modifier.fillMaxWidth().clickable(enabled = !readOnly) { info = true }.padding(horizontal = 16.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -372,6 +373,12 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, re
         }
     }
 }
+
+/** 去掉理由里重复的综合分："综合 97，达到保留标准" → "达到保留标准"，"…最好的一张，综合 97" → "…最好的一张"。 */
+private fun withoutScore(r: String): String = r
+    .replace(Regex("""^(综合|Overall) \d+[，,:：]\s*"""), "")
+    .replace(Regex("""[，,]\s*(综合|overall) \d+$"""), "")
+    .replaceFirstChar { it.uppercaseChar() }
 
 /** 照片按比例放进一个框里时的位置与大小。 */
 private fun fitRect(ratio: Float, w: Float, h: Float): androidx.compose.ui.geometry.Rect {

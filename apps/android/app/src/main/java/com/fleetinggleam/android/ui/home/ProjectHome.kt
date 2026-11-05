@@ -461,9 +461,9 @@ private fun StartScreen(binCount: Int, onBin: () -> Unit) {
                 entry(t("android.start.folder")) { scope.launch { Actions.newProjectFromDialog(source = "folder") } }
                 Box(Modifier.align(Alignment.CenterVertically)) { dot() }
                 entry(t("android.start.nas")) { com.fleetinggleam.android.core.Nav.openSettings("nas") }
-                Box(Modifier.align(Alignment.CenterVertically)) { dot() }
-                entry(t("android.start.sample")) { com.fleetinggleam.android.core.Samples.open(ctx) }
             }
+            // 示例照片单独一行：新手最该点的就是它，而且和上面挤一行时英文会折行，行尾悬着一个"·"
+            Box(Modifier.padding(top = 2.dp)) { entry(t("android.start.sample")) { com.fleetinggleam.android.core.Samples.open(ctx) } }
             Text(t("nav.privacy"), style = Type.small.copy(color = c.ash), textAlign = TextAlign.Center, modifier = Modifier.padding(top = 24.dp))
         }
     }
