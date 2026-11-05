@@ -222,7 +222,7 @@ fun CompareView(photos: List<Photo>, all: List<Photo>, scopeProp: String, cull: 
             }
         }
         // ---- 2. 翻组与范围（"留第 1 张 / 留第 2 张"在底部浮动栏里，见 CullBar）
-        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 16.dp, top = 2.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
             ArrowBtn("M10 3L5 8l5 5", gi > 0) { jump(-1) }
             Text(if (scopeMode == "scene") t("cmp.sceneOf", "n" to groupPhotos.size) else t("android.cmp.groupShort", "i" to gi + 1, "n" to groups.size), style = Type.monoSmall.copy(color = c.ash),
                 maxLines = 1, overflow = Ellipsis, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)

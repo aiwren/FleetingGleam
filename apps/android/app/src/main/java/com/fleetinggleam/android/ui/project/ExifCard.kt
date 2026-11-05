@@ -78,6 +78,8 @@ private fun ShotGrid(info: FileInfo?, compact: Boolean) {
         "ISO" to info?.iso?.removePrefix("ISO")?.trim(),
         t("android.exif.focal") to info?.focal,
     )
+    // 一项拍摄参数都没有（截图、下载的图）：不摆四个"—"的空格子
+    if (cells.all { it.second.isNullOrBlank() }) return
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val perRow = if (compact || maxWidth < 300.dp) 2 else 4
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {

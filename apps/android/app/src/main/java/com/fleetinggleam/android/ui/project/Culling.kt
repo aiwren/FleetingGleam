@@ -50,6 +50,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
@@ -603,15 +605,36 @@ fun StatusStrip(cull: CullState, data: CullData, padded: Boolean = true) {
     val filtering = cull.personFilter != null || cull.sceneFilter != null || cull.starFilter != null || cull.pairFilter
     // 分析中的页签数据里没有"未处理"：那时不列
     val modes = if (data.status.containsKey("untouched")) MODES else SCAN_MODES
+    val tabScroll = rememberScrollState()
+    // 选中的页签不在眼前（被右边的图标挡住、或滑走了）：滚到看得见
+    LaunchedEffect(cull.mode, target) {
+        val (x, w) = target ?: return@LaunchedEffect
+        val view = tabScroll.viewportSize
+        if (view <= 0) return@LaunchedEffect
+        val edge = with(density) { 56.dp.toPx() }
+        if (x + w + edge > tabScroll.value + view) tabScroll.animateScrollTo((x + w + edge - view).toInt().coerceAtLeast(0))
+        else if (x < tabScroll.value) tabScroll.animateScrollTo(x.toInt().coerceAtLeast(0))
+    }
     Column(Modifier.fillMaxWidth().padding(horizontal = if (padded) 16.dp else 4.dp)) {
         Box(Modifier.fillMaxWidth()) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    Modifier.weight(1f)
+                        // 右边还有没露出来的页签：末端淡出，不是被图标一刀切掉
+                        .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
+                        .drawWithContent {
+                            drawContent()
+                            if (tabScroll.canScrollForward) drawRect(Brush.horizontalGradient(0f to Color.Black, 1f - 28.dp.toPx() / size.width to Color.Black, 1f to Color.Transparent), blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
+                            if (tabScroll.canScrollBackward) drawRect(Brush.horizontalGradient(0f to Color.Transparent, 20.dp.toPx() / size.width to Color.Black, 1f to Color.Black), blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
+                        }
+                        .horizontalScroll(tabScroll),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     modes.forEachIndexed { i, id ->
                         val on = cull.mode == id
                         var rowX by remember { mutableStateOf(0f) }
                         Row(
-                            Modifier.padding(end = 18.dp).onGloballyPositioned { rowX = it.positionInParent().x }
+                            Modifier.padding(end = 16.dp).onGloballyPositioned { rowX = it.positionInParent().x }
                                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { cull.mode = id }
                                 .padding(top = 8.dp, bottom = 12.dp),
                             verticalAlignment = Alignment.Bottom,
@@ -636,7 +659,8 @@ fun StatusStrip(cull: CullState, data: CullData, padded: Boolean = true) {
             }
             // 下划线：跟着选中的页签滑过去
             if (target != null) Box(
-                Modifier.align(Alignment.BottomStart).offset { androidx.compose.ui.unit.IntOffset(lineX.toInt(), 0) }
+                // 下划线画在滚动区外面：减掉滚过的距离才对得上字（以前页签一滑线就错位）
+                Modifier.align(Alignment.BottomStart).offset { androidx.compose.ui.unit.IntOffset((lineX - tabScroll.value).toInt(), 0) }
                     .width(with(density) { lineW.toDp() }).height(2.dp).clip(RoundedCornerShape(1.dp)).background(c.ink),
             )
         }

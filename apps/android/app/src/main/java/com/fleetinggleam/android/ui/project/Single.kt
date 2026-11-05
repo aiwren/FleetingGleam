@@ -62,6 +62,7 @@ import com.fleetinggleam.android.core.Photo
 import com.fleetinggleam.android.core.pct
 import com.fleetinggleam.android.core.t
 import com.fleetinggleam.android.ui.components.FgIcon
+import com.fleetinggleam.android.ui.components.fadeEdges
 import com.fleetinggleam.android.ui.theme.LocalFg
 import com.fleetinggleam.android.ui.theme.Motion
 import com.fleetinggleam.android.ui.theme.Type
@@ -98,7 +99,7 @@ fun SinglePager(shown: List<Photo>, decisions: Map<String, Decision>, cull: Cull
         Box(Modifier.weight(1f).fillMaxWidth()) {
             // 照片的颜色在它身后晕开
             // 和大图的"房间"同一套参数：模糊 56、透明 0.4、放大 1.4（设计审查 A7.3）
-            com.fleetinggleam.android.ui.components.AmbientImage(photo.thumb, 56.dp, Modifier.align(Alignment.Center).fillMaxSize(0.6f).graphicsLayer { alpha = 0.4f }, zoom = 1.4f)
+            com.fleetinggleam.android.ui.components.AmbientImage(photo.thumb, 56.dp, Modifier.align(Alignment.Center).fillMaxSize(0.92f).graphicsLayer { alpha = 0.45f }.fadeEdges(), zoom = 1.4f)
             HorizontalPager(pager, Modifier.fillMaxSize(), key = { shown[it].path }, beyondViewportPageCount = 1) { page ->
                 val p = shown[page]
                 SwipeDecide(p, decisions[p.path], onDecide = { st ->

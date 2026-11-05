@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
@@ -50,6 +51,19 @@ fun AmbientImage(path: String, blur: Dp, modifier: Modifier = Modifier, zoom: Fl
             contentScale = ContentScale.Crop, onSuccess = { last = it.result.memoryCacheKey })
     }
 }
+
+/**
+ * 四边向外淡出到透明。照片身后那团颜色是一个矩形的模糊图，不淡出的话边是硬的，看起来像照片后面垫了一块色板
+ *（单张布局里很明显——走查 2026-11-05）。`edge` 是每一边用来淡出的比例。
+ */
+fun Modifier.fadeEdges(edge: Float = 0.42f): Modifier = this
+    .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
+    .drawWithContent {
+        drawContent()
+        val stops = arrayOf(0f to androidx.compose.ui.graphics.Color.Transparent, edge to androidx.compose.ui.graphics.Color.Black, 1f - edge to androidx.compose.ui.graphics.Color.Black, 1f to androidx.compose.ui.graphics.Color.Transparent)
+        drawRect(androidx.compose.ui.graphics.Brush.horizontalGradient(*stops), blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
+        drawRect(androidx.compose.ui.graphics.Brush.verticalGradient(*stops), blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
+    }
 
 /** 小图的长边。 */
 private const val SMALL = 64

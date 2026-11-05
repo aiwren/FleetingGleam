@@ -61,13 +61,17 @@ fun ProjectSettings(open: Boolean, project: Project, onClose: () -> Unit, onAddF
         Column(Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 16.dp).padding(top = 4.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
             // 和准备页同一套 iOS 分组列表（作者 2026-10-22 嫌旧样式丑）
             FgField(name, { name = it }, label = t("pset.name"), onDone = { commit() })
+            Column {
             com.fleetinggleam.android.ui.components.SettingGroup(t("pset.folders")) {
                 project.folders.forEachIndexed { i, f ->
                     com.fleetinggleam.android.ui.components.SettingRow(baseName(f), f.removePrefix("/storage/emulated/0/"), first = i == 0, icon = Icons.FOLDER, control = {
                         Box(Modifier.size(32.dp).clip(RoundedCornerShape(16.dp)).clickable { onRemoveFolder(f) }, contentAlignment = Alignment.Center) { FgIcon(Icons.CLOSE, size = 14.dp, color = c.ash) }
                     })
                 }
-                com.fleetinggleam.android.ui.components.SettingRow(t("cull.addFolder"), t("cull.folderHint"), icon = Icons.PLUS, iconBox = 18f, onClick = onAddFolder, control = { FgIcon(Icons.CHEVRON, size = 14.dp, stroke = 1.6f, color = c.ash) })
+                com.fleetinggleam.android.ui.components.SettingRow(t("cull.addFolder"), icon = Icons.PLUS, iconBox = 18f, onClick = onAddFolder, control = { FgIcon(Icons.CHEVRON, size = 14.dp, stroke = 1.6f, color = c.ash) })
+            }
+            // 这句说的是每个文件夹右边的 ×（以前挂在"添加文件夹"下面，读起来像添加会移除东西）
+            Text(t("cull.folderHint"), style = Type.small.copy(color = c.ash), modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp))
             }
             com.fleetinggleam.android.ui.components.SettingGroup(t("pset.prefs")) { ProjectPrefs(project) }
             com.fleetinggleam.android.ui.components.SettingGroup("") {
