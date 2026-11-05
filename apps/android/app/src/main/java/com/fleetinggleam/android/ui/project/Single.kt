@@ -75,7 +75,7 @@ import kotlin.math.abs
  * 新的一张从另一边转进来正对你。手机上多了一种快速挑法：在照片上往上推 = 保留，往下拉 = 淘汰，然后自动到下一张。
  */
 @Composable
-fun SinglePager(shown: List<Photo>, decisions: Map<String, Decision>, cull: CullState, onDecide: (String, String?) -> Unit, onOpen: (String) -> Unit, bottomPad: Dp) {
+fun SinglePager(shown: List<Photo>, decisions: Map<String, Decision>, cull: CullState, onDecide: (String, String?) -> Unit, onOpen: (String) -> Unit, bottomPad: Dp, stars: Map<String, Int> = emptyMap()) {
     val c = LocalFg.current
     val scope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
@@ -123,9 +123,10 @@ fun SinglePager(shown: List<Photo>, decisions: Map<String, Decision>, cull: Cull
         // 页码放在小图条右端，不单独占一行（A7.6）
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Filmstrip(shown, decisions, pager.currentPage, Modifier.weight(1f)) { path -> cull.select(path) }
-            Text("${pager.currentPage + 1} / ${shown.size}", style = Type.monoSmall.copy(color = c.ash), modifier = Modifier.padding(end = 16.dp))
+            Text("${pager.currentPage + 1} / ${shown.size}", style = Type.monoSmall.copy(color = c.ash), maxLines = 1, softWrap = false, modifier = Modifier.padding(start = 10.dp, end = 16.dp))
         }
-        CompactVerdict(photo, decisions[photo.path], onDecide = { st -> onDecide(photo.path, st) })
+        CompactVerdict(photo, decisions[photo.path], stars[photo.path] ?: 0, onDecide = { st -> onDecide(photo.path, st) },
+            onRate = { n -> haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); com.fleetinggleam.android.core.Session.rate(photo.path, n) })
     }
 }
 
@@ -191,6 +192,7 @@ private fun SwipeDecide(p: Photo, d: Decision?, onDecide: (String) -> Unit, onOp
             }
             PhotoTags(p, Modifier.align(Alignment.TopStart).padding(8.dp))
             if (kept) Box(Modifier.align(Alignment.TopEnd).padding(9.dp)) { Star(true, 20.dp) }
+            if (d?.state == "reject") RejectBadge(Modifier.align(Alignment.TopEnd).padding(9.dp))
         }
     }
 }
@@ -221,6 +223,7 @@ fun Filmstrip(shown: List<Photo>, decisions: Map<String, Decision>, index: Int, 
             ) {
                 AsyncImage(File(p.thumb), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                 if (st == "keep") Box(Modifier.align(Alignment.TopEnd).padding(4.dp).size(7.dp).clip(CircleShape).background(c.gleam))
+                if (st == "reject") RejectBadge(Modifier.align(Alignment.TopEnd).padding(3.dp), size = 13.dp)
             }
         }
     }
@@ -229,13 +232,15 @@ fun Filmstrip(shown: List<Photo>, decisions: Map<String, Decision>, index: Int, 
 /** 单张下面的判定：星、分数、三个按钮、一行理由。 */
 /** 单张下面的判定（设计审查 A7.4 / R2）：一行分数（数字，不画星）+ 理由；下面三个判定钮（和检查器同一个 `DecideTrio`）。 */
 @Composable
-private fun CompactVerdict(photo: Photo, d: Decision?, onDecide: (String?) -> Unit) {
+private fun CompactVerdict(photo: Photo, d: Decision?, stars: Int, onDecide: (String?) -> Unit, onRate: (Int?) -> Unit) {
     val c = LocalFg.current
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("${pct(photo.score)}", style = Type.mono.copy(fontSize = 16.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium, color = c.ink))
             Text(d?.reasons?.joinToString(if (I18n.isZh) "；" else "; ") { reasonText(it) } ?: "", style = Type.rowDesc.copy(color = c.ash), maxLines = 1,
                 overflow = com.fleetinggleam.android.ui.theme.Ellipsis, modifier = Modifier.weight(1f).padding(start = 10.dp))
+            // 星级和三个判定钮在同一块（单张以前打不了星）：打星即保留，改判别的星就清掉
+            RateStars(stars, onRate, star = 15.dp, hit = 30.dp)
         }
         DecideTrio(d, onDecide, Modifier.padding(top = 8.dp))
     }

@@ -68,15 +68,15 @@ import java.util.concurrent.ConcurrentHashMap
 fun stars(v: Float): Int = kotlin.math.ceil(v * 5).toInt().coerceIn(1, 5)
 
 /**
- * 一张照片的检查器（桌面端右侧的 inspector）：判定（星、三个按钮、理由、几条数据），同组照片，详细数据，文件信息。
+ * 一张照片的检查器（桌面端右侧的 inspector）：分数、理由、几条数据，同组照片，详细数据，文件信息。
  * 手机上它在大图下面拉上来的面板里，和单张模式的照片下面。
  */
 @Composable
-fun InspectorBody(photo: Photo, decision: Decision?, mates: List<Photo>, onDecide: (String?) -> Unit, onSelect: (String) -> Unit, dark: Boolean = false, stars: Int = 0, onRate: ((Int?) -> Unit)? = null) {
+fun InspectorBody(photo: Photo, decision: Decision?, mates: List<Photo>, onSelect: (String) -> Unit, dark: Boolean = false) {
     val c = LocalFg.current
     // 区块之间 16（设计审查 A10.5）；详细数据的摘要带名字、不再列一遍"综合"（A10.2）；人脸也是一行名字 · 值（A10.3）
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        PhotoVerdict(photo, decision, onDecide, stars, onRate)
+        PhotoVerdict(photo, decision)
         if (mates.size > 1) Mates(photo, mates, onSelect)
         Column(Modifier.clip(RoundedCornerShape(14.dp)).background(c.panel).then(if (c.dark) Modifier.border(1.dp, c.line, RoundedCornerShape(14.dp)) else Modifier)) {
             Accordion("M2.5 12.5V8.5M6.5 12.5V4M10.5 12.5V6.5M14 12.5H1.5", t("inspector.details"),
@@ -120,10 +120,9 @@ fun DecideTrio(decision: Decision?, onDecide: (String?) -> Unit, modifier: Modif
     }
 }
 
-/** 判定：名字、星、保留 / 待复查 / 淘汰、理由、几条数据条（桌面端 PhotoVerdict）。 */
-/** 判定（设计审查 A10.1 / R2）：名字、综合分（24sp 等宽数字，不画星）+ "?"、三个判定钮、理由、几条数据条。 */
+/** 这张照片为什么是这个判定（设计审查 A10.1 / R2）：名字、综合分（24sp 等宽数字，不画星）+ "?"、理由、几条数据条。判定本身不在这里做。 */
 @Composable
-fun PhotoVerdict(photo: Photo, decision: Decision?, onDecide: (String?) -> Unit, stars: Int = 0, onRate: ((Int?) -> Unit)? = null) {
+fun PhotoVerdict(photo: Photo, decision: Decision?) {
     val c = LocalFg.current
     val reasons = decision?.reasons?.map { reasonText(it) }?.joinToString(if (I18n.isZh) "；" else "; ")
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -142,12 +141,7 @@ fun PhotoVerdict(photo: Photo, decision: Decision?, onDecide: (String?) -> Unit,
             Text(t("inspector.overall"), style = Type.small.copy(color = c.ash), modifier = Modifier.padding(start = 8.dp))
             InfoPop(t("inspector.overall"), t("inspector.scoreTip"))
         }
-        DecideTrio(decision, onDecide, Modifier.padding(top = 4.dp))
-        // 手动星级：一行五颗可点的星，和保留 / 淘汰互不影响
-        if (onRate != null) Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(t("stars.label"), style = Type.rowDesc.copy(color = c.ash), modifier = Modifier.width(76.dp))
-            RateStars(stars, onRate, Modifier.padding(start = 0.dp), star = 18.dp, hit = 36.dp)
-        }
+        // 这里只说"为什么"：判定和星级在大图底下那一条里做（以前这里又放了一套，打开后把底下那套盖住——走查 2026-11-05）
         if (!reasons.isNullOrEmpty()) Text(reasons, style = Type.rowDesc.copy(color = c.ash))
         Column(Modifier.padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             MBar(t("inspector.sharp"), pct(photo.sharpScore))

@@ -320,7 +320,7 @@ private fun Cell(
             Row(Modifier.align(Alignment.TopStart).padding(7.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 PhotoTags(p)
                 // "推荐"只用文字：四角星只表示保留（R2 / A8.3）
-                if (p.groupBest && count > 1) Tag(t("cmp.best"))
+                if (p.groupBest && count > 1 && st != "reject") Tag(t("cmp.best"))
                 if (st == "keep") Tag(t("cmp.kept"), star = true)
                 if (st == "reject") Tag(t("cmp.rejected"))
                 zoomTag?.let { Tag(it) }

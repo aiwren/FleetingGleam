@@ -80,6 +80,7 @@ import com.fleetinggleam.android.core.Reason
 import com.fleetinggleam.android.core.Scenes
 import com.fleetinggleam.android.core.Search
 import com.fleetinggleam.android.core.Session
+import com.fleetinggleam.android.ui.components.Icons
 import com.fleetinggleam.android.core.Settings
 import com.fleetinggleam.android.core.UiPrefs
 import com.fleetinggleam.android.core.str
@@ -135,6 +136,9 @@ class CullState {
     /** 文件筛选"缺配对"：只看既无伴随文件、又是孤零零的 RAW 或 JPG 的。 */
     var pairFilter by mutableStateOf(false)
     var selected by mutableStateOf<String?>(null)
+    /** 多选（长按一张进入）：选着的那些照片。空 = 不在多选里；在多选里点格子是勾选 / 取消，不进大图。 */
+    var multi by mutableStateOf<Set<String>>(emptySet())
+    fun toggleMulti(path: String) { multi = if (path in multi) multi - path else multi + path }
     /** 选中是点出来的（就在手指下，不用滚过去）。 */
     var selectedByTap = false
     var viewer by mutableStateOf(false)
@@ -413,7 +417,7 @@ fun decideIn(cull: CullState, data: CullData, path: String, st: String?, order: 
 // ------------------------------------------------------------------------------------------------ 选片界面
 
 /** 选片界面上的动作（改判、打开大图、点选格子）：内容层和浮层共用一份，交给格子的回调不随重组换新对象。 */
-class CullActions(val decide: (String, String?) -> Unit, val open: (String) -> Unit, val selectTile: (String) -> Unit)
+class CullActions(val decide: (String, String?) -> Unit, val open: (String) -> Unit, val selectTile: (String) -> Unit, val long: (String) -> Unit)
 
 @Composable
 fun rememberCullActions(cull: CullState, data: CullData): CullActions {
@@ -423,8 +427,10 @@ fun rememberCullActions(cull: CullState, data: CullData): CullActions {
         val decide: (String, String?) -> Unit = { path, st -> haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); decideIn(cull, dataRef.value, path, st) }
         val open: (String) -> Unit = { path -> cull.select(path, byTap = true); cull.viewer = true }
         // 格子单击直接进大图，跟手机相册一样（作者 2026-10-26："点一下就放到大图就行了 不用双击"）
-        val selectTile: (String) -> Unit = open
-        CullActions(decide, open, selectTile)
+        // 多选里点格子是勾选 / 取消；长按一张进入多选（再长按别的接着勾）
+        val selectTile: (String) -> Unit = { path -> if (cull.multi.isNotEmpty()) cull.toggleMulti(path) else open(path) }
+        val long: (String) -> Unit = { path -> haptic.performHapticFeedback(HapticFeedbackType.LongPress); cull.toggleMulti(path) }
+        CullActions(decide, open, selectTile, long)
     }
 }
 
@@ -459,15 +465,20 @@ fun CullingContent(project: Project, cull: CullState, data: CullData, actions: C
     }
 
     androidx.activity.compose.BackHandler(cull.sceneView) { cull.sceneView = false }
+    // 多选：返回键退出；换页签、换筛选、换浏览方式、进场景页时也退出（选着的可能已经不在眼前）
+    androidx.activity.compose.BackHandler(cull.multi.isNotEmpty()) { cull.multi = emptySet() }
+    LaunchedEffect(cull.mode, cull.layout, cull.sceneView, cull.sceneFilter, cull.personFilter, cull.starFilter, cull.pairFilter, cull.query) { cull.multi = emptySet() }
     androidx.activity.compose.BackHandler(!cull.sceneView && cull.searchOpen) { cull.searchOpen = false; cull.query = "" }
     // 操作提示在时，墙底部多留 56dp，免得和最后一行照片重叠（设计审查 A6.9）
     val hintOn = cull.hintUses < 4 && !cull.sceneView
-    val bottomPad = if (hintOn) 148.dp else 92.dp
+    // 底下留多少：有底栏（多选、对比页的快捷取舍）时让出它的高度，没有就只留一点
+    val barOn = cull.multi.isNotEmpty() || (cull.layout == ViewStyle.Compare && cull.compareCount > 0)
+    val bottomPad = (if (barOn) 92.dp else 28.dp) + (if (hintOn) 56.dp else 0.dp)
     when {
         cull.sceneView -> SceneGallery(project, data, cull, describing, canDescribe = !scenePack && data.scenes.any { it.text.isEmpty() },
             onDescribe = { scope.launch { if (Models.ensurePack("scenetext") != Answer.Cancelled) Scenes.describe(photos, true) } }, topPad = topPad, bottomPad = bottomPad)
         cull.layout == ViewStyle.Single && data.shown.isNotEmpty() -> Box(Modifier.fillMaxSize().padding(top = topPad)) {
-            SinglePager(data.shown, decisions, cull, onDecide = actions.decide, onOpen = actions.open, bottomPad = bottomPad)
+            SinglePager(data.shown, decisions, cull, onDecide = actions.decide, onOpen = actions.open, bottomPad = bottomPad, stars = project.stars)
         }
         cull.layout == ViewStyle.Compare && data.shown.isNotEmpty() -> Box(Modifier.fillMaxSize().padding(top = topPad)) {
             // 人物筛选下的照片池：只在照片或筛选变了时重算（以前每次重组都 filter 一遍，CompareView 里的 groupBy 跟着重算）
@@ -494,6 +505,7 @@ fun CullingContent(project: Project, cull: CullState, data: CullData, actions: C
                     Box(Modifier.trackRect(cull.coords, p.path)) {
                         Tile(p.path, w, h, p, null, st, selected = cull.selected == p.path, reveal = celebrate, dim = st == "reject" && cull.mode == "all", manual = d?.manual == true,
                             showScore = sortBy == "score", index = i, interactive = true, dock = false, stars = project.stars[p.path] ?: 0,
+                            picking = cull.multi.isNotEmpty(), picked = p.path in cull.multi, onLong = actions.long,
                             onSelect = actions.selectTile, onOpen = actions.open, onDecide = actions.decide)
                     }
                 }
@@ -512,7 +524,7 @@ fun CullingChrome(project: Project, cull: CullState, data: CullData, actions: Cu
     val calm = com.fleetinggleam.android.ui.theme.LocalCalm.current
     Box(Modifier.fillMaxSize()) {
         // 操作提示：前几次改判之后就不再出现
-        AnimatedVisibility(hintOn, modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 74.dp, start = 16.dp, end = 16.dp),
+        AnimatedVisibility(hintOn, modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = if (cull.multi.isNotEmpty() || (cull.layout == ViewStyle.Compare && cull.compareCount > 0)) 74.dp else 14.dp, start = 16.dp, end = 16.dp),
             enter = fadeIn(Motion.base()) + slideInVertically(Motion.base()) { it / 2 }, exit = fadeOut(Motion.fast())) {
             // 动效"克制"时提示更淡
             GlassBox(Modifier.graphicsLayer { alpha = if (calm) 0.72f else 1f }, shape = RoundedCornerShape(14.dp), style = glassStyle(strong = true)) {
@@ -522,9 +534,9 @@ fun CullingChrome(project: Project, cull: CullState, data: CullData, actions: Cu
                 }
             }
         }
-        // 底栏：没选照片时只有浏览方式；选中一张就变成它的快速操作（保留 / 淘汰）。场景页有自己的导航，底栏隐藏（A11.3）
-        val sel = cull.selected?.let { data.byPath[it] }?.takeIf { cull.layout != ViewStyle.Compare }
-        if (!cull.sceneView) CullBar(cull, sel, sel?.let { decisions[it.path] }, Modifier.align(Alignment.BottomCenter), onDecide = actions.decide, onOpen = actions.open)
+        // 底栏只在有事可做时出现，而且每个位置只有一种意思（走查 2026-11-05：同一位置一会儿是"浏览方式"一会儿是"淘汰"，会误点）：
+        // 多选里是这一批的保留 / 待复查 / 淘汰；对比页是"只留第 n 张"。浏览方式固定在页签右边（StatusStrip）。场景页有自己的导航，底栏隐藏（A11.3）
+        if (!cull.sceneView) CullBar(cull, Modifier.align(Alignment.BottomCenter))
     }
     FilterSheet(cull, data)
     ViewSheet(cull, sortBy) { Projects.update(project.id) { p -> p.copy(sort = it) } }
@@ -612,7 +624,11 @@ fun StatusStrip(cull: CullState, data: CullData, padded: Boolean = true) {
                         }
                     }
                 }
-                if (hasFilters) Box(Modifier.size(40.dp).clip(CircleShape).clickable { cull.filterSheet = true }, contentAlignment = Alignment.Center) {
+                // 浏览方式固定在这里（以前在底栏里，位置会被"淘汰"占掉）：图标是眼下的那种，点开选浏览方式和排序
+                Box(Modifier.size(40.dp).clip(CircleShape).clickable { cull.viewSheet = true }.semantics { contentDescription = t("cull.layoutAria") }, contentAlignment = Alignment.Center) {
+                    FgIcon(cull.layout.icon, size = 18.dp, stroke = 1.5f, color = c.ink)
+                }
+                if (hasFilters) Box(Modifier.size(40.dp).clip(CircleShape).clickable { cull.filterSheet = true }.semantics { contentDescription = t("cull.filters") }, contentAlignment = Alignment.Center) {
                     FgIcon("M2 4h12M4 8h8M6 12h4", size = 18.dp, stroke = 1.6f, color = c.ink)
                     // "有筛选"的点是墨色：琥珀只给保留（R1 / A6.3）
                     if (filtering) Box(Modifier.align(Alignment.TopEnd).padding(top = 8.dp, end = 7.dp).size(6.dp).clip(CircleShape).background(c.ink))
@@ -694,38 +710,35 @@ fun FaceAvatar(photo: Photo, box: List<Float>, size: Dp) {
 
 /** 底部的液态玻璃工具栏：筛选、浏览方式、撤销。 */
 @Composable
-private fun CullBar(cull: CullState, sel: Photo?, d: Decision?, modifier: Modifier, onDecide: (String, String?) -> Unit, onOpen: (String) -> Unit) {
+private fun CullBar(cull: CullState, modifier: Modifier) {
     val c = LocalFg.current
-    Box(modifier.navigationBarsPadding().padding(bottom = 10.dp)) {
+    val haptic = LocalHapticFeedback.current
+    val n = cull.multi.size
+    val keep = cull.compareKeep
+    val compare = cull.layout == ViewStyle.Compare && keep != null && cull.compareCount > 0
+    // 0 = 没有底栏，1 = 多选，2 = 对比页的快捷取舍
+    val kind = if (n > 0) 1 else if (compare) 2 else 0
+    androidx.compose.animation.AnimatedVisibility(kind != 0, modifier.navigationBarsPadding().padding(bottom = 10.dp), enter = fadeIn(Motion.fast()), exit = fadeOut(Motion.fast())) {
         GlassBox(shape = RoundedCornerShape(50)) {
-            // 内容切换时胶囊的宽度跟着变
-            // 只有"有没有选中照片"和"是不是场景页"变了才换内容；改判、换一张选中的都在原地更新（之前把判定也当键，点一下保留整条会闪一下）
             androidx.compose.animation.AnimatedContent(
-                targetState = Pair(cull.sceneView, sel != null), label = "bar",
+                targetState = kind, label = "bar",
                 transitionSpec = { (androidx.compose.animation.fadeIn(Motion.fast()) togetherWith androidx.compose.animation.fadeOut(Motion.fast())).using(androidx.compose.animation.SizeTransform(clip = false) { _, _ -> Motion.glide() }) },
-            ) { (scene, hasSel) ->
-                val path = if (hasSel) sel?.path else null
-                val state = d?.state
+            ) { k ->
                 Row(Modifier.padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    when {
-                        scene -> BarItem("M10 3L5 8l5 5", t("cull.backToPhotos")) { cull.sceneView = false }
-                        path != null -> {
-                            // 没有"放大"项：再点一次选中的格子、或长按，就是放大（设计审查 A6.7）
-                            val manual = d?.manual == true
-                            BarItem("star", t(if (state == "keep" && manual) "mark.clear" else "state.keep"), on = state == "keep", gold = true) { onDecide(path, if (state == "keep" && manual) null else "keep") }
-                            BarItem("M3 3l6 6M9 3L3 9", t(if (state == "reject" && manual) "mark.clear" else "state.reject"), on = state == "reject", box = 12f) { onDecide(path, if (state == "reject" && manual) null else "reject") }
-                            Box(Modifier.width(1.dp).height(24.dp).background(c.line))
-                            BarItem(cull.layout.icon, t("cull.layout.${cull.layout.id}")) { cull.viewSheet = true }
-                        }
-                        else -> {
-                            // 对比页：快捷取舍放在浮动栏里、浏览方式左边（作者 2026-10-23：这里还宽，内容区就不用再占一行）
-                            val keep = cull.compareKeep
-                            if (cull.layout == ViewStyle.Compare && keep != null && cull.compareCount > 0) {
-                                for (i in 0 until cull.compareCount) BarItem("star", t("android.cmp.keepNth", "n" to i + 1), width = 76.dp) { keep(i) }
-                                Box(Modifier.width(1.dp).height(24.dp).background(c.line))
-                            }
-                            BarItem(cull.layout.icon, t("cull.layout.${cull.layout.id}")) { cull.viewSheet = true }
-                        }
+                    if (k == 1) {
+                        // 多选：先说选了几张，再是这一批的三种判定（一次撤销整批还原），最右是退出多选
+                        val batch = { st: String -> haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); Session.decideMany(cull.multi, st); cull.bumpHint(); cull.multi = emptySet() }
+                        Text(t("android.cull.selectedN", "count" to maxOf(n, 1)), style = Type.label.copy(color = c.ink, fontWeight = FontWeight.SemiBold), maxLines = 1, modifier = Modifier.padding(start = 14.dp, end = 6.dp))
+                        BarItem("star", t("state.keep")) { batch("keep") }
+                        BarItem("review", t("state.review"), width = 64.dp) { batch("review") }
+                        BarItem("M3 3l6 6M9 3L3 9", t("state.reject"), box = 12f) { batch("reject") }
+                        Box(Modifier.width(1.dp).height(24.dp).background(c.line))
+                        // 退出多选只用字：旁边就是淘汰的 ×，再来一个 × 分不清
+                        Text(t("picker.cancel"), style = Type.label.copy(color = c.ash, fontWeight = FontWeight.SemiBold), maxLines = 1,
+                            modifier = Modifier.clip(RoundedCornerShape(23.dp)).clickable { cull.multi = emptySet() }.padding(horizontal = 14.dp, vertical = 13.dp))
+                    } else if (k == 2 && keep != null) {
+                        // 对比页：一下定胜负（留下第 n 张、同屏其余淘汰、跳下一组）；单独改一张用卡片上的星和 ×
+                        for (i in 0 until cull.compareCount) BarItem("star", t("android.cmp.keepNth", "n" to i + 1), width = 88.dp) { keep(i) }
                     }
                 }
             }
@@ -748,7 +761,9 @@ private fun BarItem(icon: String, label: String, enabled: Boolean = true, dot: B
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
     ) {
         Box {
-            if (icon == "star") Star(true, 18.dp, color = if (on) fg else c.gleam, glow = false) else FgIcon(icon, size = 18.dp, box = box, color = fg)
+            if (icon == "star") Star(true, 18.dp, color = if (on) fg else c.gleam, glow = false)
+            else if (icon == "review") Star(false, 18.dp, color = fg, glow = false)
+            else FgIcon(icon, size = 18.dp, box = box, color = fg)
             if (dot) Box(Modifier.align(Alignment.TopEnd).offset(4.dp, (-2).dp).size(7.dp).clip(CircleShape).background(c.ink))
         }
         Text(label, style = Type.caption.copy(color = fg), maxLines = 1, overflow = Ellipsis, modifier = Modifier.padding(top = 1.dp))

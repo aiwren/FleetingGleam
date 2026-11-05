@@ -108,6 +108,8 @@ object Session {
     private data class Rate(override val path: String, val prev: Int?) : Step
     /** 一步里判定和星级一起变了（打星顺带保留、改判顺带清星）：撤销时两样一起还原。 */
     private data class Both(override val path: String, val prevState: String?, val prevStars: Int?) : Step
+    /** 多选里一次判了好几张：撤销时整批一起还原。 */
+    private data class Group(val steps: List<Step>) : Step { override val path: String get() = steps.first().path }
     /** 手动改判与打星的撤销栈（最近 50 次），换项目清空。 */
     private val undoStack = ArrayDeque<Step>()
     /** 一次只改一张、而且没有上限和"每组一张"时，本地直接改，不再问引擎（见 `decide`）。 */
@@ -540,6 +542,51 @@ object Session {
         if (!fromUndo) push(if (drop) Both(path, prev, hadStars) else Mark(path, prev))
     }
 
+    /**
+     * 多选里把一批照片一起判成 `st`：一次写进项目、整个判定表重算一遍（不走单张的就地修补），算一步撤销。
+     * 星级的规矩和单张一样：判成保留以外的，这些照片的星一起清掉。
+     */
+    fun decideMany(paths: Collection<String>, st: String) {
+        val project = current() ?: return
+        val known = photos.value.mapTo(HashSet()) { it.path }
+        val list = paths.filter { it in known }
+        if (list.isEmpty()) return
+        val steps = list.map { p ->
+            val had = project.stars[p]
+            if (st != "keep" && had != null) Both(p, project.overrides[p], had) else Mark(p, project.overrides[p])
+        }
+        localPatch = null
+        Projects.update(project.id) { it.copy(overrides = it.overrides + list.associateWith { st }, stars = if (st == "keep") it.stars else it.stars - list.toSet()) }
+        if (Settings.value.learn && project.learn != false) {
+            scope.launch { list.forEach { p -> runCatching { Core.call("record_label", args("path" to p, "label" to if (st == "review") null else st == "keep", "style" to project.style)) } } }
+        }
+        dirty.value += 1
+        push(Group(steps))
+    }
+
+    /** 把一批步骤原样退回去（一次写进项目，判定表整个重算）。 */
+    private fun restore(steps: List<Step>) {
+        val project = current() ?: return
+        var ov = project.overrides
+        var stars = project.stars
+        val touched = ArrayList<String>()
+        fun state(path: String, prev: String?) { ov = if (prev == null) ov - path else ov + (path to prev); touched += path }
+        fun star(path: String, prev: Int?) { stars = if (prev == null) stars - path else stars + (path to prev) }
+        for (s in steps.asReversed()) when (s) {
+            is Mark -> state(s.path, s.prev)
+            is Rate -> star(s.path, s.prev)
+            is Both -> { state(s.path, s.prevState); star(s.path, s.prevStars) }
+            is Group -> {}
+        }
+        localPatch = null
+        Projects.update(project.id) { it.copy(overrides = ov, stars = stars) }
+        if (Settings.value.learn && project.learn != false) {
+            val now = ov
+            scope.launch { touched.forEach { p -> runCatching { Core.call("record_label", args("path" to p, "label" to now[p].let { if (it == null || it == "review") null else it == "keep" }, "style" to project.style)) } } }
+        }
+        dirty.value += 1
+    }
+
     private fun push(s: Step) {
         undoStack.addLast(s)
         if (undoStack.size > 50) undoStack.removeFirst()
@@ -571,6 +618,7 @@ object Session {
             is Mark -> decide(e.path, e.prev, fromUndo = true)
             is Rate -> rate(e.path, e.prev, fromUndo = true)
             is Both -> { decide(e.path, e.prevState, fromUndo = true); rate(e.path, e.prevStars, fromUndo = true) }
+            is Group -> restore(e.steps)
         }
         return e.path
     }

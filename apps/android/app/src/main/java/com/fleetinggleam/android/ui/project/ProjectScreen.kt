@@ -77,6 +77,7 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
     val nasFailure by Session.nasFailure.collectAsState()
     val celebrate by Session.celebrate.collectAsState()
     val dirty by Session.dirty.collectAsState()
+    val undoN by Session.undoCount.collectAsState()
     val paused by Session.paused.collectAsState()
     val settings by Settings.state.collectAsState()
     val decisions by Session.decisions.collectAsState()
@@ -179,6 +180,8 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
                     subtitle = if (phase == Phase.Done && !scene && data.total > 0) t("cull.handled", "done" to data.processed, "total" to data.total) else null,
                     subtitleDone = data.total > 0 && data.processed >= data.total,
                 ) {
+                    // 撤销：有可撤销的判定 / 打星时出现（以前核心里有撤销栈，界面上没有入口——走查 2026-11-05）。撤销后选中被撤销的那张，墙会滚到它
+                    if (phase == Phase.Done && !scene && undoN > 0) IconBtn(Icons.UNDO, t("android.cull.undo"), { Session.undo()?.let { cull.select(it) } }, plain = true)
                     if (phase == Phase.Done && !scene && project.search != false) IconBtn(Icons.SEARCH, t("search.label"), { cull.searchOpen = !cull.searchOpen; if (!cull.searchOpen) cull.query = "" }, on = cull.searchOpen, plain = true)
                     // 开着"学习我的喜好"就随时能点（作者 2026-10-23：删掉项目再新建同一个相册后，菜单一直是灰的，以为坏了）；
                     // 小红点只在这次打开后又有了新标注时出现

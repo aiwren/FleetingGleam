@@ -81,8 +81,9 @@
    "updateRetry": "重试"
   },
   "cull": {
-   "hint": "点一张照片选中，底栏可以保留、淘汰或放大查看；单张模式里上推留下、下拉淘汰。",
+   "hint": "点一张照片看大图，在大图里保留、淘汰、打星；长按可以多选。",
    "undo": "撤销",
+   "selectedN": "已选 {{count}} 张",
    "peopleScenes": "人物与场景",
    "etaLeft": "还要 {{time}}",
    "allowBackground": "切到后台会停？点这里允许惊鸿在后台运行",
@@ -167,7 +168,7 @@
    "pausedBatteryBody": "充上电后自动接着分析"
   },
   "cmp": {
-   "keepNth": "留第 {{n}} 张",
+   "keepNth": "只留第 {{n}} 张",
    "groupShort": "第 {{i}} / {{n}} 组"
   },
   "styles": {
@@ -264,8 +265,5 @@
   "trashGo": "移到回收站（{{count}} 张）",
   "trashed": "已移到回收站 {{count}} 张",
   "putBackFailed": "有 {{n}} 张没能放回（原处已有同名文件、回收站里已经没有了，或在系统对话框里取消了）。"
- },
- "mark": {
-  "clear": "撤销"
  }
 }

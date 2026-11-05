@@ -81,8 +81,9 @@
    "updateRetry": "Retry"
   },
   "cull": {
-   "hint": "Tap a photo to select it; the bar below keeps, rejects or opens it. In single view, push up to keep and pull down to reject.",
+   "hint": "Tap a photo to open it, then keep, reject or rate it there. Long-press to select several.",
    "undo": "Undo",
+   "selectedN": "{{count}} selected",
    "peopleScenes": "People & scenes",
    "etaLeft": "{{time}} left",
    "allowBackground": "Stops when you switch apps? Tap to let FleetingGleam run in the background",
@@ -167,7 +168,7 @@
    "pausedBatteryBody": "It carries on by itself once the phone is charging"
   },
   "cmp": {
-   "keepNth": "Keep #{{n}}",
+   "keepNth": "Keep only #{{n}}",
    "groupShort": "Group {{i}} / {{n}}"
   },
   "styles": {
@@ -277,8 +278,5 @@
   "putBackFailed": "{{n}} could not be put back (a file with that name is already there, it is no longer in the bin, or you cancelled the system dialog).",
   "putBackDone_one": "Put back {{count}} photo",
   "putBackDone_other": "Put back {{count}} photos"
- },
- "mark": {
-  "clear": "Undo"
  }
 }

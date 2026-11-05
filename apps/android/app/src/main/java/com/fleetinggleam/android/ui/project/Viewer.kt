@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
@@ -155,6 +156,15 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, re
     var quiet by remember { mutableStateOf(true) }
     var clip by remember { mutableStateOf<String?>(null) }
     val backdrop = rememberLayerBackdrop()
+    // "撤销"提示：这次打开大图后每多一步可撤销的（判定、打星），亮 4 秒
+    val undoN by Session.undoCount.collectAsState()
+    var undoHint by remember { mutableStateOf(false) }
+    var undoSeen by remember { mutableIntStateOf(undoN) }
+    LaunchedEffect(undoN) {
+        val more = undoN > undoSeen
+        undoSeen = undoN
+        if (more) { undoHint = true; kotlinx.coroutines.delay(4000); undoHint = false } else undoHint = false
+    }
     // 手动星级（当前项目的 stars 表）：打了星马上反映在这里
     val store by com.fleetinggleam.android.core.Projects.store.collectAsState()
     val starsOf = store.projects.firstOrNull { it.id == store.activeId }?.stars ?: emptyMap()
@@ -303,6 +313,22 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, re
             // ---- 下面：小图条、手动星级、保留 / 待复查 / 淘汰、详情
             AnimatedVisibility(chrome && barsIn, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.BottomCenter)) {
                 Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    // 刚判完 / 打完星：小图条上面浮出"撤销"（不占位置，出现时下面的东西不动），几秒后自己收起（大图里最容易点错，顶栏已经放满了）。撤销后回到被撤销的那张
+                    if (!readOnly) Box(Modifier.height(0.dp).wrapContentHeight(align = Alignment.Bottom, unbounded = true)) { androidx.compose.animation.AnimatedVisibility(visible = undoHint, enter = fadeIn(), exit = fadeOut()) {
+                        GlassBox(Modifier.padding(bottom = 8.dp), shape = RoundedCornerShape(50), style = glassStyle(strong = true)) {
+                            Row(
+                                Modifier.height(36.dp).clickable {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    undoHint = false
+                                    Session.undo()?.let { back -> if (shown.any { it.path == back }) cull.select(back) }
+                                }.padding(horizontal = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                FgIcon(com.fleetinggleam.android.ui.components.Icons.UNDO, size = 14.dp, stroke = 1.7f, color = LocalFg.current.ink)
+                                Text(t("android.cull.undo"), style = Type.label.copy(color = LocalFg.current.ink, fontWeight = FontWeight.SemiBold), modifier = Modifier.padding(start = 6.dp))
+                            }
+                        }
+                    } }
                     // 小图条和单张同一规格（A7.5）：当前项白色描边
                     Filmstrip(shown, decisions, pager.currentPage, Modifier.fillMaxWidth(), ring = Color.White) { cull.select(it) }
                     val d = decisions[photo.path]
@@ -329,8 +355,7 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, re
         val mates = remember(photo, data) { Session.photos.value.filter { it.group == photo.group } }
         com.fleetinggleam.android.ui.components.GlassSheet(true, { info = false }, dark = true) {
             Column(Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
-                InspectorBody(photo, decisions[photo.path], mates, onDecide = { onDecide(photo.path, it, shown) }, onSelect = { cull.select(it) },
-                    stars = starsOf[photo.path] ?: 0, onRate = if (readOnly) null else ({ n -> Session.rate(photo.path, n) }))
+                InspectorBody(photo, decisions[photo.path], mates, onSelect = { cull.select(it) })
             }
         }
     }

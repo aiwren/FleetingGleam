@@ -542,6 +542,11 @@ fun Tile(
     stamp: Boolean = false,
     /** 手动打的星级（1–5，0 = 没打）：右下角一个小标，和保留 / 淘汰的记号无关。 */
     stars: Int = 0,
+    /** 多选进行中（墙上所有格子左上角出现勾选圈）；`picked` 是这一张勾上了。 */
+    picking: Boolean = false,
+    picked: Boolean = false,
+    /** 长按：照片墙上是进入 / 接着多选；没给就和以前一样进大图。 */
+    onLong: ((String) -> Unit)? = null,
     onSelect: (String) -> Unit,
     onOpen: (String) -> Unit,
     onDecide: (String, String?) -> Unit,
@@ -574,7 +579,7 @@ fun Tile(
             // 读屏：文件名 + 判定（审查第二批：格子以前什么都不说）
             .semantics { contentDescription = photoLabel(photo?.name ?: path.substringAfterLast('/'), state); if (selected) this.selected = true }
             // 单击就进大图（作者 2026-10-26）；不再注册双击，否则 Compose 要等双击超时才认单击，点下去会迟 300ms
-            .combinedClickable(interactionSource = src, indication = null, enabled = interactive, onClick = { onSelect(path) }, onLongClick = { onSelect(path); onOpen(path) }),
+            .combinedClickable(interactionSource = src, indication = null, enabled = interactive, onClick = { onSelect(path) }, onLongClick = { if (onLong != null) onLong(path) else { onSelect(path); onOpen(path) } }),
     ) {
         if (photo != null) {
             FocusImage(photo.thumb, Modifier.fillMaxSize(), quick = interactive && !reveal)
@@ -583,7 +588,7 @@ fun Tile(
         }
         if (photo != null) {
             // 格子上的覆盖层最多两个（R10）：格式标签只在 ≥ 160dp 的格子上；分数只在按评分排序时
-            if (w >= 160.dp) PhotoTags(photo, Modifier.align(Alignment.TopStart).padding(8.dp))
+            if (w >= 160.dp && !picking) PhotoTags(photo, Modifier.align(Alignment.TopStart).padding(8.dp))
             if (showScore) Text(
                 "${pct(photo.score)}", style = Type.monoSmall.copy(color = Color.White),
                 modifier = Modifier.align(Alignment.BottomStart).padding(8.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xA3000000)).padding(horizontal = 6.dp, vertical = 2.dp),
@@ -594,7 +599,16 @@ fun Tile(
                     .semantics { contentDescription = t("stars.tile", "count" to stars) },
             )
             Marks(state, changedTo, changeN, reveal, index, selected)
-            if (selected && interactive) {
+            // 多选：勾上的盖一层淡白、描墨色边，左上角实心勾；没勾的是空心圈
+            if (picking) {
+                if (picked) Box(Modifier.fillMaxSize().background(Color.White.copy(alpha = 0.22f)).border(2.dp, c.ink, shape))
+                Box(
+                    Modifier.align(Alignment.TopStart).padding(7.dp).size(22.dp).clip(CircleShape)
+                        .background(if (picked) c.ink else Color(0x59000000)).border(1.5.dp, if (picked) c.ink else Color.White.copy(alpha = 0.9f), CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) { if (picked) FgIcon(com.fleetinggleam.android.ui.components.Icons.CHECK, size = 13.dp, stroke = 2f, color = c.onInk) }
+            }
+            if (selected && interactive && !picking) {
                 FocusFrame()
                 if (dock) Dock(state, manual, w, Modifier.align(Alignment.BottomCenter).padding(bottom = if (w < 150.dp) 6.dp else 9.dp), onKeep = { onDecide(path, if (state == "keep" && manual) null else "keep") }, onReject = { onDecide(path, if (state == "reject" && manual) null else "reject") }, onOpen = { onOpen(path) })
             }
@@ -628,7 +642,10 @@ private fun Developing(path: String, stage: StageInfo?) {
     }
 }
 
-/** 记号：保留是点亮的金星（再有一道横向的光和一团光晕），待复查是空心星，淘汰没有图标，只有一下收拢的光圈。 */
+/**
+ * 记号：保留是点亮的金星（再有一道横向的光和一团光晕），待复查是空心星，淘汰是同一个角上一枚深色圆里的 ×（照片仍是彩色的）。
+ * 淘汰以前没有图标、只略微变淡，网格里和"淘汰"页签里看不出来（走查 2026-11-05）。
+ */
 @Composable
 private fun androidx.compose.foundation.layout.BoxScope.Marks(state: String, changedTo: String?, changeN: Int, reveal: Boolean, index: Int, selected: Boolean) {
     // 动效"克制"：记号直接出现，不播星光、光圈
@@ -650,7 +667,16 @@ private fun androidx.compose.foundation.layout.BoxScope.Marks(state: String, cha
         LaunchedEffect(changeN) { if (d.value < 1f) d.animateTo(1f, Motion.slow()) }
         Box(Modifier.align(Alignment.TopEnd).padding(9.dp)) { Star(false, 20.dp, color = Color.White.copy(alpha = 0.95f), draw = d.value) }
     }
+    if (state == "reject") RejectBadge(Modifier.align(Alignment.TopEnd).padding(9.dp))
     if (state == "reject" && changedTo == "reject" && changeN > 0 && !calm) Iris(changeN)
+}
+
+/** 淘汰的角标：深色半透明圆里一个白 ×，和保留的星同一个位置、同样大小。小图条上用小一号的。 */
+@Composable
+fun RejectBadge(modifier: Modifier = Modifier, size: Dp = 20.dp) {
+    Box(modifier.size(size).clip(CircleShape).background(Color(0x99000000)).border(1.dp, Color.White.copy(alpha = 0.35f), CircleShape), contentAlignment = Alignment.Center) {
+        FgIcon("M3 3l6 6M9 3L3 9", size = size * 0.45f, box = 12f, stroke = 2f, color = Color.White)
+    }
 }
 
 /** 保留时的一道横向长光（像变形镜头的拉丝光）和星点处的一团光晕。 */
