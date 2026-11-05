@@ -70,7 +70,7 @@
    "review": "Review",
    "reject": "Reject",
    "clearMark": "Press again: back to the app's suggestion",
-   "rate": "Rate 1–5 (the same number again clears it)",
+   "rate": "Rate 1–5 and keep (the same number again clears the rating)",
    "clearStars": "Clear the rating",
    "prevNext": "Previous / next photo",
    "rows": "Row up / row down",

@@ -67,12 +67,23 @@ object Projects {
     private val _status = MutableStateFlow(ProjectsStatus())
     val status: StateFlow<ProjectsStatus> = _status
 
+    /**
+     * 星级只属于保留的照片（Session.rate / decide 一直守着这条）。早先两样互不相干时留下的数据在这里理一次：
+     * 我判成淘汰 / 待复查的照片，星去掉；打了星却没有我的判定的，补成我判的保留。
+     */
+    private fun starsMeanKept(p: Project): Project {
+        if (p.stars.isEmpty() || p.stars.keys.all { p.overrides[it] == "keep" }) return p
+        val stars = p.stars.filterKeys { p.overrides[it].let { o -> o == null || o == "keep" } }
+        return p.copy(stars = stars, overrides = p.overrides + stars.keys.associateWith { "keep" })
+    }
+
     private fun parse(raw: String): Pair<ProjectsFile, Boolean>? = runCatching {
         val v = Fg.camel.decodeFromString<ProjectsFile>(raw)
         val cutoff = System.currentTimeMillis() - TRASH_DAYS * 86_400_000L
-        val projects = v.projects.filter { it.trashed == null || it.trashed > cutoff }
+        val kept = v.projects.filter { it.trashed == null || it.trashed > cutoff }
+        val projects = kept.map(::starsMeanKept)
         val active = if (projects.any { it.id == v.activeId && it.trashed == null }) v.activeId else null
-        ProjectsFile(projects, active) to (projects.size != v.projects.size)
+        ProjectsFile(projects, active) to (projects.size != v.projects.size || projects != kept)
     }.getOrNull()
 
     /** Reads the projects; called once at start-up. Nothing that shows projects renders before it is done. */

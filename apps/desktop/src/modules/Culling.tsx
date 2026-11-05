@@ -48,7 +48,7 @@ type CompactDecisions = { rev: number; paths?: string[]; states: string; manual:
 const STATE_OF: Record<string, State> = { k: "keep", r: "review", x: "reject" };
 const manualReason = (st: State): Reason => ({ k: "reason.manual", p: { stateKey: `state.${st}` } });
 /** 撤销栈的一步：一批改判（每张改前改后的手动标记，undefined = 系统建议），或转了一张照片。 */
-type HistoryStep = { kind: "mark"; items: { path: string; prev: State | undefined; next: State | undefined }[] } | { kind: "rotate"; path: string; dir: 1 | -1 } | { kind: "stars"; items: { path: string; prev: number | undefined; next: number | undefined }[] };
+type HistoryStep = { kind: "mark"; items: { path: string; prev: State | undefined; next: State | undefined }[]; stars?: { path: string; prev: number | undefined; next: number | undefined }[] } | { kind: "rotate"; path: string; dir: 1 | -1 } | { kind: "stars"; items: { path: string; prev: number | undefined; next: number | undefined }[] };
 const NO_STARS: Record<string, number> = {};
 const NO_STARN = [0, 0, 0, 0, 0, 0];
 /**
@@ -819,8 +819,12 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
       .catch(() => { /* not analysed yet, or not in Tauri */ });
     return true;
   }, [photos, pushHistory]);
-  /** 改判一批照片：`changes` 里每张各自的新状态（null = 交还系统建议）；`fromHistory`（撤销 / 重做）时不进撤销栈。返回是不是真改了。 */
-  const mark = useCallback((changes: { path: string; state: State | null }[], fromHistory = false): boolean => {
+  /**
+   * 改判一批照片：`changes` 里每张各自的新状态（null = 交还系统建议）；`fromHistory`（撤销 / 重做）时不进撤销栈。返回是不是真改了。
+   * 星级只属于保留的照片：改成保留以外的（待复查、淘汰、去掉标记）时这些照片的星一起清掉，和判定记在同一步撤销里。
+   * `withStars` 是要在同一步里落下的星级（打星顺带保留时由 rate 传来；撤销 / 重做时是那一步记下的星，原样落下、不再联动）。
+   */
+  const mark = useCallback((changes: { path: string; state: State | null }[], fromHistory = false, withStars: { path: string; n: number | null }[] = []): boolean => {
     // only photos of the project in view: a stale key press or undo must not write another project's path into this one
     // （分析中是已经出结果的那些）
     const scanningNow = phase === "scanning";
@@ -829,9 +833,14 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     const next = { ...project.overrides };
     const step: HistoryStep = { kind: "mark", items: list.map((c) => ({ path: c.path, prev: project.overrides[c.path], next: c.state ?? undefined })) };
     for (const c of list) { if (c.state === null) delete next[c.path]; else next[c.path] = c.state; }
+    const curStars = project.stars ?? NO_STARS;
+    const starList = fromHistory ? withStars : [...withStars, ...list.filter((c) => c.state !== "keep" && curStars[c.path] !== undefined && !withStars.some((w) => w.path === c.path)).map((c) => ({ path: c.path, n: null }))];
+    const nextStars = { ...curStars };
+    for (const c of starList) { if (c.n === null) delete nextStars[c.path]; else nextStars[c.path] = c.n; }
+    if (starList.length) step.stars = starList.map((c) => ({ path: c.path, prev: curStars[c.path], next: c.n ?? undefined }));
     const one = list.length === 1 ? list[0] : null;
     localPatch.current = one && one.state !== null && !scanningNow && project.keepCap === undefined && !project.onePerGroup ? { path: one.path, state: one.state, photos } : null;
-    updateProject(project.id, { overrides: next });
+    updateProject(project.id, starList.length ? { overrides: next, stars: nextStars } : { overrides: next });
     // Only explicit keep / reject teach the taste model; "review" and "cleared" mean "not sure". With learning off, nothing is recorded at all.
     if (getSettings().learn && project.learn !== false) {
       for (const c of list) invoke("record_label", { path: c.path, label: c.state === null || c.state === "review" ? null : c.state === "keep", style: project?.style }).catch(() => { /* not in Tauri */ });
@@ -843,19 +852,24 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
     }
     return true;
   }, [project, photos, byPath, phase, pushHistory]);
-  /** 手动星级：`changes` 里每张各自的新星数（null = 清除）；撤销 / 重做时不进撤销栈。和保留 / 淘汰无关。返回是不是真改了。 */
+  /**
+   * 手动星级：`changes` 里每张各自的新星数（null = 清除）；撤销 / 重做时不进撤销栈。返回是不是真改了。
+   * 星级是给留下的照片分等级用的：给还不是"保留"的照片打星，就同时把它判成保留（和按"保留"一样算我的判定），两样记在同一步里。
+   */
   const rate = useCallback((changes: { path: string; n: number | null }[], fromHistory = false): boolean => {
     if (!project) return false;
     const cur = project.stars ?? NO_STARS;
     const list = changes.filter((c) => (byPath.has(c.path) || results.current.has(c.path)) && (cur[c.path] ?? null) !== c.n);
     if (!list.length) return false;
+    const promote = fromHistory ? [] : list.filter((c) => c.n !== null && decisions.get(c.path)?.state !== "keep");
+    if (promote.length) return mark(promote.map((c) => ({ path: c.path, state: "keep" as State })), false, list);
     const next = { ...cur };
     for (const c of list) { if (c.n === null) delete next[c.path]; else next[c.path] = c.n; }
     updateProject(project.id, { stars: next });
     setDirty((d) => d + 1);
     if (!fromHistory) pushHistory({ kind: "stars", items: list.map((c) => ({ path: c.path, prev: cur[c.path], next: c.n ?? undefined })) });
     return true;
-  }, [project, byPath, pushHistory]);
+  }, [project, byPath, pushHistory, decisions, mark]);
   /**
    * 把一张或一批照片标成 `st`。`advance`（默认开）且设置里"判定后自动跳到下一张"开着时，判定**单张**之后选中墙上的下一张
    * （最后一张不动）；对比布局传 false。筛选视图里判定把照片筛出去时走下面"挪到邻居"的逻辑，不再前进第二次。
@@ -920,7 +934,7 @@ export default function Culling({ active, inspectorHidden, onToggleInspector, on
   const applyStep = useCallback((s: HistoryStep, how: "undo" | "redo"): boolean => {
     if (s.kind === "rotate") return rotate(s.path, how === "undo" ? (s.dir === 1 ? -1 : 1) : s.dir, true);
     if (s.kind === "stars") return rate(s.items.map((x) => ({ path: x.path, n: (how === "undo" ? x.prev : x.next) ?? null })), true);
-    return mark(s.items.map((x) => ({ path: x.path, state: (how === "undo" ? x.prev : x.next) ?? null })), true);
+    return mark(s.items.map((x) => ({ path: x.path, state: (how === "undo" ? x.prev : x.next) ?? null })), true, (s.stars ?? []).map((x) => ({ path: x.path, n: (how === "undo" ? x.prev : x.next) ?? null })));
   }, [rotate, mark, rate]);
   // 一条撤销可能一张都落不下（分析失败、没出结果的照片）：不算一次，接着弹下一条，而不是按一下什么都没发生（审查第 60 条）。
   // 撤回的那步进重做栈；新的操作会清掉重做栈

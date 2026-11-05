@@ -25,7 +25,7 @@ const zh = {
       title: "快捷键", close: "再按 ? 或 Esc 关闭",
       decide: "判定", stars: "星级", move: "移动", view: "查看", edit: "编辑", compare: "对比布局",
       keep: "保留", review: "待复查", reject: "淘汰", clearMark: "再按一次：交还系统建议",
-      rate: "打 1–5 星（再按同一个数取消）", clearStars: "清除星级",
+      rate: "打 1–5 星并保留（再按同一个数取消星级）", clearStars: "清除星级",
       prevNext: "上一张 / 下一张", rows: "上一行 / 下一行", pages: "翻页", ends: "第一张 / 最后一张", extend: "加 Shift：成段多选",
       zoom: "看大图 / 关闭大图", helpKey: "这张总表", info: "拍摄信息（看大图时）", motion: "播放实况（看大图时）",
       undo: "撤销", redo: "重做", rotate: "顺时针 / 逆时针转 90°", search: "搜索",

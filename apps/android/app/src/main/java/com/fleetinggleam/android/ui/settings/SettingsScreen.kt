@@ -220,7 +220,11 @@ fun SettingsScreen(onOpenStyles: () -> Unit) {
                 SettingRow(t("settings.theme"), t("settings.themeDesc"), below = {
                     Segmented(listOf("system" to t("nav.systemLang"), "light" to t("settings.light"), "dark" to t("settings.dark")), s.theme, { v -> Settings.set { it.copy(theme = v) } }, block = true)
                 })
-                SettingRow(t("android.settings.glass"), t("android.settings.glassDesc")) { FgSwitch(s.glass, { v -> Settings.set { it.copy(glass = v) } }, t("android.settings.glass")) }
+                // 液态玻璃：自动（按机器性能）/ 开 / 关；自动档在说明里写出这台手机上的结果
+                val gm = Settings.glassMode(s)
+                SettingRow(t("android.settings.glass"), t("android.settings.glassDesc") + if (gm == "auto") " " + t(if (Settings.autoGlass) "android.settings.glassAutoOn" else "android.settings.glassAutoOff") else "", below = {
+                    Segmented(listOf("auto" to t("android.settings.glassAuto"), "on" to t("android.settings.glassOn"), "off" to t("android.settings.glassOff")), gm, { v -> Settings.set { it.copy(glassMode = v, glass = v != "off") } }, block = true)
+                })
                 SettingRow(t("settings.effects"), t("settings.effectsDesc"), below = {
                     Segmented(listOf("full" to t("settings.effectsFull"), "calm" to t("settings.effectsCalm")), s.effects, { v -> Settings.set { it.copy(effects = v) } }, block = true)
                 })

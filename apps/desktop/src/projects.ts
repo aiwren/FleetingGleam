@@ -61,15 +61,27 @@ let status: ProjectsStatus = { loaded: false, saveError: null, loadError: null, 
 /** Without the app's backend (the plain browser preview) the WebView's storage is all there is. */
 const backend = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
+/**
+ * 星级只属于保留的照片（Culling 的 mark / rate 一直守着这条）。早先两样互不相干时留下的数据在这里理一次：
+ * 我判成淘汰 / 待复查的照片，星去掉；打了星却没有我的判定的，补成我判的保留。
+ */
+function starsMeanKept(p: Project): Project {
+  const all = Object.keys(p.stars ?? {});
+  const ov = p.overrides ?? {};
+  if (all.every((k) => ov[k] === "keep")) return p;
+  const stars = Object.fromEntries(Object.entries(p.stars!).filter(([k]) => ov[k] === undefined || ov[k] === "keep"));
+  return { ...p, stars, overrides: { ...ov, ...Object.fromEntries(Object.keys(stars).map((k) => [k, "keep" as const])) } };
+}
 /** The stored form, checked and with the recycle bin's expired items removed; null when it is not a projects store at all. */
 function parse(raw: string): { store: Store; purged: boolean } | null {
   try {
     const v = JSON.parse(raw) as Store;
     if (!Array.isArray(v.projects)) return null;
     const cutoff = Date.now() - TRASH_DAYS * 86400_000;
-    const projects = v.projects.filter((p) => !p.trashed || p.trashed > cutoff);
+    const kept = v.projects.filter((p) => !p.trashed || p.trashed > cutoff);
+    const projects = kept.map(starsMeanKept);
     const active = projects.find((p) => p.id === v.activeId && !p.trashed) ? v.activeId : null;
-    return { store: { projects, activeId: active ?? null }, purged: projects.length !== v.projects.length };
+    return { store: { projects, activeId: active ?? null }, purged: projects.length !== v.projects.length || projects.some((p, i) => p !== kept[i]) };
   } catch {
     return null;
   }

@@ -103,7 +103,7 @@ fun AppShell() {
     BackHandler(enabled = styles == null && tab == Tab.Settings) { tab = Tab.Cull }
 
     // 模拟器没有真 GPU：玻璃的着色器一帧要几秒，直接 ANR，所以模拟器上一律关（设置里的开关只对真机有效）
-    val glassOn = com.fleetinggleam.android.core.Settings.state.collectAsState().value.glass && !com.fleetinggleam.android.core.Settings.isEmulator()
+    val glassOn = com.fleetinggleam.android.core.Settings.glassOn(com.fleetinggleam.android.core.Settings.state.collectAsState().value)
     androidx.compose.runtime.CompositionLocalProvider(com.fleetinggleam.android.ui.components.LocalOverlay provides overlay, LocalBackdrop provides backdrop, com.fleetinggleam.android.ui.components.LocalGlassOn provides glassOn) {
     Box(Modifier.fillMaxSize().background(c.canvas)) {
         if (!status.loaded) return@Box

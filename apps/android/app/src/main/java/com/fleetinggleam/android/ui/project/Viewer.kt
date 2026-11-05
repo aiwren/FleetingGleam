@@ -263,13 +263,15 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, re
                 // 顶栏（设计审查 A9.1 / A9.3 / A9.4）：左 × ，中间文件名 + 页码，右边实况、旋转、检查器；全部 40dp 玻璃圆
                 Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
                     GlassRound(Icons.CLOSE, t("viewer.close")) { close() }
-                    GlassBox(Modifier.weight(1f, fill = false), style = glassStyle(strong = true)) {
-                        Row(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text(photo.name, style = Type.monoSmall.copy(color = LocalFg.current.ink), maxLines = 1, overflow = Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                            Text("  ${pager.currentPage + 1} / ${shown.size}", style = Type.monoSmall.copy(color = LocalFg.current.ash), maxLines = 1)
+                    // 第几张永远完整显示（不换行、不截断），文件名拿剩下的宽度、放不下就省略；胶囊占满按钮之间的空当，不和空白对半分
+                    Box(Modifier.weight(1f)) {
+                        GlassBox(style = glassStyle(strong = true)) {
+                            Row(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text("${pager.currentPage + 1} / ${shown.size}", style = Type.monoSmall.copy(color = LocalFg.current.ink), maxLines = 1, softWrap = false)
+                                Text(photo.name, style = Type.monoSmall.copy(color = LocalFg.current.ash), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.MiddleEllipsis, modifier = Modifier.padding(start = 10.dp).weight(1f, fill = false))
+                            }
                         }
                     }
-                    Spacer(Modifier.weight(1f))
                     com.fleetinggleam.android.ui.components.GlassIconBtn(Icons.EXIF, t("android.exif.info"), { exif = !exif }, on = exif)
                     if (!readOnly) {
                         com.fleetinggleam.android.ui.components.GlassIconBtn(Icons.ROTATE, t("viewer.rotate"), { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); scope.launch { runCatching { Session.rotate(photo.path) } } })
@@ -305,7 +307,7 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, re
                     Filmstrip(shown, decisions, pager.currentPage, Modifier.fillMaxWidth(), ring = Color.White) { cull.select(it) }
                     val d = decisions[photo.path]
                     // 只看（分析中点开的）：不放改判。底部胶囊只剩三个判定项；"待复查"只放图标（A9.1）
-                    // 手动星级：一排五颗可点的星（点第 n 颗打 n 星，再点同一颗取消），和保留 / 淘汰互不影响
+                    // 手动星级：一排五颗可点的星（点第 n 颗打 n 星，再点同一颗取消）。星只属于保留的照片：打星即保留，改判别的星就清掉（Session.rate / decide）
                     if (!readOnly) GlassBox(Modifier.padding(top = 6.dp), shape = RoundedCornerShape(50)) {
                         RateStars(starsOf[photo.path] ?: 0, { n -> haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); Session.rate(photo.path, n) }, Modifier.padding(horizontal = 4.dp), star = 17.dp, hit = 36.dp, color = Color.White)
                     }

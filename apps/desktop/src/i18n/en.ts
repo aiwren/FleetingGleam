@@ -26,7 +26,7 @@ const en = {
       title: "Shortcuts", close: "Press ? or Esc to close",
       decide: "Marking", stars: "Stars", move: "Moving", view: "Viewing", edit: "Editing", compare: "Compare view",
       keep: "Keep", review: "Review", reject: "Reject", clearMark: "Press again: back to the app's suggestion",
-      rate: "Rate 1–5 (the same number again clears it)", clearStars: "Clear the rating",
+      rate: "Rate 1–5 and keep (the same number again clears the rating)", clearStars: "Clear the rating",
       prevNext: "Previous / next photo", rows: "Row up / row down", pages: "Page up / down", ends: "First / last photo", extend: "With Shift: select a range",
       zoom: "Open / close the viewer", helpKey: "This sheet", info: "Shooting info (in the viewer)", motion: "Play Live (in the viewer)",
       undo: "Undo", redo: "Redo", rotate: "Rotate 90° clockwise / anticlockwise", search: "Search",

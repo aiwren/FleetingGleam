@@ -106,6 +106,8 @@ object Session {
     private sealed interface Step { val path: String }
     private data class Mark(override val path: String, val prev: String?) : Step
     private data class Rate(override val path: String, val prev: Int?) : Step
+    /** 一步里判定和星级一起变了（打星顺带保留、改判顺带清星）：撤销时两样一起还原。 */
+    private data class Both(override val path: String, val prevState: String?, val prevStars: Int?) : Step
     /** 手动改判与打星的撤销栈（最近 50 次），换项目清空。 */
     private val undoStack = ArrayDeque<Step>()
     /** 一次只改一张、而且没有上限和"每组一张"时，本地直接改，不再问引擎（见 `decide`）。 */
@@ -517,20 +519,25 @@ object Session {
         photos.value = photos.value.map { if (it.path == path) it.copy(thumb = p.thumb, width = p.width, height = p.height, rotation = p.rotation) else it }
     }
 
-    /** 改判一张（null = 去掉我的标记，交还系统的建议）。只有明确的保留 / 淘汰拿来学喜好；关了学习就什么都不记。 */
+    /**
+     * 改判一张（null = 去掉我的标记，交还系统的建议）。只有明确的保留 / 淘汰拿来学喜好；关了学习就什么都不记。
+     * 星级只属于保留的照片：改成保留以外的（待复查、淘汰、去掉标记）时这张的星一起清掉，算同一步撤销。
+     */
     fun decide(path: String, st: String?, fromUndo: Boolean = false) {
         val project = current() ?: return
         if (photos.value.none { it.path == path }) return
         val prev = project.overrides[path]
+        val hadStars = project.stars[path]
         val next = project.overrides.toMutableMap()
         if (st == null) next.remove(path) else next[path] = st
         localPatch = if (st != null && project.keepCap == null && project.onePerGroup != true) Triple(path, st, photos.value) else null
-        Projects.update(project.id) { it.copy(overrides = next) }
+        val drop = !fromUndo && st != "keep" && hadStars != null
+        Projects.update(project.id) { it.copy(overrides = next, stars = if (drop) it.stars - path else it.stars) }
         if (Settings.value.learn && project.learn != false) {
             scope.launch { runCatching { Core.call("record_label", args("path" to path, "label" to if (st == null || st == "review") null else st == "keep", "style" to project.style)) } }
         }
         dirty.value += 1
-        if (!fromUndo) push(Mark(path, prev))
+        if (!fromUndo) push(if (drop) Both(path, prev, hadStars) else Mark(path, prev))
     }
 
     private fun push(s: Step) {
@@ -539,15 +546,20 @@ object Session {
         undoCount.value = undoStack.size
     }
 
-    /** 手动打星（1–5，null = 取消）：只记在项目里，和保留 / 淘汰互不影响，也不拿来学喜好（桌面端 rate）。 */
+    /**
+     * 手动打星（1–5，null = 取消）。星级是给留下的照片分等级用的：给一张还不是"保留"的照片打星，就同时把它判成保留
+     *（和点"保留"一样算我的判定、一样拿来学喜好），两样算同一步撤销。取消星级不改判定。
+     */
     fun rate(path: String, n: Int?, fromUndo: Boolean = false) {
         val project = current() ?: return
         val prev = project.stars[path]
-        if (prev == n) return
-        val next = project.stars.toMutableMap()
-        if (n == null || n !in 1..5) next.remove(path) else next[path] = n
-        Projects.update(project.id) { it.copy(stars = next) }
-        if (!fromUndo) push(Rate(path, prev))
+        val v = n?.takeIf { it in 1..5 }
+        val promote = !fromUndo && v != null && decisions.value[path]?.state != "keep"
+        if (prev == v && !promote) return
+        val prevState = project.overrides[path]
+        if (promote) decide(path, "keep", fromUndo = true)
+        Projects.update(project.id) { it.copy(stars = if (v == null) it.stars - path else it.stars + (path to v)) }
+        if (!fromUndo) push(if (promote) Both(path, prevState, prev) else Rate(path, prev))
     }
 
     fun canUndo(): Boolean = undoStack.isNotEmpty()
@@ -558,6 +570,7 @@ object Session {
         when (e) {
             is Mark -> decide(e.path, e.prev, fromUndo = true)
             is Rate -> rate(e.path, e.prev, fromUndo = true)
+            is Both -> { decide(e.path, e.prevState, fromUndo = true); rate(e.path, e.prevStars, fromUndo = true) }
         }
         return e.path
     }

@@ -28,6 +28,8 @@ data class AppSettings(
     val tierRev: Int = 0,
     /** 液态玻璃（折射、模糊、高光）。关掉就是普通的半透明磨砂，弱机器和模拟器上省很多 GPU。 */
     val glass: Boolean = true,
+    /** 液态玻璃档位：`auto` 按这台机器的性能决定 / `on` / `off`。null 是还没选过的旧设置：旧的 glass=false 当作 off，其余当作 auto。 */
+    val glassMode: String? = null,
     /** 判定后自动前进：大图里判完翻到下一张，照片墙上判完选中下一张（A7，默认开）。 */
     val autoAdvance: Boolean = true,
     /** 界面动效：`full` 完整 / `calm` 克制（判定的星光、光圈不播，提示类浮层更淡）。和桌面端同名。 */
@@ -48,14 +50,45 @@ object Settings {
     val cacheRev: StateFlow<Int> = _cacheRev
     private val subs = mutableListOf<() -> Unit>()
 
+    /** 自动档下这台机器开不开液态玻璃（启动时判断一次，见 [strongGpu]）。 */
+    var autoGlass: Boolean = false
+        private set
+
     fun init(ctx: Context) {
         prefs = ctx.getSharedPreferences("fg", Context.MODE_PRIVATE)
-        // 第一次运行：模拟器（没有真 GPU，玻璃的着色器一帧要几百毫秒）默认关掉液态玻璃；真机默认开，设置里随时能改
-        _state.value = prefs.getString("settings", null)?.let { runCatching { Fg.camel.decodeFromString<AppSettings>(it) }.getOrNull() } ?: AppSettings(glass = !isEmulator())
+        autoGlass = strongGpu(ctx)
+        _state.value = prefs.getString("settings", null)?.let { runCatching { Fg.camel.decodeFromString<AppSettings>(it) }.getOrNull() } ?: AppSettings(glassMode = "auto")
         _info.value = prefs.getString("scaninfo", null)?.let { runCatching { Fg.json.decodeFromString<ScanInfo>(it) }.getOrNull() }
     }
 
     val value: AppSettings get() = _state.value
+
+    /** 实际的液态玻璃档位（auto / on / off）。 */
+    fun glassMode(s: AppSettings = _state.value): String = s.glassMode ?: if (s.glass) "auto" else "off"
+
+    /** 现在要不要画液态玻璃：模拟器一律不画（没有真 GPU，着色器一帧要几百毫秒）。 */
+    fun glassOn(s: AppSettings = _state.value): Boolean = !isEmulator() && when (glassMode(s)) { "on" -> true; "off" -> false; else -> autoGlass }
+
+    /**
+     * 这台机器的 GPU 撑不撑得住液态玻璃（每帧对背后的内容做模糊 + 折射着色器）。
+     * 1. 模拟器、系统标为低内存的机器：不开。
+     * 2. 厂商声明了媒体性能等级（Android 12 起，S 档及以上，基本都是近几年的旗舰和次旗舰）：开。
+     * 3. 没声明的看硬件：内存 7 GB 以上、最快的核心 2.8 GHz 以上才开（骁龙 870 / 8 系、天玑 9000 系这一档）。
+     */
+    private fun strongGpu(ctx: Context): Boolean = runCatching {
+        if (isEmulator()) return false
+        val am = ctx.getSystemService(android.app.ActivityManager::class.java) ?: return false
+        if (am.isLowRamDevice) return false
+        if (android.os.Build.VERSION.MEDIA_PERFORMANCE_CLASS >= android.os.Build.VERSION_CODES.S) return true
+        val mem = android.app.ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }.totalMem
+        val ghz = maxCpuGhz()
+        mem >= 7L * 1024 * 1024 * 1024 && ghz >= 2.8
+    }.getOrDefault(false)
+
+    /** 各个核心里最高的标称频率（GHz），读不到就是 0。 */
+    private fun maxCpuGhz(): Double = (0 until Runtime.getRuntime().availableProcessors()).maxOfOrNull { i ->
+        runCatching { java.io.File("/sys/devices/system/cpu/cpu$i/cpufreq/cpuinfo_max_freq").readText().trim().toLong() / 1e6 }.getOrDefault(0.0)
+    } ?: 0.0
 
     /** 模拟器（goldfish / ranchu / generic）。 */
     fun isEmulator(): Boolean = android.os.Build.HARDWARE.let { it.contains("goldfish") || it.contains("ranchu") } || android.os.Build.FINGERPRINT.contains("generic") || android.os.Build.PRODUCT.contains("sdk_gphone")
