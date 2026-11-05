@@ -78,3 +78,10 @@
 2. 第一组的 3、4、5、6：每种浏览方式里判定只留一套。
 3. 第二组的 11、15、17：把"整理"提出来，去掉重复的筛选和信息卡。
 4. 其余按屏收拾。
+
+## 待办：NAS 密码的钥匙跟着系统备份走（2026-11-05 发现，作者说先不改）
+
+`packages/core/src/secrets.rs` 把 NAS 密码、备份密钥用 AES-256-GCM 加密存在 `secrets.json`，解密用的 `secrets.key` 就在同一个目录。
+安卓的 AndroidManifest 没有写 `allowBackup`，默认是开的：系统备份到谷歌云、换机迁移时，钥匙和密文会一起带走。
+改法：安卓端把 `secrets.key` 换成存进 Android Keystore 的密钥（不随备份走），或者至少用备份规则把 `secrets.key` 排除掉。Mac 端不受影响。
+
