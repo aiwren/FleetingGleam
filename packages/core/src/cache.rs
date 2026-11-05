@@ -543,6 +543,36 @@ impl Cache {
         }
     }
 
+    /// 随应用带的分析结果（示例照片）：`json` 是 `{文件名: 记录}`，记录是另一台设备上分析这些照片时缓存里的那一条。
+    /// 放进来时键和照片的路径换成这台设备上 `dir` 里的文件，大小和修改时间取眼前这个文件的，缩略图指向 `thumbs` 里该在的位置
+    /// （还没有，下一次读取时现做）。这样打开示例项目不用先下载模型就能看到分析好的样子。
+    /// 已经有记录的照片不动（用户用自己的模型分析过的更准）。返回 `dir` 里有记录的示例照片张数。
+    pub fn seed(&mut self, dir: &Path, thumbs: &Path, json: &str) -> usize {
+        let Ok(map) = serde_json::from_str::<HashMap<String, Entry>>(json) else { return 0 };
+        let mut n = 0;
+        for (name, mut e) in map {
+            let path = dir.join(&name);
+            let Some((size, mtime)) = file_key(&path) else { continue };
+            let key = path.to_string_lossy().into_owned();
+            if self.entries.contains_key(&key) {
+                n += 1;
+                continue;
+            }
+            if !e.finite() {
+                continue;
+            }
+            e.size = size;
+            e.mtime = mtime;
+            e.photo.path = key.clone();
+            e.photo.thumb = crate::analyze::cache_name(&path, ".jpg", thumbs).to_string_lossy().into_owned();
+            e.photo.rotation = 0;
+            self.entries.insert(key.clone(), Arc::new(e));
+            self.dirty.insert(key);
+            n += 1;
+        }
+        n
+    }
+
     pub fn put(&mut self, size: u64, mtime: i64, tag: &str, p: &Photo) {
         // a re-analysis of an unchanged file keeps the search embedding it already has
         let (sem, color) = self.entries.get(&p.path).filter(|e| e.size == size && e.mtime == mtime).map(|e| (e.sem.clone(), e.color.clone())).unwrap_or_default();
@@ -719,6 +749,34 @@ impl Cache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 安卓安装包里带的示例分析结果（apps/android/app/src/main/assets/samples/analysis.json）还认得出来：每张示例照片都有一条，
+    /// 标签就是眼下标准模型的分析版本，向量长度对。分析版本一变这条就红——到时在装了标准模型的手机上重新分析这十张，
+    /// 从 analysis-cache 里取出它们的记录换掉那个文件（不然新手打开示例照片又要先下载模型）。
+    #[test]
+    fn bundled_sample_seed_is_current() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/android/app/src/main/assets/samples");
+        let json = std::fs::read_to_string(dir.join("analysis.json")).expect("示例分析结果不见了");
+        let map: HashMap<String, Entry> = serde_json::from_str(&json).expect("示例分析结果读不出来");
+        let photos: Vec<String> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.ends_with(".jpg")).collect();
+        assert!(!photos.is_empty());
+        let tag = crate::scorer::analysis_tag(crate::scorer::Quality::Fast);
+        for name in &photos {
+            let e = map.get(name).unwrap_or_else(|| panic!("{name} 没有分析结果"));
+            assert_eq!(e.tag, tag, "{name} 的分析版本过期了");
+            assert_eq!(e.emb.len(), 512, "{name} 的向量长度不对");
+            assert!(e.finite());
+        }
+        // 放进一份空缓存：路径、大小、修改时间都换成眼前的文件，之后按这个标签查得到
+        let mut c = Cache::default();
+        assert_eq!(c.seed(&dir, Path::new("/tmp/fg-thumbs"), &json), photos.len());
+        let first = dir.join(&photos[0]);
+        let (sz, mt) = file_key(&first).unwrap();
+        let hit = c.get(&first.to_string_lossy(), sz, mt, &tag).expect("放进去的查不到");
+        assert_eq!(hit.path, first.to_string_lossy());
+        // 已经有记录的不覆盖
+        assert_eq!(c.seed(&dir, Path::new("/tmp/fg-thumbs"), &json), photos.len());
+    }
 
     fn big(n: usize) -> Cache {
         let mut c = Cache::default();

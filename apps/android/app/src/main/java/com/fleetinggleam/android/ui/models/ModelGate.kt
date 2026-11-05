@@ -59,6 +59,13 @@ fun ModelGate() {
                     }
                 } }
                 // 要下的是大模型：也可以先用小的标准模型（审查第 24 条）。放在正文里，底栏一行放不下三个钮
+                // 已经选了标准模型：还能改回原先那套更好的（一个框里来回切，不用取消重来）
+                gate.upgradeBytes?.let { up ->
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        FgButton(t("android.models.useBetter", "size" to fmtBytes(up)), { Models.upgradeGate() })
+                        Text(t("android.models.useBetterDesc"), style = Type.rowDesc.copy(color = c.ash))
+                    }
+                }
                 gate.fallbackBytes?.let { alt ->
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         FgButton(if (alt > 0) t("android.models.useStandard", "size" to fmtBytes(alt)) else t("android.models.useStandardHere"), { Models.fallbackGate() })

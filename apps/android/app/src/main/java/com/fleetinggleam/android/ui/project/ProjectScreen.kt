@@ -208,7 +208,7 @@ fun ProjectScreen(onOpenStyles: () -> Unit) {
                 }
             }
         }
-        if (phase == Phase.Done) CullingChrome(project, cull, data, actions)
+        if (phase == Phase.Done) CullingChrome(project, cull, data, actions, onOrganize = { organize = true })
     }
     OrganizeDialogs(project, organize) { organize = false }
 

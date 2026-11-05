@@ -3,6 +3,7 @@ package com.fleetinggleam.android.core
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
@@ -30,10 +31,31 @@ object Samples {
     }
 
     /**
+     * 把随应用带的示例分析结果（assets/samples/analysis.json，标准模型分析这十张照片的缓存记录）放进核心的缓存。
+     * 放成了，打开示例项目时每一张都是"缓存里认识的"，不用先下载两百多兆的模型就能看到分析好的照片墙——
+     * 新手几秒钟就能把保留 / 淘汰 / 整理走一遍（作者 2026-11-05）。带的结果和眼下的分析版本对不上时核心不认，照旧走下载。
+     * 返回是不是每张示例照片都有记录了。
+     */
+    suspend fun seed(ctx: Context): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            val dir = folder(ctx)
+            val names = ctx.assets.list(DIR)?.filter { it.endsWith(".jpg") }.orEmpty()
+            val json = ctx.assets.open("$DIR/analysis.json").use { it.readBytes().decodeToString() }
+            val n = Core.call("seed_cache", args("dir" to dir.absolutePath, "json" to json)).trim().toInt()
+            names.isNotEmpty() && n >= names.size
+        }.getOrDefault(false)
+    }
+
+    /**
      * 建一个示例项目并打开（已经有一个就直接打开它）。示例项目开着"相似的只留最好的一张"，这样两组连拍一眼能看出推荐；
      * 准备页不用再点"开始分析"——它本来就是来看效果的。
      */
-    suspend fun open(ctx: Context) {
+    fun open(ctx: Context) { scope.launch { openNow(ctx.applicationContext) } }
+
+    /** 自己的协程域：点"用示例照片先试试"的那一页在项目建好后就离开组合了，用页面的域，等到准备页时协程早被取消，分析从来没自动开始过。 */
+    private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Main)
+
+    private suspend fun openNow(ctx: Context) {
         val dir = folder(ctx)
         val existing = Projects.store.value.projects.firstOrNull { it.trashed == null && it.folders == listOf(dir.absolutePath) }
         if (existing != null) { Projects.setActive(existing.id); return }

@@ -210,7 +210,7 @@ fun ProjectHome(onOpenStyles: () -> Unit) {
     if (view == "projects") androidx.compose.runtime.CompositionLocalProvider(com.fleetinggleam.android.ui.components.LocalBackdrop provides backdrop) {
         Row(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(top = 18.dp, end = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             com.fleetinggleam.android.ui.components.MenuButton(t("home.title"), listOf(
-                Triple(t("home.newDetailed").trimEnd('→', '…', ' '), true) { scope.launch { Actions.pickFolder()?.let { detailed = Triple(it, baseName(it), "") } } },
+                // "手动创建"去掉了（作者 2026-11-05）：和右边的 + 是一回事，名字和备注进了项目再改
                 Triple(t("nav.styles"), true, onOpenStyles),
                 Triple(t("bin.tab") + if (bin.isNotEmpty()) " · ${bin.size}" else "", bin.isNotEmpty()) { view = "bin" },
             ), glass = true, size = 36.dp)
@@ -462,7 +462,7 @@ private fun StartScreen(binCount: Int, onBin: () -> Unit) {
                 Box(Modifier.align(Alignment.CenterVertically)) { dot() }
                 entry(t("android.start.nas")) { com.fleetinggleam.android.core.Nav.openSettings("nas") }
                 Box(Modifier.align(Alignment.CenterVertically)) { dot() }
-                entry(t("android.start.sample")) { scope.launch { com.fleetinggleam.android.core.Samples.open(ctx) } }
+                entry(t("android.start.sample")) { com.fleetinggleam.android.core.Samples.open(ctx) }
             }
             Text(t("nav.privacy"), style = Type.small.copy(color = c.ash), textAlign = TextAlign.Center, modifier = Modifier.padding(top = 24.dp))
         }

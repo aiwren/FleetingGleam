@@ -81,6 +81,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.layout.Spacer
@@ -329,6 +330,17 @@ fun Viewer(cull: CullState, data: CullData, decisions: Map<String, Decision>, re
                             }
                         }
                     } }
+                    // 综合分和一句理由就放在这里（以前要点开检查器才看得到——作者 2026-11-05："综合评分藏得有点深"）；点它打开检查器看细项
+                    val why = decisions[photo.path]?.reasons?.joinToString(if (com.fleetinggleam.android.core.I18n.isZh) "；" else "; ") { reasonText(it) }.orEmpty()
+                    Row(
+                        Modifier.fillMaxWidth().clickable(enabled = !readOnly) { info = true }.padding(horizontal = 16.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("${com.fleetinggleam.android.core.pct(photo.score)}", style = Type.mono.copy(fontSize = 17.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold, color = Color.White))
+                        Text(t("inspector.overall"), style = Type.rowDesc.copy(color = Color.White.copy(alpha = 0.7f)), modifier = Modifier.padding(start = 6.dp))
+                        Text(why, style = Type.rowDesc.copy(color = Color.White.copy(alpha = 0.7f)), maxLines = 1, overflow = Ellipsis, modifier = Modifier.weight(1f).padding(start = 10.dp))
+                        if (!readOnly) FgIcon(com.fleetinggleam.android.ui.components.Icons.CHEVRON, size = 12.dp, stroke = 1.6f, color = Color.White.copy(alpha = 0.6f))
+                    }
                     // 小图条和单张同一规格（A7.5）：当前项白色描边
                     Filmstrip(shown, decisions, pager.currentPage, Modifier.fillMaxWidth(), ring = Color.White) { cull.select(it) }
                     val d = decisions[photo.path]

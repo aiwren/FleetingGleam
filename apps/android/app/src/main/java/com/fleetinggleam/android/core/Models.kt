@@ -21,7 +21,7 @@ object PackIds {
  * `Skipped`：可选的包没下成，用户选了先不用（分析照常，只是少了那部分）。
  * `Fallback`：问要不要下大模型时，用户选了"先用标准模型"（调用方改去要标准模型那一套）。
  */
-enum class Answer { Ready, Downloaded, Cancelled, Skipped, Fallback }
+enum class Answer { Ready, Downloaded, Cancelled, Skipped, Fallback, Upgrade }
 
 /** `id` names the dialog's text: a pack, or "bundle" when several are fetched under one question (`ids` says which, `sizes` how big each is). */
 data class Gate(
@@ -42,6 +42,8 @@ data class Gate(
     val failed: String? = null,
     /** 询问时可以改用的那一套更小的（"先用标准模型"）要下多少字节；null = 不提供这个选项。 */
     val fallbackBytes: Long? = null,
+    /** 刚才选了"先用标准模型"、现在问的是标准那一套：还能改回原先那套更好的，这是它要下多少字节；null = 不提供。 */
+    val upgradeBytes: Long? = null,
     /** 询问时多说一句（文案键），比如示例照片为什么要下载。 */
     val note: String? = null,
 )
@@ -107,11 +109,15 @@ object Models {
      * Several packs under one question: the person is told the whole size once and agrees once. What is already here is left out; answers "ready"
      * when nothing is missing.
      */
-    suspend fun ensurePacks(ids: List<String>, optional: Set<String> = emptySet(), fallback: List<String>? = null, note: String? = null): Answer =
-        turn.withLock { ensurePacksNow(ids, optional, fallback, note) }
+    suspend fun ensurePacks(ids: List<String>, optional: Set<String> = emptySet(), fallback: List<String>? = null, note: String? = null, upgrade: List<String>? = null): Answer =
+        turn.withLock { ensurePacksNow(ids, optional, fallback, note, upgrade) }
 
-    /** `fallback`：询问框里提供"先用标准模型"时那一套包（还缺的才算大小）；选了它答 `Fallback`。 */
-    private suspend fun ensurePacksNow(ids: List<String>, optional: Set<String>, fallback: List<String>? = null, note: String? = null): Answer {
+    /**
+     * `fallback`：询问框里提供"先用标准模型"时那一套包（还缺的才算大小）；选了它答 `Fallback`。
+     * `upgrade`：反过来，已经选了标准模型时原先那套更好的包；询问框里提供"改回更好的模型"，选了它答 `Upgrade`
+     * （以前点了"先用标准模型"就回不去了，只能取消重来——作者 2026-11-05）。
+     */
+    private suspend fun ensurePacksNow(ids: List<String>, optional: Set<String>, fallback: List<String>? = null, note: String? = null, upgrade: List<String>? = null): Answer {
         refresh()
         if (_packs.value.isEmpty()) return Answer.Ready
         // 必需的先下，可选的放后面：可选的失败时前面的已经到了
@@ -120,7 +126,9 @@ object Models {
         // 改用的那一套和要下的一样（或者已经都在）就不提供
         val alt = fallback?.distinct()?.filter { !installed(it) }?.takeIf { f -> f.toSet() != missing.toSet() }
         val altBytes = alt?.let { f -> runCatching { f.sumOf { Core.get<Long>("pack_size", args("id" to it)) } }.getOrNull() }
-        if (missing.size == 1 && altBytes == null) return ensurePackNow(missing[0], optional, note)
+        val up = upgrade?.distinct()?.filter { !installed(it) }?.takeIf { f -> f.isNotEmpty() && f.toSet() != missing.toSet() }
+        val upBytes = up?.let { f -> runCatching { f.sumOf { Core.get<Long>("pack_size", args("id" to it)) } }.getOrNull() }
+        if (missing.size == 1 && altBytes == null && upBytes == null) return ensurePackNow(missing[0], optional, note)
         val d = CompletableDeferred<Answer>()
         val sizes = mutableListOf<Long>()
         for (id in missing) {
@@ -130,8 +138,16 @@ object Models {
             }
         }
         val bytes = sizes.sum()
-        _gate.value = Gate(id = "bundle", ids = missing, sizes = sizes, phase = "ask", bytes = bytes, total = bytes, resolve = d, optional = optional, fallbackBytes = altBytes, note = note)
+        _gate.value = Gate(id = "bundle", ids = missing, sizes = sizes, phase = "ask", bytes = bytes, total = bytes, resolve = d, optional = optional, fallbackBytes = altBytes, upgradeBytes = upBytes, note = note)
         return answer(d)
+    }
+
+    /** 询问框里选了"改回更好的模型"：这个对话框答 `Upgrade`，调用方回去问原先那一套。 */
+    fun upgradeGate() {
+        val g = _gate.value ?: return
+        if (g.phase != "ask" || g.upgradeBytes == null) return
+        _gate.value = null
+        g.resolve.complete(Answer.Upgrade)
     }
 
     /** 询问框里选了"先用标准模型"：这个对话框答 `Fallback`，调用方接着去要标准模型那一套。 */

@@ -81,12 +81,12 @@
    "updateRetry": "Retry"
   },
   "cull": {
-   "hint": "Tap a photo to open it, then keep, reject or rate it there. Long-press to select several.",
+   "hint": "Tap a photo to open it and keep, reject or rate it. Long-press to select several. When done, tap Organize below.",
    "undo": "Undo",
    "selectedN": "{{count}} selected",
    "peopleScenes": "People & scenes",
    "etaLeft": "{{time}} left",
-   "allowBackground": "Stops when you switch apps? Tap to let FleetingGleam run in the background",
+   "allowBackground": "Stops in the background?",
    "canLeave": "You can leave this page or switch apps; the analysis carries on in the background.",
    "busyTitle": "“{{name}}” is still being analysed",
    "busyBody": "One project is analysed at a time. Stop “{{name}}” (nothing analysed is lost; it carries on when you go back) and analyse this one?",
@@ -109,6 +109,8 @@
    "skipBody": "The analysis runs without it — no closed-eye check or people for now. You can download it later in Settings → Models & storage.",
    "useStandard": "Use the standard model for now ({{size}})",
    "useStandardDesc": "Smaller and quicker; you can switch to a better one later under Settings → Analysis.",
+   "useBetter": "Back to the better model ({{size}})",
+   "useBetterDesc": "More accurate, more sensitive to blur, composition and look; a bigger download and slower analysis.",
    "sampleNote": "The sample photos need an analysis model too, so this is the smallest one; once it is here, your own photos need no further download.",
    "metered": "You are on a metered network (mobile data or a hotspot); this uses about {{size}} of data.",
    "useStandardHere": "Use the standard model already on the phone"

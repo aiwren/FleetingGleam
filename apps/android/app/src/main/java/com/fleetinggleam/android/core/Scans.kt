@@ -76,7 +76,22 @@ object Scans {
         if (running) return
         running = true
         val i = Intent(ctx, AnalysisService::class.java).putExtra(AnalysisService.EXTRA_NAME, projectName)
-        runCatching { ContextCompat.startForegroundService(ctx, i) }
+        starting = true
+        stopAfterStart = false
+        if (runCatching { ContextCompat.startForegroundService(ctx, i) }.isFailure) starting = false
+    }
+
+    /**
+     * 服务已经叫起来、还没走到 `startForeground`。这当口要是分析已经结束（全是缓存里认识的照片，几十毫秒就完）就去 `stopService`，
+     * 系统会因为"说好的前台服务没挂上"把应用杀掉。所以这段时间里的停止只记一笔，服务挂上之后自己撤。
+     */
+    @Volatile private var starting = false
+    @Volatile private var stopAfterStart = false
+
+    /** 服务刚 `startForeground` 完来问：是不是该立刻撤（等它挂上的工夫分析已经完了）。 */
+    fun serviceUp(): Boolean {
+        starting = false
+        return stopAfterStart.also { stopAfterStart = false }
     }
 
     /** 前台服务到了系统的 6 小时上限，自己撤掉了：只记下不在跑，别再去停它。 */
@@ -85,6 +100,7 @@ object Scans {
     fun stopped() {
         if (!running) return
         running = false
+        if (starting) { stopAfterStart = true; return }
         runCatching { app.stopService(Intent(app, AnalysisService::class.java)) }
     }
 }

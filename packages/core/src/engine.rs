@@ -1278,6 +1278,17 @@ impl Engine {
 
     // ------------------------------------------------------------ 项目文件
 
+    /// 示例照片随应用带着的分析结果放进缓存（见 `Cache::seed`）；返回 `dir` 里现在有记录的张数。
+    pub fn seed_cache(&self, dir: String, json: String) -> usize {
+        let thumbs = self.paths.thumbs.clone();
+        let (n, pending) = self.with_cache(|c| {
+            let n = c.seed(Path::new(&dir), &thumbs, &json);
+            (n, c.save())
+        });
+        pending.write();
+        n
+    }
+
     /// The projects (named folder sets and every decision made on their photos) live in `projects.json` in the app's data folder,
     /// read whole here and written whole, atomically, by `projects_save`. The front end keeps the shape; this only keeps it safe.
     pub fn projects_load(&self) -> Result<Option<String>, String> {

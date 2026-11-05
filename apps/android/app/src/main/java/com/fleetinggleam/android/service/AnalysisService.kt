@@ -52,6 +52,8 @@ class AnalysisService : Service() {
         val type = if (Build.VERSION.SDK_INT >= 35) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING else ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
         // 直接调系统的 startForeground：androidx 的 ServiceCompat 不认识 API 35 新加的 mediaProcessing，会把它屏蔽成"无类型"，系统随即拒绝
         startForeground(ID, build(Progress()), type)
+        // 挂上的工夫分析已经结束了（见 Scans.serviceUp）：马上撤
+        if (Scans.serviceUp()) { stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); return START_NOT_STICKY }
         holdWake(Session.paused.value == Pause.None)
         off?.invoke()
         off = Core.listen("scan-progress") { raw ->

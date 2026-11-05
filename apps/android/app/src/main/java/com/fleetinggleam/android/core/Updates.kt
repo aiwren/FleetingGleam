@@ -32,6 +32,8 @@ object Updates {
     private const val REPO = "aiwren/FleetingGleam"
     private const val API = "https://api.github.com/repos/$REPO/releases/latest"
     private const val APK_NAME = "FleetingGleam-android.apk"
+    /** 最新 Release 里的那份版本清单（Mac 的更新器也读它）：是个普通的下载地址，不走 API，也就不受匿名限流。 */
+    private const val LATEST = "https://github.com/$REPO/releases/latest/download/latest.json"
 
     /** 新版本的信息（给设置页"关于"显示）。 */
     data class Info(val version: String, val current: String, val notes: String?, val url: String, val size: Long)
@@ -176,8 +178,39 @@ object Updates {
     @Serializable private data class Release(val tag_name: String, val body: String? = null, val draft: Boolean = false, val prerelease: Boolean = false, val assets: List<Asset> = emptyList())
     private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; coerceInputValues = true }
 
-    /** `null` = 已是最新（或最新的 Release 里没有安卓包）。 */
+    @Serializable private data class Latest(val version: String, val notes: String? = null)
+
+    /**
+     * `null` = 已是最新（或最新的 Release 里没有安卓包）。
+     * 先读 Release 里的 latest.json，读不到再问 API。以前只问 API：GitHub 对匿名请求按出口 IP 每小时只给 60 次，
+     * 挂着代理 / VPN 时出口是很多人共用的，额度早被用完，结果明明连得上 GitHub 却总是"没查到"（作者 2026-11-05）。
+     */
     private fun fetchLatest(): Info? {
+        if (apiUrl() == API) runCatching { fromManifest() }.onSuccess { return it }
+        return fromApi()
+    }
+
+    private fun fromManifest(): Info? {
+        val conn = open(LATEST)
+        conn.connect()
+        if (conn.responseCode != 200) throw IllegalStateException("HTTP ${conn.responseCode}")
+        val m = conn.inputStream.bufferedReader().use { json.decodeFromString(Latest.serializer(), it.readText()) }
+        val version = m.version.removePrefix("v")
+        if (compare(version, current) <= 0) return null
+        // 这一版有没有安卓包、多大：只要第一个字节，从 Content-Range 里读总长
+        val url = "https://github.com/$REPO/releases/download/v$version/$APK_NAME"
+        val head = open(url)
+        head.setRequestProperty("Range", "bytes=0-0")
+        head.connect()
+        val code = head.responseCode
+        if (code == 404) return null
+        if (code != 200 && code != 206) throw IllegalStateException("HTTP $code")
+        val size = head.getHeaderField("Content-Range")?.substringAfterLast('/')?.toLongOrNull() ?: 0L
+        runCatching { head.inputStream.close() }
+        return Info(version, current, m.notes?.trim()?.ifEmpty { null }, url, size)
+    }
+
+    private fun fromApi(): Info? {
         val conn = open(apiUrl())
         conn.setRequestProperty("Accept", "application/vnd.github+json")
         conn.connect()

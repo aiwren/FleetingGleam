@@ -378,11 +378,21 @@ object Session {
     private suspend fun startScanNow(project: Project, demo: Boolean, tok: Int, force: Boolean) {
         val extras = setOf(PackIds.DETECT, PackIds.EYES, PackIds.FACES)
         var tier = if (demo) Strategy.sampleTier() else Strategy.predictTier()
-        val alt = if (tier != "fast") Strategy.analysisPacks("fast") else null
-        var answer = Models.ensurePacks(Strategy.analysisPacks(tier), optional = extras, fallback = alt, note = if (demo) "android.models.sampleNote" else null)
-        if (answer == Answer.Fallback) {
-            tier = "fast"
-            answer = Models.ensurePacks(Strategy.analysisPacks(tier), optional = extras, note = if (demo) "android.models.sampleNote" else null)
+        // 示例照片带着标准模型的分析结果：放进缓存后这次分析全是"认识的"，不用模型，也就不问下载
+        if (demo && tier == "fast" && Samples.seed(app)) {
+            if (tok != token) return
+            paused.value = Pause.None; pausedProject = null
+            runScan(project, files.value.size, quiet = false, tok = tok, tier = tier, force = false)
+            return
+        }
+        // 应用挑的那档要下大模型时，询问框里可以"先用标准模型"；选了之后同一个框里还能"改回更好的模型"，来回几次都行
+        val best = tier
+        val note = if (demo) "android.models.sampleNote" else null
+        var answer: Answer
+        while (true) {
+            answer = if (tier == best) Models.ensurePacks(Strategy.analysisPacks(tier), optional = extras, fallback = if (best != "fast") Strategy.analysisPacks("fast") else null, note = note)
+                else Models.ensurePacks(Strategy.analysisPacks(tier), optional = extras, note = note, upgrade = Strategy.analysisPacks(best))
+            if (answer == Answer.Fallback) tier = "fast" else if (answer == Answer.Upgrade) tier = best else break
         }
         if (answer == Answer.Cancelled) return
         if (!demo) Strategy.settle(tier)

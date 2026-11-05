@@ -157,7 +157,8 @@ fun StylesScreen(from: String, onBack: () -> Unit) {
                     }
                     val overlay = com.fleetinggleam.android.ui.components.LocalOverlay.current
                     val anchor = com.fleetinggleam.android.ui.components.rememberAnchor()
-                    Box(Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).then(Modifier.anchor(anchor)).clickable {
+                    // 没有一项可做时不放 ⋯（默认风格、还没学到东西：以前点了什么都不出来——作者 2026-11-05）
+                    if (!s.isDefault || hasData) Box(Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).then(Modifier.anchor(anchor)).clickable {
                         overlay.showMenu(anchor.value, buildList {
                             if (!s.isDefault) add(com.fleetinggleam.android.ui.components.MenuItem(t("styles.makeDefault")) { scope.launch { Styles.setDefault(s.id) } })
                             if (hasData) add(com.fleetinggleam.android.ui.components.MenuItem(t("styles.reset")) { resetting = s })

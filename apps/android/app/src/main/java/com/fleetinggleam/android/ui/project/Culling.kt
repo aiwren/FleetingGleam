@@ -472,7 +472,7 @@ fun CullingContent(project: Project, cull: CullState, data: CullData, actions: C
     // 操作提示在时，墙底部多留 56dp，免得和最后一行照片重叠（设计审查 A6.9）
     val hintOn = cull.hintUses < 4 && !cull.sceneView
     // 底下留多少：有底栏（多选、对比页的快捷取舍）时让出它的高度，没有就只留一点
-    val barOn = cull.multi.isNotEmpty() || (cull.layout == ViewStyle.Compare && cull.compareCount > 0)
+    val barOn = cull.layout != ViewStyle.Single
     val bottomPad = (if (barOn) 92.dp else 28.dp) + (if (hintOn) 56.dp else 0.dp)
     when {
         cull.sceneView -> SceneGallery(project, data, cull, describing, canDescribe = !scenePack && data.scenes.any { it.text.isEmpty() },
@@ -516,7 +516,7 @@ fun CullingContent(project: Project, cull: CullState, data: CullData, actions: C
 
 /** 分析好的项目的浮层（在 backdrop 之外，玻璃）：操作提示、底部工具栏，以及筛选 / 浏览方式弹层。 */
 @Composable
-fun CullingChrome(project: Project, cull: CullState, data: CullData, actions: CullActions) {
+fun CullingChrome(project: Project, cull: CullState, data: CullData, actions: CullActions, onOrganize: () -> Unit = {}) {
     val c = LocalFg.current
     val decisions by Session.decisions.collectAsState()
     val sortBy = project.sort ?: "group"
@@ -524,7 +524,7 @@ fun CullingChrome(project: Project, cull: CullState, data: CullData, actions: Cu
     val calm = com.fleetinggleam.android.ui.theme.LocalCalm.current
     Box(Modifier.fillMaxSize()) {
         // 操作提示：前几次改判之后就不再出现
-        AnimatedVisibility(hintOn, modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = if (cull.multi.isNotEmpty() || (cull.layout == ViewStyle.Compare && cull.compareCount > 0)) 74.dp else 14.dp, start = 16.dp, end = 16.dp),
+        AnimatedVisibility(hintOn, modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = if (cull.layout != ViewStyle.Single) 74.dp else 14.dp, start = 16.dp, end = 16.dp),
             enter = fadeIn(Motion.base()) + slideInVertically(Motion.base()) { it / 2 }, exit = fadeOut(Motion.fast())) {
             // 动效"克制"时提示更淡
             GlassBox(Modifier.graphicsLayer { alpha = if (calm) 0.72f else 1f }, shape = RoundedCornerShape(14.dp), style = glassStyle(strong = true)) {
@@ -536,7 +536,7 @@ fun CullingChrome(project: Project, cull: CullState, data: CullData, actions: Cu
         }
         // 底栏只在有事可做时出现，而且每个位置只有一种意思（走查 2026-11-05：同一位置一会儿是"浏览方式"一会儿是"淘汰"，会误点）：
         // 多选里是这一批的保留 / 待复查 / 淘汰；对比页是"只留第 n 张"。浏览方式固定在页签右边（StatusStrip）。场景页有自己的导航，底栏隐藏（A11.3）
-        if (!cull.sceneView) CullBar(cull, Modifier.align(Alignment.BottomCenter))
+        if (!cull.sceneView) CullBar(cull, Modifier.align(Alignment.BottomCenter), onOrganize)
     }
     FilterSheet(cull, data)
     ViewSheet(cull, sortBy) { Projects.update(project.id) { p -> p.copy(sort = it) } }
@@ -710,14 +710,15 @@ fun FaceAvatar(photo: Photo, box: List<Float>, size: Dp) {
 
 /** 底部的液态玻璃工具栏：筛选、浏览方式、撤销。 */
 @Composable
-private fun CullBar(cull: CullState, modifier: Modifier) {
+private fun CullBar(cull: CullState, modifier: Modifier, onOrganize: () -> Unit) {
     val c = LocalFg.current
     val haptic = LocalHapticFeedback.current
     val n = cull.multi.size
     val keep = cull.compareKeep
     val compare = cull.layout == ViewStyle.Compare && keep != null && cull.compareCount > 0
-    // 0 = 没有底栏，1 = 多选，2 = 对比页的快捷取舍
-    val kind = if (n > 0) 1 else if (compare) 2 else 0
+    // 0 = 没有底栏（单张：照片下面就是判定），1 = 多选，2 = 对比页的快捷取舍，3 = 照片墙上的"整理"
+    // "整理"是挑完之后的最后一步，以前只在 ⋯ 菜单里，新手走不到（走查 2026-11-05）；点它只是打开整理面板，点错了也不改任何东西
+    val kind = if (n > 0) 1 else if (compare) 2 else if (cull.layout == ViewStyle.Justified || cull.layout == ViewStyle.Grid) 3 else 0
     androidx.compose.animation.AnimatedVisibility(kind != 0, modifier.navigationBarsPadding().padding(bottom = 10.dp), enter = fadeIn(Motion.fast()), exit = fadeOut(Motion.fast())) {
         GlassBox(shape = RoundedCornerShape(50)) {
             androidx.compose.animation.AnimatedContent(
@@ -736,6 +737,11 @@ private fun CullBar(cull: CullState, modifier: Modifier) {
                         // 退出多选只用字：旁边就是淘汰的 ×，再来一个 × 分不清
                         Text(t("picker.cancel"), style = Type.label.copy(color = c.ash, fontWeight = FontWeight.SemiBold), maxLines = 1,
                             modifier = Modifier.clip(RoundedCornerShape(23.dp)).clickable { cull.multi = emptySet() }.padding(horizontal = 14.dp, vertical = 13.dp))
+                    } else if (k == 3) {
+                        Row(Modifier.height(46.dp).clip(RoundedCornerShape(23.dp)).clickable(onClick = onOrganize).padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+                            FgIcon(Icons.FOLDER, size = 16.dp, stroke = 1.5f, color = c.ink)
+                            Text(t("organize.button"), style = Type.label.copy(color = c.ink, fontWeight = FontWeight.SemiBold), modifier = Modifier.padding(start = 8.dp))
+                        }
                     } else if (k == 2 && keep != null) {
                         // 对比页：一下定胜负（留下第 n 张、同屏其余淘汰、跳下一组）；单独改一张用卡片上的星和 ×
                         for (i in 0 until cull.compareCount) BarItem("star", t("android.cmp.keepNth", "n" to i + 1), width = 88.dp) { keep(i) }
