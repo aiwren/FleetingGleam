@@ -44,7 +44,7 @@ android {
 
     defaultConfig {
         applicationId = "com.fleetinggleam.android"
-        // 假设：最低 Android 12（API 31）——玻璃材质要实时模糊，面向高端机；记在 docs/ROADMAP.md 阶段 B
+        // 假设：最低 Android 12（API 31）——玻璃材质要实时模糊，面向高端机
         minSdk = 31
         targetSdk = 36
         versionCode = buildNumber

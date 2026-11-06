@@ -97,10 +97,6 @@ DESIGN.md         设计系统：配色、字体、动效规范
 | [docs/RELEASING.md](docs/RELEASING.md) | 如何发布一个版本、GitHub Actions 怎么用 |
 | [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md) | 用到的第三方模型和库及其许可 |
 | [docs/MODELS.md](docs/MODELS.md) | 每个模型文件从哪里下载、多大、什么许可，怎么校验 |
-| [docs/RESEARCH.md](docs/RESEARCH.md) | 选片方法与模型的调研笔记（含美学模型调研） |
-| [docs/REVIEW-2026-10-20.md](docs/REVIEW-2026-10-20.md) | 桌面端代码审查：按优先级列出的改进清单 |
-| [docs/REVIEW-2026-10-21.md](docs/REVIEW-2026-10-21.md) | 第二轮审查：后端、前端、落地页与 CI |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | 路线图：macOS 端与安卓端 |
 | [apps/android/README.md](apps/android/README.md) | 安卓端的构建与运行 |
 | [DESIGN.md](DESIGN.md) | 设计系统（英文） |
 | [CHANGELOG.md](CHANGELOG.md) | 版本更新记录 |

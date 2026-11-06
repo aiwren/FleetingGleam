@@ -1,6 +1,6 @@
 # FleetingGleam Android 端
 
-Kotlin + Jetpack Compose（Material 3）的原生应用；所有核心逻辑在共用的 Rust 库 [`packages/core`](../../packages/core) 里，经 [`rust/`](rust)（UniFFI 绑定 crate）编成 `libfg_android.so` 给 Kotlin 调用。目标与步骤见 [docs/ROADMAP.md](../../docs/ROADMAP.md) 的"阶段 B"。
+Kotlin + Jetpack Compose（Material 3）的原生应用；所有核心逻辑在共用的 Rust 库 [`packages/core`](../../packages/core) 里，经 [`rust/`](rust)（UniFFI 绑定 crate）编成 `libfg_android.so` 给 Kotlin 调用。
 
 和 Mac 端功能对齐的完整应用。两个页签（照片、设置）在底部悬浮的液态玻璃标签栏里：
 
@@ -8,7 +8,6 @@ Kotlin + Jetpack Compose（Material 3）的原生应用；所有核心逻辑在�
 - **设置**：分析方式与模型档位、模型下载与删除（下载后按 SHA-256 校验，放在应用私有目录 `files/models/`）、NAS、风格与喜好、云备份、诊断导出、关于。
 - 高通芯片的手机上，模型可以通过随应用附带的高通运行库跑在 NPU（HTP）上；别的手机用 CPU。
 
-界面规格见 [docs/android-ux.md](../../docs/android-ux.md)。
 
 ## 构建
 

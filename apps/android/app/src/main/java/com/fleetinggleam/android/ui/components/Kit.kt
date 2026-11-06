@@ -616,7 +616,7 @@ fun PageHead(title: String, subtitle: String? = null, modifier: Modifier = Modif
 /** 内容区四边的留白（手机上 20dp，底部给悬浮标签栏让位）。 */
 val PagePadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 110.dp)
 
-// ---------------------------------------------------------------- 移动端的导航件（docs/android-ux.md）
+// ---------------------------------------------------------------- 移动端的导航件
 
 /** 分组列表里通往下一页的一行：左边一个小方块图标，标题，右边当前值和 ›。 */
 @Composable

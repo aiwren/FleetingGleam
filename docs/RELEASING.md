@@ -64,10 +64,10 @@ git tag -d v0.1.0 && git push --delete origin v0.1.0   # 删除标签，同时�
 | `~/.config/fleetinggleam/updater.key.password` | 私钥的密码 |
 | `~/.config/fleetinggleam/updater.key.pub` | 公钥（和 `tauri.conf.json` 里的一致） |
 
-把它们存进仓库 Secrets。**必须是 aiwren 身份**：本机 `gh` 平时登录的是 lcopilot，它对这个仓库没有写 Secret 的权限，会报 `HTTP 403: You must have repository read permissions`。两种做法任选：
+把它们存进仓库 Secrets。**必须用对这个仓库有管理权限的账号**：只有读权限的账号会报 `HTTP 403: You must have repository read permissions`。两种做法任选：
 
-- **网页**：用 aiwren 登录 GitHub，打开仓库 Settings → Secrets and variables → Actions → New repository secret，值用 `pbcopy < ~/.config/fleetinggleam/updater.key` 复制后粘贴（密码同理用 `updater.key.password`）。
-- **命令行**：`gh auth login` 加登 aiwren，`gh auth switch --user aiwren` 切过去，跑完下面几行再 `gh auth switch --user lcopilot` 切回。屏幕上不显示任何值：
+- **网页**：用有管理权限的账号登录 GitHub，打开仓库 Settings → Secrets and variables → Actions → New repository secret，值用 `pbcopy < ~/.config/fleetinggleam/updater.key` 复制后粘贴（密码同理用 `updater.key.password`）。
+- **命令行**：`gh auth login` 加登有管理权限的账号，`gh auth switch --user <账号>` 切过去，跑完下面几行再切回你平时的账号。屏幕上不显示任何值：
 
 ```bash
 R=aiwren/FleetingGleam
