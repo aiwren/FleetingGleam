@@ -41,3 +41,6 @@ apps/desktop/public/dev-photos/
 
 # 由 apps/desktop/scripts/build-vision.sh 从 Swift 源码生成的 macOS 辅助程序，不提交编译产物
 apps/desktop/src-tauri/bin/
+
+# 宣传物料（视频、图片、文案）和它们的源文件：只放在本机，不进仓库
+marketing/
