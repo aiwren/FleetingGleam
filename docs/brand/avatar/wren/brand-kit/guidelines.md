@@ -74,7 +74,7 @@
 
 | 目录 | 内容 |
 |---|---|
-| `final/` | 母版脚本 `make.py`（重跑 `python3 make.py` 生成全部 SVG）、片头 `intro.py`、`intro.mp4` 与 `intro-dark.mp4`；上一版在 `final/archive-v1/` |
+| `final/` | 母版脚本 `make.py`（重跑 `python3 make.py` 生成全部 SVG）、片头 `intro.py`、`intro.mp4` 与 `intro-dark.mp4` |
 | `brand-kit/svg/` | 全部矢量文件，包括 `favicon.svg`、`app-icon*.svg`、`maskable.svg`、`social-card.svg` |
 | `brand-kit/png/` | 透明底 PNG 与头像 PNG；`avatar-1024.png` 用作 GitHub 头像，`social-card-1280x640.png` 用作仓库社交预览 |
 | `brand-kit/web/` | 网页图标套装：favicon.ico/svg、apple-touch-icon、PWA 图标、`site.webmanifest`、`head-snippet.html` |
