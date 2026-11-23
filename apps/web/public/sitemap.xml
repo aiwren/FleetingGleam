@@ -1,9 +1,52 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://gleam.novx.si/</loc></url>
-  <url><loc>https://gleam.novx.si/zh/</loc></url>
-  <url><loc>https://gleam.novx.si/privacy</loc></url>
-  <url><loc>https://gleam.novx.si/terms</loc></url>
-  <url><loc>https://gleam.novx.si/zh/privacy</loc></url>
-  <url><loc>https://gleam.novx.si/zh/terms</loc></url>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:xhtml="http://www.w3.org/1999/xhtml">
+  <url>
+    <loc>https://gleam.novx.si/</loc>
+    <lastmod>2026-11-23</lastmod>
+    <priority>1.0</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://gleam.novx.si/" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://gleam.novx.si/zh/" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://gleam.novx.si/" />
+  </url>
+  <url>
+    <loc>https://gleam.novx.si/zh/</loc>
+    <lastmod>2026-11-23</lastmod>
+    <priority>1.0</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://gleam.novx.si/" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://gleam.novx.si/zh/" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://gleam.novx.si/" />
+  </url>
+  <url>
+    <loc>https://gleam.novx.si/privacy</loc>
+    <lastmod>2026-11-23</lastmod>
+    <priority>0.4</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://gleam.novx.si/privacy" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://gleam.novx.si/zh/privacy" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://gleam.novx.si/privacy" />
+  </url>
+  <url>
+    <loc>https://gleam.novx.si/zh/privacy</loc>
+    <lastmod>2026-11-23</lastmod>
+    <priority>0.4</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://gleam.novx.si/privacy" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://gleam.novx.si/zh/privacy" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://gleam.novx.si/privacy" />
+  </url>
+  <url>
+    <loc>https://gleam.novx.si/terms</loc>
+    <lastmod>2026-11-23</lastmod>
+    <priority>0.4</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://gleam.novx.si/terms" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://gleam.novx.si/zh/terms" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://gleam.novx.si/terms" />
+  </url>
+  <url>
+    <loc>https://gleam.novx.si/zh/terms</loc>
+    <lastmod>2026-11-23</lastmod>
+    <priority>0.4</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://gleam.novx.si/terms" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://gleam.novx.si/zh/terms" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://gleam.novx.si/terms" />
+  </url>
 </urlset>
