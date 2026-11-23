@@ -140,27 +140,91 @@ const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 const STALL_WINDOW: std::time::Duration = std::time::Duration::from_secs(12);
 #[cfg(test)]
 const STALL_WINDOW: std::time::Duration = std::time::Duration::from_millis(250);
+/// 并发测速选源的超时：向所有候选源同时发 1 字节 Range 请求，谁先回有效响应就立刻用谁。
+#[cfg(not(test))]
+const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+#[cfg(test)]
+const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(600);
 const MIN_SPEED_BPS: u64 = 12 * 1024;
 /// 下载前要的空间是还要下的字节数乘上它：留点余地给系统和别的写入。
 const SPACE_MARGIN: f64 = 1.1;
 
-/// 同一次运行里如果镜像源已经跑通，后续文件直接优先走镜像，不必每个文件都在主站再等一次超时。
-static PREFER_MIRROR: AtomicBool = AtomicBool::new(false);
-
+/// 国内魔搭镜像（公开只读，阿里云直连，国内免 VPN 可满速拉取全部 14 个模型含 siglip）；所有文件下完照旧严格核对 SHA-256。
+const MODELSCOPE_BASE: &str = "https://modelscope.cn/models/aiwren/FleetingGleam-models/resolve/master/";
 const HF_PREFIX: &str = "https://huggingface.co/";
 const HF_MIRROR_PREFIX: &str = "https://hf-mirror.com/";
 
-/// 为下载地址生成候选源：Hugging Face 地址带国内镜像 hf-mirror.com 作自动回退；所有文件下完都做 SHA-256 校验。
-fn candidate_urls(url: &str) -> Vec<String> {
-    if let Some(rest) = url.strip_prefix(HF_PREFIX) {
-        let primary = url.to_string();
-        let mirror = format!("{HF_MIRROR_PREFIX}{rest}");
-        if PREFER_MIRROR.load(Ordering::Relaxed) {
-            return vec![mirror, primary];
-        }
-        return vec![primary, mirror];
+/// 为某个模型文件生成候选源列表：
+/// - 魔搭国内镜像（覆盖全部 14 个文件，含 GitHub 上的 siglip）
+/// - 清单里的上游主源（Hugging Face / GitHub）
+/// - Hugging Face 文件额外带 `hf-mirror.com` 兜底
+/// 本地测试用的 `http://` 地址不拼外部镜像。
+fn candidate_urls(name: &str, url: &str) -> Vec<String> {
+    if !url.starts_with("https://") {
+        return vec![url.to_string()];
     }
-    vec![url.to_string()]
+    let mut out = vec![format!("{MODELSCOPE_BASE}{name}"), url.to_string()];
+    if let Some(rest) = url.strip_prefix(HF_PREFIX) {
+        out.push(format!("{HF_MIRROR_PREFIX}{rest}"));
+    }
+    out
+}
+
+/// 并发向多个候选源发 1 字节 `Range: bytes=0-0` 探测请求，把最先返回有效（非 HTML）响应的源排到第一位；
+/// 国内用户（即使开着规则代理，`.cn` 默认直连）约百毫秒内就会选中魔搭，海外用户会选中主站，不再在慢源上干等超时。
+fn order_by_fastest(urls: &[String], cancel: &AtomicBool) -> Vec<String> {
+    if urls.len() <= 1 || cancel.load(Ordering::Relaxed) {
+        return urls.to_vec();
+    }
+    let (tx, rx) = std::sync::mpsc::channel::<Result<usize, usize>>();
+    for (i, u) in urls.iter().enumerate() {
+        let tx = tx.clone();
+        let u = u.clone();
+        std::thread::spawn(move || {
+            let agent = crate::platform::http_agent(&u, PROBE_TIMEOUT, PROBE_TIMEOUT);
+            let ok = match agent.get(&u).set("Range", "bytes=0-0").call() {
+                Ok(resp) => {
+                    let status_ok = resp.status() == 206 || resp.status() == 200;
+                    let html = resp.content_type().to_ascii_lowercase().contains("html");
+                    status_ok && !html
+                }
+                Err(_) => false,
+            };
+            let _ = tx.send(if ok { Ok(i) } else { Err(i) });
+        });
+    }
+    drop(tx);
+    let deadline = std::time::Instant::now() + PROBE_TIMEOUT;
+    let mut failed = 0usize;
+    while std::time::Instant::now() < deadline {
+        if cancel.load(Ordering::Relaxed) {
+            return urls.to_vec();
+        }
+        let step = std::time::Duration::from_millis(50).min(deadline.saturating_duration_since(std::time::Instant::now()));
+        match rx.recv_timeout(step) {
+            Ok(Ok(winner)) => {
+                let mut ordered = Vec::with_capacity(urls.len());
+                ordered.push(urls[winner].clone());
+                for (i, u) in urls.iter().enumerate() {
+                    if i != winner {
+                        ordered.push(u.clone());
+                    }
+                }
+                let host = ordered[0].split('/').nth(2).unwrap_or(&ordered[0]);
+                crate::platform::log(&format!("模型下载并发选源：{host} 最快响应"));
+                return ordered;
+            }
+            Ok(Err(_)) => {
+                failed += 1;
+                if failed >= urls.len() {
+                    break;
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    urls.to_vec()
 }
 
 /// 一次请求的失败：网络的可以重试，别的（磁盘满、取消、校验失败）不重试。
@@ -256,7 +320,16 @@ pub fn download(dir: &Path, id: &str, cancel: &AtomicBool, on_progress: &dyn Fn(
     crate::errors::check_space(dir, (left_total as f64 * SPACE_MARGIN).ceil() as u64)?;
     let mut done_before = 0u64;
     for (name, info, url, part, initial, remaining) in plan {
-        let urls = candidate_urls(url);
+        on_progress(Progress {
+            pack: id.into(),
+            file: name.into(),
+            done: done_before,
+            total: left_total,
+            speed: 0,
+            stage: "connecting".into(),
+            retry: 0,
+        });
+        let urls = order_by_fastest(&candidate_urls(name, url), cancel);
         fetch_urls(&urls, &part, info.size, &info.sha256, cancel, &|fp| {
             let file_done = session_file_done(fp.got, initial, info.size, remaining);
             on_progress(Progress {
@@ -300,13 +373,13 @@ fn session_file_done(got: u64, initial: u64, size: u64, remaining: u64) -> u64 {
 /// 测试用的便捷入口：单地址下载并按字节回报进度。
 #[cfg(test)]
 fn fetch(url: &str, part: &Path, size: u64, sha: &str, cancel: &AtomicBool, progress: &dyn Fn(u64)) -> Result<(), String> {
-    fetch_urls(&candidate_urls(url), part, size, sha, cancel, &|fp| progress(fp.got))
+    fetch_urls(&candidate_urls("model.onnx", url), part, size, sha, cancel, &|fp| progress(fp.got))
 }
 
 /// 按候选地址列表把文件下到 `part`（`size` 字节、SHA-256 是 `sha`）：
 /// - 接着 `part` 里已有的下（`Range`）
 /// - 连续无进展失败最多退避重试 `RETRIES` 次（1、2、4 秒）；只要本轮多下了 ≥ 64 KB，连续失败计数清零（最多总重连 `MAX_RECONNECTS` 次）
-/// - 连不上或龟速卡死时自动切下一个候选源（Hugging Face ↔ hf-mirror），成功后记住镜像偏好
+/// - 连不上或龟速卡死时自动切下一个候选源（魔搭 / 主站 / hf-mirror）
 /// - 下完发 `verifying` 阶段并校验 SHA-256；校验不对才删 `part`（`verify:`），别的失败都留着它，下次接着下
 fn fetch_urls(urls: &[String], part: &Path, size: u64, sha: &str, cancel: &AtomicBool, progress: &dyn Fn(FileProg)) -> Result<(), String> {
     let mut consecutive_fails = 0u32;
@@ -322,12 +395,7 @@ fn fetch_urls(urls: &[String], part: &Path, size: u64, sha: &str, cancel: &Atomi
         }
         let current_url = &urls[idx];
         match fetch_once(current_url, part, size, cancel, progress) {
-            Ok(()) => {
-                if urls.len() > 1 {
-                    PREFER_MIRROR.store(current_url.starts_with(HF_MIRROR_PREFIX), Ordering::Relaxed);
-                }
-                break;
-            }
+            Ok(()) => break,
             Err(Fail::Net { msg, stalled }) => {
                 if cancel.load(Ordering::Relaxed) {
                     return Err(crate::errors::CANCELLED.into());
@@ -408,6 +476,9 @@ fn fetch_once(url: &str, part: &Path, size: u64, cancel: &AtomicBool, progress: 
     };
     if cancel.load(Ordering::Relaxed) {
         return Err(Fail::Fatal(crate::errors::CANCELLED.into()));
+    }
+    if resp.content_type().to_ascii_lowercase().contains("html") {
+        return Err(Fail::net("the server returned an HTML page instead of the model file"));
     }
     let resumed = got > 0 && resp.status() == 206;
     if resumed {
@@ -820,21 +891,61 @@ mod tests {
 
     #[test]
     fn hf_candidate_urls_and_session_progress() {
-        PREFER_MIRROR.store(false, Ordering::Relaxed);
         assert_eq!(
-            candidate_urls("https://huggingface.co/Xenova/clip/resolve/abc/model.onnx"),
+            candidate_urls("clip_vit_l14_vision_fp16.onnx", "https://huggingface.co/Xenova/clip/resolve/abc/model.onnx"),
             vec![
+                "https://modelscope.cn/models/aiwren/FleetingGleam-models/resolve/master/clip_vit_l14_vision_fp16.onnx",
                 "https://huggingface.co/Xenova/clip/resolve/abc/model.onnx",
                 "https://hf-mirror.com/Xenova/clip/resolve/abc/model.onnx",
             ]
         );
-        assert_eq!(candidate_urls("https://github.com/aiwren/FleetingGleam/releases/download/v1/x.onnx"), vec!["https://github.com/aiwren/FleetingGleam/releases/download/v1/x.onnx"]);
+        assert_eq!(
+            candidate_urls("siglip_so400m_vision_fp16.onnx", "https://github.com/aiwren/FleetingGleam/releases/download/models-v1/siglip_so400m_vision_fp16.onnx"),
+            vec![
+                "https://modelscope.cn/models/aiwren/FleetingGleam-models/resolve/master/siglip_so400m_vision_fp16.onnx",
+                "https://github.com/aiwren/FleetingGleam/releases/download/models-v1/siglip_so400m_vision_fp16.onnx",
+            ]
+        );
+        assert_eq!(candidate_urls("x.onnx", "http://127.0.0.1:8080/x.onnx"), vec!["http://127.0.0.1:8080/x.onnx"]);
         // 续传进度：已有 500，总长 600，本次剩 100
         assert_eq!(session_file_done(500, 500, 600, 100), 0);
         assert_eq!(session_file_done(540, 500, 600, 100), 40);
         assert_eq!(session_file_done(600, 500, 600, 100), 100);
         // 服务器回 200 从头重下时按比例映射到 0..100，不倒退也不提前满格
         assert_eq!(session_file_done(300, 500, 600, 100), 50);
+    }
+
+    /// 并发测速选源：坏源/返回 HTML 错页的源被跳过，最快返回有效字节的源排到第一位。
+    #[test]
+    fn fastest_source_wins_the_race() {
+        // 源 0：返回 HTML 错误页
+        let html_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let html_url = format!("http://{}/model.onnx", html_listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            if let Ok((mut conn, _)) = html_listener.accept() {
+                let _ = conn.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello");
+            }
+        });
+        // 源 1：拖延 400 ms 才回
+        let slow_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let slow_url = format!("http://{}/model.onnx", slow_listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            if let Ok((mut conn, _)) = slow_listener.accept() {
+                std::thread::sleep(std::time::Duration::from_millis(400));
+                let _ = conn.write_all(b"HTTP/1.1 206 Partial Content\r\nContent-Type: application/octet-stream\r\nContent-Range: bytes 0-0/10\r\nContent-Length: 1\r\nConnection: close\r\n\r\nx");
+            }
+        });
+        // 源 2：立刻响应
+        let fast_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let fast_url = format!("http://{}/model.onnx", fast_listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            if let Ok((mut conn, _)) = fast_listener.accept() {
+                let _ = conn.write_all(b"HTTP/1.1 206 Partial Content\r\nContent-Type: application/octet-stream\r\nContent-Range: bytes 0-0/10\r\nContent-Length: 1\r\nConnection: close\r\n\r\nx");
+            }
+        });
+        let ordered = order_by_fastest(&[html_url.clone(), slow_url.clone(), fast_url.clone()], &AtomicBool::new(false));
+        assert_eq!(ordered[0], fast_url, "最快且非 HTML 的源胜出：{ordered:?}");
+        assert_eq!(ordered.len(), 3);
     }
 
     /// End to end against the real address (38 MB): download, checksum, load the model, nothing to do the second time, cancel is not installed.
