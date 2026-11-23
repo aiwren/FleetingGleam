@@ -1,7 +1,7 @@
 export type Lang = "en" | "zh";
 
 /** Where the site lives (absolute links in the share card, canonical and sitemap); change when a domain is bound. */
-export const SITE = "https://fleetinggleam.fleetinggleam-web.workers.dev";
+export const SITE = "https://gleam.novx.si";
 
 /**
  * The release state the page shows. `available` is flipped to true once the repository is public and a Release is published:
@@ -10,10 +10,10 @@ export const SITE = "https://fleetinggleam.fleetinggleam-web.workers.dev";
 export const release = {
   available: true,
   repo: "https://github.com/aiwren/FleetingGleam",
-  /** 和安卓一样直接下载：发布工作流给每个 Release 传一份固定名字的 dmg。 */
-  download: "https://github.com/aiwren/FleetingGleam/releases/latest/download/FleetingGleam-mac.dmg",
-  /** The APK is uploaded to every Release under this fixed name (docs/RELEASING.md), so the link always gets the latest one. */
-  android: "https://github.com/aiwren/FleetingGleam/releases/latest/download/FleetingGleam-android.apk",
+  /** 和安卓一样直接下载：发布工作流同步到 Cloudflare R2（固定名字，始终指向最新版）。 */
+  download: "https://cdn.novx.si/fleetinggleam/FleetingGleam-mac.dmg",
+  /** The APK is uploaded to Cloudflare R2 under this fixed name (docs/RELEASING.md), so the link always gets the latest one. */
+  android: "https://cdn.novx.si/fleetinggleam/FleetingGleam-android.apk",
 };
 
 /** Everything the page says. Nothing here claims more than the app does today. */

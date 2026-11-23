@@ -32,6 +32,8 @@ object Updates {
     private const val REPO = "aiwren/FleetingGleam"
     private const val API = "https://api.github.com/repos/$REPO/releases/latest"
     private const val APK_NAME = "FleetingGleam-android.apk"
+    /** Cloudflare R2 CDN：国内直连、无限流，优先走它；不可达时回退到 GitHub Releases。 */
+    private const val CDN_BASE = "https://cdn.novx.si/fleetinggleam"
     /** 最新 Release 里的那份版本清单（Mac 的更新器也读它）：是个普通的下载地址，不走 API，也就不受匿名限流。 */
     private const val LATEST = "https://github.com/$REPO/releases/latest/download/latest.json"
 
@@ -186,28 +188,39 @@ object Updates {
      * 挂着代理 / VPN 时出口是很多人共用的，额度早被用完，结果明明连得上 GitHub 却总是"没查到"（作者 2026-11-05）。
      */
     private fun fetchLatest(): Info? {
-        if (apiUrl() == API) runCatching { fromManifest() }.onSuccess { return it }
+        if (apiUrl() == API) {
+            runCatching { fromManifest(cdn = true) }.onSuccess { return it }
+            runCatching { fromManifest(cdn = false) }.onSuccess { return it }
+        }
         return fromApi()
     }
 
-    private fun fromManifest(): Info? {
-        val conn = open(LATEST)
+    private fun fromManifest(cdn: Boolean): Info? {
+        val manifestUrl = if (cdn) "$CDN_BASE/latest.json" else LATEST
+        val conn = open(manifestUrl)
         conn.connect()
         if (conn.responseCode != 200) throw IllegalStateException("HTTP ${conn.responseCode}")
         val m = conn.inputStream.bufferedReader().use { json.decodeFromString(Latest.serializer(), it.readText()) }
         val version = m.version.removePrefix("v")
         if (compare(version, current) <= 0) return null
         // 这一版有没有安卓包、多大：只要第一个字节，从 Content-Range 里读总长
-        val url = "https://github.com/$REPO/releases/download/v$version/$APK_NAME"
-        val head = open(url)
-        head.setRequestProperty("Range", "bytes=0-0")
-        head.connect()
-        val code = head.responseCode
-        if (code == 404) return null
-        if (code != 200 && code != 206) throw IllegalStateException("HTTP $code")
-        val size = head.getHeaderField("Content-Range")?.substringAfterLast('/')?.toLongOrNull() ?: 0L
-        runCatching { head.inputStream.close() }
-        return Info(version, current, m.notes?.trim()?.ifEmpty { null }, url, size)
+        val candidates = if (cdn) {
+            listOf("$CDN_BASE/v$version/$APK_NAME", "$CDN_BASE/$APK_NAME")
+        } else {
+            listOf("https://github.com/$REPO/releases/download/v$version/$APK_NAME")
+        }
+        for (url in candidates) {
+            val head = open(url)
+            head.setRequestProperty("Range", "bytes=0-0")
+            head.connect()
+            val code = head.responseCode
+            runCatching { head.inputStream.close() }
+            if (code == 404) continue
+            if (code != 200 && code != 206) throw IllegalStateException("HTTP $code")
+            val size = head.getHeaderField("Content-Range")?.substringAfterLast('/')?.toLongOrNull() ?: 0L
+            return Info(version, current, m.notes?.trim()?.ifEmpty { null }, url, size)
+        }
+        return null
     }
 
     private fun fromApi(): Info? {

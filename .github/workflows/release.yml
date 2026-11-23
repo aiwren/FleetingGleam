@@ -307,3 +307,69 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "$GITHUB_REF_NAME" FleetingGleam-android.apk --clobber --repo "$GITHUB_REPOSITORY"
+
+  # 同步安装包与更新清单到 Cloudflare R2（cdn.novx.si/fleetinggleam/...），供官网与应用内更新直连下载
+  r2-upload:
+    name: 同步到 Cloudflare R2
+    needs: [macos, android-upload]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 下载本次 Release 产物
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/r2"
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --pattern 'FleetingGleam-android.apk' \
+            --pattern 'FleetingGleam-mac.dmg' \
+            --pattern 'FleetingGleam_aarch64.app.tar.gz' \
+            --pattern 'FleetingGleam_aarch64.app.tar.gz.sig' \
+            --pattern 'latest.json' \
+            --dir "$RUNNER_TEMP/r2" --clobber
+
+      - name: 生成 R2 版 latest.json 并上传
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID || secrets.CLOUDFLARE_ACCOUNT_ID }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET || 'novx-dl' }}
+          CDN_BASE: https://cdn.novx.si/fleetinggleam
+        run: |
+          for name in R2_ACCOUNT_ID AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "::error::仓库 Secrets 里缺 $name，无法同步到 Cloudflare R2。"
+              exit 1
+            fi
+          done
+          ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          TAG="$GITHUB_REF_NAME"
+          DIR="$RUNNER_TEMP/r2"
+
+          # R2 版 latest.json 的 Mac 更新包地址指向 R2 版本化路径（GitHub Release 里的 latest.json 保持原样作兜底）
+          jq --arg url "${CDN_BASE}/${TAG}/FleetingGleam_aarch64.app.tar.gz" \
+            'if .platforms["darwin-aarch64"] then .platforms["darwin-aarch64"].url = $url else . end' \
+            "$DIR/latest.json" > "$DIR/latest.r2.json"
+
+          # 版本化路径（长缓存，不可变）
+          for f in FleetingGleam-android.apk FleetingGleam-mac.dmg FleetingGleam_aarch64.app.tar.gz FleetingGleam_aarch64.app.tar.gz.sig; do
+            [ -f "$DIR/$f" ] || continue
+            aws s3 cp "$DIR/$f" "s3://${R2_BUCKET}/fleetinggleam/${TAG}/${f}" \
+              --endpoint-url "$ENDPOINT" \
+              --region auto \
+              --cache-control "public, max-age=31536000, immutable"
+          done
+
+          # 固定文件名（短缓存，官网和应用内更新始终拿到最新版）
+          aws s3 cp "$DIR/FleetingGleam-android.apk" "s3://${R2_BUCKET}/fleetinggleam/FleetingGleam-android.apk" \
+            --endpoint-url "$ENDPOINT" --region auto \
+            --content-type "application/vnd.android.package-archive" \
+            --cache-control "public, max-age=300"
+          aws s3 cp "$DIR/FleetingGleam-mac.dmg" "s3://${R2_BUCKET}/fleetinggleam/FleetingGleam-mac.dmg" \
+            --endpoint-url "$ENDPOINT" --region auto \
+            --content-type "application/x-apple-diskimage" \
+            --cache-control "public, max-age=300"
+          aws s3 cp "$DIR/latest.r2.json" "s3://${R2_BUCKET}/fleetinggleam/latest.json" \
+            --endpoint-url "$ENDPOINT" --region auto \
+            --content-type "application/json; charset=utf-8" \
+            --cache-control "public, max-age=300"
