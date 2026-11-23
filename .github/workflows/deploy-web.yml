@@ -1,6 +1,6 @@
-# 落地页（apps/web）自动部署到 Cloudflare：推送到 main 且落地页内容有改动时构建并 `wrangler deploy`；也能在 Actions 页手动运行。
+# 落地页（apps/web）自动部署到 Cloudflare：推送到 main 且落地页内容有改动时构建并同步部署海外站（Workers: gleam.novx.si）与国内站（Pages: gleam.tinkerai.cn）；也能在 Actions 页手动运行。
 # 只认会改变线上页面的文件：改应用、改文档、改根目录锁文件、改这个工作流本身都不触发，免得频繁部署。
-# 需要仓库 Secrets：CLOUDFLARE_API_TOKEN（Cloudflare 里用"编辑 Cloudflare Workers"模板建的令牌）与 CLOUDFLARE_ACCOUNT_ID。
+# 需要仓库 Secrets：CLOUDFLARE_API_TOKEN（需含 Workers 与 Pages 编辑权限）与 CLOUDFLARE_ACCOUNT_ID。
 # 没配就只构建、在日志里黄字提醒，不算失败（见 docs/RELEASING.md 的"部署落地页"）。
 name: Deploy web
 
@@ -10,6 +10,7 @@ on:
     paths:
       - "apps/web/src/**"
       - "apps/web/public/**"
+      - "apps/web/scripts/**"
       - "apps/web/package.json"
       - "apps/web/vite.config.ts"
       - "apps/web/wrangler.jsonc"
@@ -39,6 +40,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @fleetinggleam/web exec tsc --noEmit
       - run: pnpm build:web
+      - run: pnpm --filter @fleetinggleam/web build:cn
 
       - name: 检查部署密钥
         id: creds
@@ -52,7 +54,7 @@ jobs:
             echo "::warning::仓库 Secrets 里缺 CLOUDFLARE_API_TOKEN 或 CLOUDFLARE_ACCOUNT_ID：只构建，没有部署。配置方法见 docs/RELEASING.md 的“部署落地页”。"
           fi
 
-      - name: 部署到 Cloudflare
+      - name: 部署海外官网到 Cloudflare Workers (gleam.novx.si)
         if: steps.creds.outputs.ok == 'true'
         uses: cloudflare/wrangler-action@v3
         with:
@@ -62,3 +64,13 @@ jobs:
           # 和 docs/RELEASING.md 里手动部署用的同一个版本
           wranglerVersion: "4.146.0"
           command: deploy
+
+      - name: 部署国内官网到 Cloudflare Pages (gleam.tinkerai.cn)
+        if: steps.creds.outputs.ok == 'true'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/web/dist
+          wranglerVersion: "4.146.0"
+          command: pages deploy pages-cn --project-name fleetinggleam-tinkerai --branch main --commit-dirty=true

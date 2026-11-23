@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build && cp dist/client/404/index.html dist/client/404.html",
+    "build:cn": "node scripts/prepare-cn-pages.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
