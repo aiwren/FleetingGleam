@@ -98,6 +98,7 @@ const zh = {
       scenetext: "内置词库认不出的场景，可以让模型自己写一句描述（比如“白色教堂和宽阔的台阶”），这需要先下载两个模型（约 {{size}}）：一个看图写话，一个翻译成中文（Helsinki-NLP 的 opus-mt，CC BY 4.0）。只在第一次使用时下载，之后完全离线；照片不会被上传。",
     },
     useStandard: "先用标准模型", background: "后台下载", backgroundNav: "正在下载模型 {{pct}}%",
+    connecting: "正在连接…", retrying: "正在重连…", retryingN: "正在重连（第 {{n}} 次）…", verifying: "正在校验…",
     download: "下载（{{size}}）", retry: "重试", error: "下载没有成功，可以再试一次。",
     name: { standard: "标准分析", high: "高质量分析", ultra: "极致分析（实验）", search: "照片搜索", eyes: "MediaPipe 眼睛检测", faces: "人物识别", scenetext: "场景描述" },
     desc: { standard: "日常够用，速度快", high: "更准，对模糊、构图和观感更敏感", ultra: "最新一代美学评分，更慢，实验性", search: "用文字描述来找照片", eyes: "更能分辨眯眼大笑和真的闭眼", faces: "把照片里的人分成一个个人物，可以按人筛选", scenetext: "给词库里没有的场景写一句话，只在这台电脑上完成" },

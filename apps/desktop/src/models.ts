@@ -14,7 +14,7 @@ export type Answer = "ready" | "downloaded" | "cancelled" | "standard";
  * `id` names the dialog's text: a pack, or "bundle" when several are fetched under one question (`ids` says which, `sizes` how big each is).
  * `hidden`：下载转到了后台（对话框收起，侧栏显示进度，点一下叫回来）；出错时对话框自己回来。
  */
-export type Gate = { id: PackId | "bundle"; ids?: PackId[]; sizes?: number[]; phase: "ask" | "downloading" | "error"; bytes: number; done: number; total: number; error?: string; hidden?: boolean; offerStandard?: boolean; resolve: (a: Answer) => void };
+export type Gate = { id: PackId | "bundle"; ids?: PackId[]; sizes?: number[]; phase: "ask" | "downloading" | "error"; bytes: number; done: number; total: number; speed?: number; stage?: string; retry?: number; error?: string; hidden?: boolean; offerStandard?: boolean; resolve: (a: Answer) => void };
 
 let packs: PackInfo[] = [];
 let gate: Gate | null = null;
@@ -97,22 +97,32 @@ export function startDownload() {
   const g = gate;
   if (!g) return;
   listenProgress();
-  setGate({ ...g, phase: "downloading", done: 0, error: undefined });
+  setGate({ ...g, phase: "downloading", done: 0, speed: 0, stage: "connecting", retry: 0, error: undefined });
   const ids = g.ids ?? [g.id as PackId];
   // the packs one after the other; the progress of the one being fetched is added to the sizes of those already done
   (async () => {
+    // 重试时重算每个包还剩多少字节（扣除已有的 `.part`），进度条与核心回报的本次进度对齐
+    const sizes: number[] = [];
+    for (let i = 0; i < ids.length; i++) {
+      try { sizes.push(await invoke<number>("pack_size", { id: ids[i] })); }
+      catch { sizes.push(g.sizes?.[i] ?? 0); }
+    }
+    const totalLeft = sizes.reduce((a, b) => a + b, 0);
+    if (totalLeft > 0 && gate && gate.resolve === g.resolve && gate.phase === "downloading") {
+      setGate({ ...gate, bytes: totalLeft, total: totalLeft, sizes: gate.ids ? sizes : gate.sizes });
+    }
     let before = 0;
     for (let i = 0; i < ids.length; i++) {
       base = before;
       await invoke("pack_download", { id: ids[i] });
-      before += g.sizes?.[i] ?? 0;
+      before += sizes[i] ?? 0;
     }
   })()
     .then(async () => { base = 0; await refreshPacks(); setGate(null); g.resolve("downloaded"); })
     .catch((e) => {
       base = 0;
       if (String(e).includes("cancelled")) { setGate(null); g.resolve("cancelled"); }
-      else setGate({ ...g, phase: "error", error: String(e), hidden: false });
+      else setGate({ ...(gate ?? g), phase: "error", speed: 0, stage: undefined, retry: 0, error: String(e), hidden: false });
     });
 }
 /** Bytes of the packs of a bundle that are already down, while the next one is fetched. */
@@ -149,8 +159,15 @@ let listening = false;
 function listenProgress() {
   if (listening) return;
   listening = true;
-  void listen<{ pack: string; done: number; total: number }>("model-progress", (e) => {
-    if (gate && gate.phase === "downloading") setGate({ ...gate, done: gate.ids ? Math.min(gate.bytes, base + e.payload.done) : e.payload.done, total: gate.ids ? gate.bytes : e.payload.total });
+  void listen<{ pack: string; done: number; total: number; speed?: number; stage?: string; retry?: number }>("model-progress", (e) => {
+    if (gate && gate.phase === "downloading") setGate({
+      ...gate,
+      done: gate.ids ? Math.min(gate.bytes, base + e.payload.done) : e.payload.done,
+      total: gate.ids ? gate.bytes : e.payload.total,
+      speed: e.payload.speed ?? 0,
+      stage: e.payload.stage,
+      retry: e.payload.retry ?? 0,
+    });
   }).catch(() => { listening = false; /* not running inside the app */ });
 }
 void refreshPacks();

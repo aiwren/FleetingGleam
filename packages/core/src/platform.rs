@@ -232,10 +232,26 @@ fn bypasses(host: &str) -> bool {
     })
 }
 
+/// 把解析出的地址按 IPv4 在前、IPv6 在后稳定排序：双栈网络里 IPv6 经常路由黑洞或严重丢包，
+/// 而 ureq 2 串行逐个尝试建连，排在前面的坏 IPv6 会把连接超时耗光；IPv6 仍留在后面，纯 IPv6 网络照样能连。
+fn sort_v4_first(addrs: &mut [std::net::SocketAddr]) {
+    addrs.sort_by_key(|a| a.is_ipv6());
+}
+
+fn resolve_v4_first(netloc: &str) -> std::io::Result<Vec<std::net::SocketAddr>> {
+    let mut addrs: Vec<std::net::SocketAddr> = std::net::ToSocketAddrs::to_socket_addrs(netloc)?.collect();
+    sort_v4_first(&mut addrs);
+    Ok(addrs)
+}
+
 /// 核心所有联网（模型下载、云备份）共用的 HTTP 客户端构建器：超时由调用方定；代理按 `proxy()`，
 /// 但要去的地址在局域网或排除列表里就直连（局域网里的 S3 / NAS 不该被送去代理）。
 pub fn http_agent(url: &str, connect: std::time::Duration, read: std::time::Duration) -> ureq::Agent {
-    let mut b = ureq::AgentBuilder::new().timeout_connect(connect).timeout_read(read);
+    let mut b = ureq::AgentBuilder::new()
+        .timeout_connect(connect)
+        .timeout_read(read)
+        .timeout_write(read)
+        .resolver(resolve_v4_first);
     if let Some(p) = proxy() {
         if host_of(url).is_some_and(|h| bypasses(&h)) {
             return b.build();
@@ -344,5 +360,25 @@ mod tests {
     #[test]
     fn memory_is_known_on_this_machine() {
         assert!(physical_memory() >> 30 >= 1, "a development machine has at least a gigabyte");
+    }
+
+    #[test]
+    fn ipv4_addresses_are_tried_before_ipv6() {
+        let mut addrs: Vec<std::net::SocketAddr> = vec![
+            "[2606:4700::1]:443".parse().unwrap(),
+            "1.1.1.1:443".parse().unwrap(),
+            "[2606:4700::2]:443".parse().unwrap(),
+            "1.0.0.1:443".parse().unwrap(),
+        ];
+        sort_v4_first(&mut addrs);
+        assert_eq!(
+            addrs,
+            vec![
+                "1.1.1.1:443".parse().unwrap(),
+                "1.0.0.1:443".parse().unwrap(),
+                "[2606:4700::1]:443".parse().unwrap(),
+                "[2606:4700::2]:443".parse().unwrap(),
+            ]
+        );
     }
 }

@@ -2,7 +2,7 @@ import { useTranslation } from "react-i18next";
 import { cancelGate, chooseStandard, hideGate, startDownload, useGate } from "../models";
 import Modal from "./Modal";
 
-import { fmtBytes } from "../format";
+import { fmtBytes, fmtSpeed } from "../format";
 import { errDetail, errKind, errText } from "../errors";
 
 /**
@@ -33,7 +33,13 @@ export default function ModelGate() {
       {g?.phase === "downloading" && (
         <div className="mprog">
           <div className="mbar2"><i style={{ width: `${pct}%` }} /></div>
-          <p className="mono ash">{fmtBytes(i18n.language, g.done)} / {fmtBytes(i18n.language, g.total)} · {pct}%</p>
+          <p className="mono ash">
+            {fmtBytes(i18n.language, g.done)} / {fmtBytes(i18n.language, g.total)} · {pct}%
+            {g.stage === "verifying" ? ` · ${t("models.verifying")}`
+              : g.stage === "retrying" ? ` · ${g.retry ? t("models.retryingN", { n: g.retry }) : t("models.retrying")}`
+              : g.stage === "connecting" || (g.done === 0 && !g.speed) ? ` · ${t("models.connecting")}`
+              : g.speed ? ` · ${fmtSpeed(i18n.language, g.speed)}` : ""}
+          </p>
         </div>
       )}
       {/* 按核心的错误前缀说清楚是空间、校验还是网络，不再一律"检查网络"；细节小字放在下面 */}

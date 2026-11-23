@@ -32,6 +32,12 @@ data class Gate(
     val bytes: Long,
     val done: Long = 0,
     val total: Long = 0,
+    /** 当前下载速率（字节/秒）；连接中、重连或校验时为 0。 */
+    val speed: Long = 0,
+    /** 当前阶段："connecting" | "downloading" | "retrying" | "verifying"。 */
+    val stage: String = "",
+    /** 正在第几次重连（0 表示首次）。 */
+    val retry: Int = 0,
     val error: String? = null,
     val resolve: CompletableDeferred<Answer>,
     /** 下载转到后台了：对话框收起，通知栏和底部一粒小胶囊显示进度；等它的那件事（分析、搜索…）下载完照样接着做。 */
@@ -69,7 +75,13 @@ object Models {
         Core.listen("model-progress") { raw ->
             val p = runCatching { Fg.json.decodeFromString<ModelProgress>(raw) }.getOrNull() ?: return@listen
             val g = _gate.value ?: return@listen
-            if (g.phase == "downloading") _gate.value = g.copy(done = if (g.ids != null) minOf(g.bytes, base + p.done) else p.done, total = if (g.ids != null) g.bytes else p.total)
+            if (g.phase == "downloading") _gate.value = g.copy(
+                done = if (g.ids != null) minOf(g.bytes, base + p.done) else p.done,
+                total = if (g.ids != null) g.bytes else p.total,
+                speed = p.speed,
+                stage = p.stage,
+                retry = p.retry,
+            )
         }
         scope.launch { refresh() }
     }
@@ -168,7 +180,7 @@ object Models {
 
     fun startDownload() {
         val g = _gate.value ?: return
-        _gate.value = g.copy(phase = "downloading", done = 0, error = null)
+        _gate.value = g.copy(phase = "downloading", done = 0, speed = 0, stage = "connecting", retry = 0, error = null)
         val ids = g.ids ?: listOf(g.id)
         // 下载期间挂一个前台服务：切到别的应用、锁屏，下载也不会被系统停掉
         app?.let { com.fleetinggleam.android.service.DownloadService.start(it) }
@@ -176,13 +188,23 @@ object Models {
         scope.launch {
             var current: String? = null
             try {
+                // 出错后点“重试”时，前面已经落盘的 `.part` 不用重下：重算每个包还剩多少，进度条才和核心回报的本次进度对齐
+                val sizes = ids.mapIndexed { i, id ->
+                    if (installed(id)) 0L else runCatching { Core.get<Long>("pack_size", args("id" to id)) }.getOrDefault(g.sizes?.getOrNull(i) ?: 0L)
+                }
+                val totalLeft = sizes.sum()
+                if (totalLeft > 0) {
+                    _gate.value?.takeIf { it.resolve === g.resolve && it.phase == "downloading" }?.let { cur ->
+                        _gate.value = cur.copy(bytes = totalLeft, total = totalLeft, sizes = if (cur.ids != null) sizes else cur.sizes)
+                    }
+                }
                 var before = 0L
                 for ((i, id) in ids.withIndex()) {
                     base = before
                     current = id
-                    if (installed(id)) { before += g.sizes?.getOrNull(i) ?: 0; continue }
+                    if (installed(id)) { before += sizes.getOrNull(i) ?: 0; continue }
                     Core.call("pack_download", args("id" to id))
-                    before += g.sizes?.getOrNull(i) ?: 0
+                    before += sizes.getOrNull(i) ?: 0
                 }
                 base = 0
                 refresh()
@@ -198,7 +220,7 @@ object Models {
                 } else {
                     // 出错了：后台的也把对话框拿回来，说清楚、可以重试
                     refresh()
-                    _gate.value = (_gate.value ?: g).copy(phase = "error", error = e.message, hidden = false, failed = current)
+                    _gate.value = (_gate.value ?: g).copy(phase = "error", speed = 0, stage = "", retry = 0, error = e.message, hidden = false, failed = current)
                 }
             } finally {
                 app?.let { com.fleetinggleam.android.service.DownloadService.stop(it) }

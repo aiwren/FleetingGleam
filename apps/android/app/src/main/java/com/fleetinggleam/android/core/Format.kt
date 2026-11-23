@@ -12,15 +12,19 @@ private fun locale(): Locale = if (I18n.code.startsWith("zh")) Locale.SIMPLIFIED
 
 /** A size in bytes the way the language writes it, through ICU (the same CLDR data as the Mac's `Intl`), not hand-written units. */
 fun fmtBytes(b: Long): String {
+    val shown = if (b <= 0L) 0L else maxOf(b, 1000L)
     val (unit, div, digits) = when {
-        b >= 1_000_000_000L -> Triple(MeasureUnit.GIGABYTE, 1e9, 1)
-        b >= 1_000_000L -> Triple(MeasureUnit.MEGABYTE, 1e6, if (b >= 10_000_000L) 0 else 1)
+        shown >= 1_000_000_000L -> Triple(MeasureUnit.GIGABYTE, 1e9, 1)
+        shown >= 1_000_000L -> Triple(MeasureUnit.MEGABYTE, 1e6, if (shown >= 10_000_000L) 0 else 1)
         else -> Triple(MeasureUnit.KILOBYTE, 1e3, 0)
     }
     val nf = java.text.NumberFormat.getInstance(locale()).apply { maximumFractionDigits = digits }
     return MeasureFormat.getInstance(locale(), MeasureFormat.FormatWidth.SHORT, android.icu.text.NumberFormat.getInstance(locale()).apply { maximumFractionDigits = digits })
-        .format(Measure(maxOf(b, 1000L) / div, unit)).ifEmpty { nf.format(maxOf(b, 1000L) / div) }
+        .format(Measure(shown / div, unit)).ifEmpty { nf.format(shown / div) }
 }
+
+/** 下载速率（"3.2 MB/s"、"420 kB/s"）。 */
+fun fmtSpeed(bps: Long): String = "${fmtBytes(bps)}/s"
 
 /** A rough length of time in words: "about 40 seconds", "about 12 minutes", "about 3 hours". */
 fun duration(s: Int): String = when {

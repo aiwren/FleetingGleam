@@ -15,6 +15,7 @@ import com.fleetinggleam.android.R
 import com.fleetinggleam.android.core.Gate
 import com.fleetinggleam.android.core.Models
 import com.fleetinggleam.android.core.fmtBytes
+import com.fleetinggleam.android.core.fmtSpeed
 import com.fleetinggleam.android.core.t
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -50,10 +51,18 @@ class DownloadService : Service() {
         val cancel = PendingIntent.getService(this, 2, Intent(this, DownloadService::class.java).setAction(ACTION_CANCEL), PendingIntent.FLAG_IMMUTABLE)
         val total = g?.total ?: 0; val done = g?.done ?: 0
         val name = g?.let { t(if (it.ids != null) "android.models.bundle" else "models.name.${it.id}") } ?: ""
+        val extra = when {
+            g?.stage == "verifying" -> t("models.verifying")
+            g?.stage == "retrying" -> t("models.retrying")
+            g?.stage == "connecting" || (done == 0L && (g?.speed ?: 0L) == 0L) -> t("models.connecting")
+            (g?.speed ?: 0L) > 0L -> fmtSpeed(g!!.speed)
+            else -> null
+        }
+        val text = if (total > 0) "${fmtBytes(done)} / ${fmtBytes(total)}" + (extra?.let { " · $it" } ?: "") else extra.orEmpty()
         return NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_gleam)
             .setContentTitle(t("android.models.downloading", "name" to name))
-            .setContentText(if (total > 0) "${fmtBytes(done)} / ${fmtBytes(total)}" else "")
+            .setContentText(text)
             .setProgress(1000, if (total > 0) (done * 1000 / total).toInt() else 0, total == 0L)
             .setOngoing(true).setOnlyAlertOnce(true).setSilent(true)
             .setContentIntent(open)

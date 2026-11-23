@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.background
 import com.fleetinggleam.android.core.Models
 import com.fleetinggleam.android.core.fmtBytes
+import com.fleetinggleam.android.core.fmtSpeed
 import com.fleetinggleam.android.core.t
 import com.fleetinggleam.android.ui.components.FgButton
 import com.fleetinggleam.android.ui.components.FgDialog
@@ -75,7 +76,15 @@ fun ModelGate() {
             }
             "downloading" -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 LiveBar(pct / 100f, Modifier.padding(top = 6.dp))
-                Text("${fmtBytes(gate.done)} / ${fmtBytes(gate.total)} · $pct%", style = Type.mono.copy(color = c.ash))
+                val status = when {
+                    gate.stage == "verifying" -> t("models.verifying")
+                    gate.stage == "retrying" -> if (gate.retry > 0) t("models.retryingN", "n" to gate.retry) else t("models.retrying")
+                    gate.stage == "connecting" || (gate.done == 0L && gate.speed == 0L) -> t("models.connecting")
+                    gate.speed > 0L -> fmtSpeed(gate.speed)
+                    else -> null
+                }
+                val line = "${fmtBytes(gate.done)} / ${fmtBytes(gate.total)} · $pct%" + (status?.let { " · $it" } ?: "")
+                Text(line, style = Type.mono.copy(color = c.ash))
             }
             else -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 // 按错误前缀说清楚是空间、校验还是网络（审查第 26 条）；认不出的照旧说"检查网络"

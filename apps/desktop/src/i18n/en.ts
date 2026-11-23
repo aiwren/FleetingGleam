@@ -100,6 +100,7 @@ const en = {
       scenetext: "Scenes the built-in vocabulary cannot name can be described in a sentence (\u201ca large white church with a wide staircase\u201d) with two models that are downloaded first (about {{size}}): one that writes a caption for a picture and one that translates it (opus-mt by Helsinki-NLP, CC BY 4.0). Downloaded once, then fully offline; photos are never uploaded.",
     },
     useStandard: "Use the standard model for now", background: "Download in background", backgroundNav: "Downloading models {{pct}}%",
+    connecting: "Connecting…", retrying: "Reconnecting…", retryingN: "Reconnecting (attempt {{n}})…", verifying: "Verifying…",
     download: "Download ({{size}})", retry: "Try again", error: "The download did not succeed; you can try again.",
     name: { standard: "Standard analysis", high: "High-quality analysis", ultra: "Ultra analysis (experimental)", search: "Photo search", eyes: "MediaPipe eye detection", faces: "People recognition", scenetext: "Scene descriptions" },
     desc: { standard: "Good for everyday use, quick", high: "More accurate; more sensitive to blur, composition and look", ultra: "Newest aesthetic scoring; slower, experimental", search: "Find photos by describing them", eyes: "Tells a laughing squint from an actual closed eye", faces: "Sorts the photos by who is in them, so you can filter by person", scenetext: "Writes a sentence for scenes the vocabulary cannot name, entirely on this computer" },
